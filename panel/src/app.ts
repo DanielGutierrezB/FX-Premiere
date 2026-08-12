@@ -378,9 +378,7 @@ export class PaletteApp {
 
   private allItems(): CatalogItem[] {
     const base = this.catalog ? this.catalog.items : [];
-    const dynamic = parseMotionQuery(this.input.value);
-    const items = [...this.captured, ...base, ...STATIC_COMMANDS];
-    return dynamic ? [dynamic, ...items] : items;
+    return [...this.captured, ...base, ...STATIC_COMMANDS];
   }
 
   /**
@@ -420,15 +418,11 @@ export class PaletteApp {
       this.quick = this.quickGroups();
       this.results = this.quick.flatMap((group) => group.items).map((item) => ({ item, score: 0, indices: [] }));
     } else {
+      // A typed motion command is not a search result: it is what you just wrote, so it goes
+      // straight to the top instead of through the ranking and back out of it.
       const dynamic = parseMotionQuery(query);
-      this.results = rank(this.allItems(), this.catalog?.haystacks ?? new Map(), query, this.scope, this.settings);
-      if (dynamic) {
-        const index = this.results.findIndex((entry) => entry.item.id === dynamic.id);
-        if (index > 0) {
-          const [row] = this.results.splice(index, 1);
-          this.results.unshift(row);
-        }
-      }
+      const ranked = rank(this.allItems(), this.catalog?.haystacks ?? new Map(), query, this.scope, this.settings);
+      this.results = dynamic ? [{ item: dynamic, score: Number.POSITIVE_INFINITY, indices: [] }, ...ranked] : ranked;
     }
     if (this.active >= this.results.length) {
       this.active = Math.max(0, this.results.length - 1);

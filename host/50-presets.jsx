@@ -686,14 +686,18 @@ FXP.applyPreset = function (request) {
             context.outPoint = context.inPoint + Math.max(0.04, entry.endSeconds - entry.startSeconds);
         }
         var appliedHere = 0;
+        // Walking the track to re-read the clip is the expensive part, so it happens once per
+        // clip and again only when adding an effect actually changed the component list.
+        var clip = FXP.freshClip(entry);
         for (var e = 0; e < detail.effects.length; e++) {
             var effect = detail.effects[e];
             var component = null;
             if (FXP.contains(FXP.INTRINSIC_MATCH_NAMES, effect.matchName)) {
-                component = FXP.lastComponentWithMatchName(FXP.freshClip(entry), effect.matchName);
+                component = FXP.lastComponentWithMatchName(clip, effect.matchName);
             }
             if (!component) {
                 component = FXP.addEffectForPreset(entry, effect, detail.mediaType);
+                clip = FXP.freshClip(entry);
             }
             if (!component) {
                 if (!FXP.contains(missing, effect.matchName)) {
