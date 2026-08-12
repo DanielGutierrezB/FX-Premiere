@@ -160,7 +160,9 @@ const startHelper = (): void => {
     }
   });
 
-  status(true, `Starting listener for ${serializeHotkey(settings.hotkey)}\u2026`);
+  // Stays false until the helper answers READY, so the settings screen never claims the
+  // shortcut is live while the process is still coming up or already stuck.
+  status(false, `Starting listener for ${serializeHotkey(settings.hotkey)}\u2026`);
 };
 
 const reload = (forceRestart: boolean): void => {

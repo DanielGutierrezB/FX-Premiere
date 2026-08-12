@@ -70,7 +70,10 @@ export interface SequenceInfo {
 
 export interface ApplyOutcome {
   applied: number;
+  /** Clips deliberately left alone, such as audio clips when a video effect is applied. */
   skipped: number;
+  /** Clips that should have changed but could not, which is the only case worth interrupting for. */
+  failed: number;
   messages: string[];
 }
 

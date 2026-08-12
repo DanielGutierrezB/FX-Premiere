@@ -15,7 +15,7 @@ FXP.applyEffect = function (request) {
             targets[targets.length] = selection[i];
         }
     }
-    var outcome = { applied: 0, skipped: selection.length - targets.length, messages: [] };
+    var outcome = { applied: 0, skipped: selection.length - targets.length, failed: 0, messages: [] };
     if (targets.length === 0) {
         outcome.messages[outcome.messages.length] =
             'No ' + mediaType + ' clips in the selection for "' + request.name + '".';
@@ -33,11 +33,12 @@ FXP.applyEffect = function (request) {
         throw new Error('Effect not found in this Premiere install: ' + request.name);
     }
 
+    FXP.attachQEItems(targets);
     for (var t = 0; t < targets.length; t++) {
         var entry = targets[t];
-        var item = FXP.qeItemFor(entry);
+        var item = FXP.itemFor(entry);
         if (!item) {
-            outcome.skipped++;
+            outcome.failed++;
             outcome.messages[outcome.messages.length] = 'Could not reach "' + entry.name + '" through the QE DOM.';
             continue;
         }
@@ -51,7 +52,7 @@ FXP.applyEffect = function (request) {
         if (ok) {
             outcome.applied++;
         } else {
-            outcome.skipped++;
+            outcome.failed++;
         }
     }
     return outcome;
@@ -123,7 +124,7 @@ FXP.applyTransition = function (request) {
         throw new Error('Transition not found in this Premiere install: ' + request.name);
     }
 
-    var outcome = { applied: 0, skipped: 0, messages: [] };
+    var outcome = { applied: 0, skipped: 0, failed: 0, messages: [] };
     var jobs = [{ mediaType: mediaType, transition: transition, label: request.name }];
 
     if (mediaType === 'video' && options.applyToAudio) {
@@ -141,15 +142,21 @@ FXP.applyTransition = function (request) {
                 targets[targets.length] = selection[s];
             }
         }
+        // Only the requested media type counts as skipped; the optional audio crossfade is a
+        // bonus job and must not make a plain video selection look partially applied.
+        if (job.mediaType === mediaType) {
+            outcome.skipped += selection.length - targets.length;
+        }
         if (targets.length === 0) {
             continue;
         }
         var sides = side === 'both' ? [true, false] : [side === 'start'];
         var placed = 0;
+        FXP.attachQEItems(targets);
         for (var t = 0; t < targets.length; t++) {
-            var item = FXP.qeItemFor(targets[t]);
+            var item = FXP.itemFor(targets[t]);
             if (!item) {
-                outcome.skipped++;
+                outcome.failed++;
                 continue;
             }
             for (var k = 0; k < sides.length; k++) {
@@ -157,7 +164,7 @@ FXP.applyTransition = function (request) {
                     outcome.applied++;
                     placed++;
                 } else {
-                    outcome.skipped++;
+                    outcome.failed++;
                 }
             }
         }

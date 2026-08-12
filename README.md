@@ -13,7 +13,10 @@ Ctrl + Space  →  gsblr  →  Enter  →  Gaussian Blur en los 8 clips seleccio
 - **Búsqueda difusa instantánea** sobre efectos de video, efectos de audio, transiciones de
   video, transiciones de audio, tus presets y los plug-ins de terceros instalados.
   `gsblr` encuentra `Gaussian Blur`, `dtw` encuentra `Dip to White`.
-- **Aplica a toda la selección** en un solo Enter, en cualquier pista de video o audio.
+- **Aplica a toda la selección** en un solo Enter, en cualquier pista de video o audio. Si
+  seleccionaste video con su audio vinculado, el efecto entra en los clips que corresponden y
+  los demás quedan intactos: la paleta se cierra igual y solo se queda abierta si algo falló
+  de verdad.
 - **Diálogo de transición**: al elegir una transición pide la duración exacta en frames
   (muestra el equivalente en segundos), la alineación respecto al corte y si va al inicio,
   al final o a ambos extremos. Recuerda lo último que usaste. Opción de añadir además el
@@ -132,7 +135,7 @@ npm install
 npm run install-dev    # compila, activa PlayerDebugMode y enlaza dist/ en la carpeta CEP
 npm run watch          # reconstruye panel y servicio al guardar
 npm run typecheck
-npm test               # ranking de búsqueda + parser de presets contra tus .prfpset reales
+npm test               # búsqueda, presets, host y panel completo, sin abrir Premiere
 ```
 
 Tras `install-dev` reinicia Premiere. El panel queda depurable en
@@ -154,6 +157,17 @@ Los ajustes (atajo, favoritos, uso, carpetas de presets) viven junto al log en
   `Gaussian Blur`) y el parser de comandos de motion.
 - `scripts/test-preset-parser.mjs` ejecuta el parser de `.prfpset` real bajo Node con
   `File`/`Folder` simulados y recorre todos los presets que tengas instalados.
+- `scripts/test-host.mjs` corre el host ExtendScript contra un Premiere simulado
+  (`scripts/lib/mock-premiere.mjs`: secuencia, pistas, clips, componentes y QE DOM) y verifica
+  que los efectos lleguen a cada clip seleccionado, los timecodes de las transiciones, los
+  comandos de motion y la reproducción de presets con keyframes.
+- `scripts/test-panel.mjs` arranca el panel real dentro de jsdom conectado a ese mismo host
+  simulado, así que el flujo completo de teclado (invocar, escribir, ↑/↓, Enter, diálogo de
+  transición, ajustes, grabar atajo) se prueba de punta a punta.
+- `scripts/test-service.mjs` corre la extensión invisible contra un helper de hotkey falso que
+  habla el mismo protocolo: comprueba el arranque, que una pulsación abra el panel, el cambio
+  de atajo en caliente sin reiniciar el proceso, el reinicio tras una caída y que no quede
+  ningún proceso vivo al cerrar Premiere.
 
 ## Límites conocidos
 

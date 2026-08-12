@@ -1,6 +1,10 @@
 FXP.MOTION_MATCH_NAMES = ['AE.ADBE Motion', 'AE.ADBE Vector Motion'];
 FXP.OPACITY_MATCH_NAMES = ['AE.ADBE Opacity'];
 
+/** Fallback for hosts that do not expose Component.matchName. */
+FXP.MOTION_DISPLAY_NAMES = ['Motion', 'Movimiento', 'Movimento', 'Mouvement', 'Bewegung'];
+FXP.OPACITY_DISPLAY_NAMES = ['Opacity', 'Opacidad', 'Opacidade', 'Opacit\u00e9', 'Deckkraft'];
+
 /** Parameter order inside Premiere's intrinsic Motion and Opacity components. */
 FXP.MOTION_PARAM_INDEX = {
     position: 0,
@@ -11,7 +15,7 @@ FXP.MOTION_PARAM_INDEX = {
     anchor: 5
 };
 
-FXP.findComponent = function (clip, matchNames) {
+FXP.findComponent = function (clip, matchNames, displayNames) {
     var components = null;
     try {
         components = clip.components;
@@ -24,13 +28,28 @@ FXP.findComponent = function (clip, matchNames) {
     } catch (error) {
         count = 0;
     }
+    var byDisplayName = null;
     for (var i = 0; i < count; i++) {
         var matchName = FXP.componentMatchName(components[i]);
-        if (matchName !== '' && FXP.contains(matchNames, matchName)) {
-            return components[i];
+        if (matchName !== '') {
+            if (FXP.contains(matchNames, matchName)) {
+                return components[i];
+            }
+            continue;
+        }
+        if (byDisplayName === null && displayNames) {
+            var displayName = '';
+            try {
+                displayName = String(components[i].displayName);
+            } catch (error) {
+                displayName = '';
+            }
+            if (displayName !== '' && FXP.contains(displayNames, displayName)) {
+                byDisplayName = components[i];
+            }
         }
     }
-    return null;
+    return byDisplayName;
 };
 
 FXP.playheadTimeInClip = function (entry) {
@@ -146,7 +165,7 @@ FXP.applyMotion = function (request) {
     }
     var frame = FXP.frameSize(sequence);
     var selection = FXP.requireSelection();
-    var outcome = { applied: 0, skipped: 0, messages: [] };
+    var outcome = { applied: 0, skipped: 0, failed: 0, messages: [] };
     var isOpacity = command.property === 'opacity';
 
     for (var i = 0; i < selection.length; i++) {
@@ -157,15 +176,16 @@ FXP.applyMotion = function (request) {
         }
         var component = FXP.findComponent(
             entry.clip,
-            isOpacity ? FXP.OPACITY_MATCH_NAMES : FXP.MOTION_MATCH_NAMES
+            isOpacity ? FXP.OPACITY_MATCH_NAMES : FXP.MOTION_MATCH_NAMES,
+            isOpacity ? FXP.OPACITY_DISPLAY_NAMES : FXP.MOTION_DISPLAY_NAMES
         );
         if (!component) {
-            outcome.skipped++;
+            outcome.failed++;
             continue;
         }
         var paramIndex = isOpacity ? 0 : FXP.MOTION_PARAM_INDEX[command.property];
         if (paramIndex === undefined) {
-            outcome.skipped++;
+            outcome.failed++;
             continue;
         }
         var param = null;
@@ -175,18 +195,18 @@ FXP.applyMotion = function (request) {
             param = null;
         }
         if (!param) {
-            outcome.skipped++;
+            outcome.failed++;
             continue;
         }
         var target = FXP.motionTargetValue(command, FXP.readParam(param), frame);
         if (target === null) {
-            outcome.skipped++;
+            outcome.failed++;
             continue;
         }
         if (FXP.writeParam(param, target, entry)) {
             outcome.applied++;
         } else {
-            outcome.skipped++;
+            outcome.failed++;
         }
     }
     return outcome;
@@ -194,49 +214,53 @@ FXP.applyMotion = function (request) {
 
 FXP.runCommand = function (request) {
     var selection = FXP.requireSelection();
-    var outcome = { applied: 0, skipped: 0, messages: [] };
+    var outcome = { applied: 0, skipped: 0, failed: 0, messages: [] };
     var commandId = String(request.commandId || '');
+    var videoOnly = commandId === 'scaleToFrameSize' || commandId === 'resetMotion';
+    if (commandId !== 'scaleToFrameSize' && commandId !== 'resetMotion' && commandId !== 'toggleDisabled') {
+        throw new Error('Unknown command: ' + commandId);
+    }
+    FXP.attachQEItems(selection);
 
     for (var i = 0; i < selection.length; i++) {
         var entry = selection[i];
+        if (videoOnly && entry.mediaType !== 'video') {
+            outcome.skipped++;
+            continue;
+        }
         var done = false;
         if (commandId === 'scaleToFrameSize') {
-            if (entry.mediaType === 'video') {
-                var item = FXP.qeItemFor(entry);
-                if (item) {
-                    try {
-                        done = item.setScaleToFrameSize(true) ? true : true;
-                    } catch (error) {
-                        FXP.trace('setScaleToFrameSize failed: ' + FXP.errorText(error));
-                    }
+            var item = FXP.itemFor(entry);
+            if (item) {
+                try {
+                    item.setScaleToFrameSize(true);
+                    done = true;
+                } catch (error) {
+                    FXP.trace('setScaleToFrameSize failed: ' + FXP.errorText(error));
                 }
             }
         } else if (commandId === 'resetMotion') {
-            if (entry.mediaType === 'video') {
-                done = FXP.resetMotion(entry);
-            }
-        } else if (commandId === 'toggleDisabled') {
+            done = FXP.resetMotion(entry);
+        } else {
             try {
                 entry.clip.disabled = !entry.clip.disabled;
                 done = true;
             } catch (error) {
                 FXP.trace('toggleDisabled failed: ' + FXP.errorText(error));
             }
-        } else {
-            throw new Error('Unknown command: ' + commandId);
         }
         if (done) {
             outcome.applied++;
         } else {
-            outcome.skipped++;
+            outcome.failed++;
         }
     }
     return outcome;
 };
 
 FXP.resetMotion = function (entry) {
-    var motion = FXP.findComponent(entry.clip, FXP.MOTION_MATCH_NAMES);
-    var opacity = FXP.findComponent(entry.clip, FXP.OPACITY_MATCH_NAMES);
+    var motion = FXP.findComponent(entry.clip, FXP.MOTION_MATCH_NAMES, FXP.MOTION_DISPLAY_NAMES);
+    var opacity = FXP.findComponent(entry.clip, FXP.OPACITY_MATCH_NAMES, FXP.OPACITY_DISPLAY_NAMES);
     var changed = false;
     if (motion) {
         var resets = [

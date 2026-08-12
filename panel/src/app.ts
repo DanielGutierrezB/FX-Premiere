@@ -557,7 +557,7 @@ export class PaletteApp {
         this.toast(response.error ?? 'Could not apply this item.', 'error');
         return;
       }
-      const outcome = response.data ?? { applied: 0, skipped: 0, messages: [] };
+      const outcome = response.data ?? { applied: 0, skipped: 0, failed: 0, messages: [] };
       this.recordUsage(item.id);
       if (outcome.applied === 0) {
         const reason = outcome.messages[0] ?? 'Nothing was applied.';
@@ -565,21 +565,26 @@ export class PaletteApp {
         this.toast(reason, 'error');
         return;
       }
+      const notes = [
+        outcome.skipped > 0 ? `${outcome.skipped} left alone` : '',
+        outcome.failed > 0 ? `${outcome.failed} failed` : '',
+      ].filter(Boolean);
       const summary = `${item.name} \u2192 ${outcome.applied} clip${outcome.applied === 1 ? '' : 's'}${
-        outcome.skipped > 0 ? ` (${outcome.skipped} skipped)` : ''
+        notes.length > 0 ? ` (${notes.join(', ')})` : ''
       }`;
-      this.setStatus(summary, 'ok');
-      if (this.settings.closeAfterApply && !keepOpen && outcome.skipped === 0) {
+      this.setStatus(summary, outcome.failed > 0 ? 'error' : 'ok');
+      // Clips of the other media type are normal in a linked A/V selection, so only a real
+      // failure is worth keeping the palette open for.
+      const closing = this.settings.closeAfterApply && !keepOpen && outcome.failed === 0;
+      // Land back on the search view either way: the panel can survive being closed, and
+      // reopening it on a stale transition dialog would re-apply that transition on Enter.
+      this.backToSearch(closing);
+      if (closing) {
         closeSelf();
         return;
       }
       this.toast(outcome.messages.length > 0 ? `${summary} \u00b7 ${outcome.messages.join(' \u00b7 ')}` : summary);
-      this.view = 'search';
-      this.pendingTransition = null;
-      this.renderHints();
-      this.updateResults();
       void this.refreshSequence();
-      this.focusInput();
     } finally {
       this.busy = false;
     }
@@ -785,9 +790,13 @@ export class PaletteApp {
     await this.runApply(item, false, this.transitionOptions);
   }
 
-  private backToSearch(): void {
+  private backToSearch(clearQuery = false): void {
     this.view = 'search';
     this.pendingTransition = null;
+    if (clearQuery) {
+      this.input.value = '';
+      this.active = 0;
+    }
     this.renderHints();
     this.updateResults();
     this.focusInput();

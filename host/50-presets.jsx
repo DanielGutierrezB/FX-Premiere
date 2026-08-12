@@ -606,7 +606,7 @@ FXP.addEffectForPreset = function (entry, effect, mediaType) {
     if (!effectObject) {
         return null;
     }
-    var item = FXP.qeItemFor(entry);
+    var item = FXP.itemFor(entry);
     if (!item) {
         return null;
     }
@@ -620,7 +620,7 @@ FXP.addEffectForPreset = function (entry, effect, mediaType) {
     if (!ok) {
         return null;
     }
-    return FXP.lastComponentWithMatchName(entry.clip, effect.matchName);
+    return FXP.lastComponentWithMatchName(FXP.freshClip(entry), effect.matchName);
 };
 
 FXP.applyPreset = function (request) {
@@ -639,7 +639,7 @@ FXP.applyPreset = function (request) {
             targets[targets.length] = selection[s];
         }
     }
-    var outcome = { applied: 0, skipped: selection.length - targets.length, messages: [] };
+    var outcome = { applied: 0, skipped: selection.length - targets.length, failed: 0, messages: [] };
     if (targets.length === 0) {
         outcome.messages[outcome.messages.length] =
             'This is a ' + detail.mediaType + ' preset and no ' + detail.mediaType + ' clip is selected.';
@@ -647,6 +647,7 @@ FXP.applyPreset = function (request) {
     }
 
     var missing = [];
+    FXP.attachQEItems(targets);
     for (var t = 0; t < targets.length; t++) {
         var entry = targets[t];
         var context = {
@@ -661,7 +662,7 @@ FXP.applyPreset = function (request) {
             var effect = detail.effects[e];
             var component = null;
             if (FXP.contains(FXP.INTRINSIC_MATCH_NAMES, effect.matchName)) {
-                component = FXP.lastComponentWithMatchName(entry.clip, effect.matchName);
+                component = FXP.lastComponentWithMatchName(FXP.freshClip(entry), effect.matchName);
             }
             if (!component) {
                 component = FXP.addEffectForPreset(entry, effect, detail.mediaType);
@@ -678,7 +679,7 @@ FXP.applyPreset = function (request) {
         if (appliedHere > 0) {
             outcome.applied++;
         } else {
-            outcome.skipped++;
+            outcome.failed++;
         }
     }
 

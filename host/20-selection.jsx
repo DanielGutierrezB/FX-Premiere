@@ -141,6 +141,111 @@ FXP.qeItemFor = function (entry) {
     return fallback;
 };
 
+/**
+ * Resolves the QE item for every selected clip with a single pass per track. Scanning the
+ * track once per clip instead turns a large selection into thousands of QE calls.
+ */
+FXP.attachQEItems = function (entries) {
+    var buckets = {};
+    var order = [];
+    var i;
+    for (i = 0; i < entries.length; i++) {
+        var key = entries[i].mediaType + ':' + entries[i].trackIndex;
+        if (!buckets[key]) {
+            buckets[key] = [];
+            order[order.length] = key;
+        }
+        buckets[key][buckets[key].length] = entries[i];
+    }
+
+    for (var b = 0; b < order.length; b++) {
+        var bucket = buckets[order[b]];
+        var track = FXP.qeTrack(bucket[0].mediaType, bucket[0].trackIndex);
+        if (!track) {
+            continue;
+        }
+        var count = 0;
+        try {
+            count = track.numItems;
+        } catch (error) {
+            count = 0;
+        }
+        var byTicks = {};
+        var items = [];
+        for (i = 0; i < count; i++) {
+            var item = null;
+            try {
+                item = track.getItemAt(i);
+            } catch (error) {
+                item = null;
+            }
+            if (!item) {
+                continue;
+            }
+            var type = '';
+            try {
+                type = String(item.type);
+            } catch (error) {
+                type = '';
+            }
+            if (type !== 'Clip') {
+                continue;
+            }
+            var ticks = FXP.clipTicks(item.start);
+            if (ticks !== '' && byTicks['#' + ticks] === undefined) {
+                byTicks['#' + ticks] = item;
+            }
+            items[items.length] = item;
+        }
+        for (i = 0; i < bucket.length; i++) {
+            var entry = bucket[i];
+            var matched = byTicks['#' + entry.startTicks];
+            if (!matched) {
+                for (var k = 0; k < items.length; k++) {
+                    if (Math.abs(FXP.clipSeconds(items[k].start) - entry.startSeconds) < 0.0005) {
+                        matched = items[k];
+                        break;
+                    }
+                }
+            }
+            entry.qeItem = matched || null;
+        }
+    }
+    return entries;
+};
+
+FXP.itemFor = function (entry) {
+    if (entry.qeItem !== undefined) {
+        return entry.qeItem;
+    }
+    entry.qeItem = FXP.qeItemFor(entry);
+    return entry.qeItem;
+};
+
+/** Re-reads a clip from the sequence so component lists reflect edits made through QE. */
+FXP.freshClip = function (entry) {
+    var sequence = FXP.activeSequence();
+    if (!sequence) {
+        return entry.clip;
+    }
+    try {
+        var tracks = entry.mediaType === 'audio' ? sequence.audioTracks : sequence.videoTracks;
+        var track = tracks[entry.trackIndex];
+        var direct = track.clips[entry.clipIndex];
+        if (direct && FXP.clipTicks(direct.start) === entry.startTicks) {
+            return direct;
+        }
+        for (var i = 0; i < track.clips.numItems; i++) {
+            if (FXP.clipTicks(track.clips[i].start) === entry.startTicks) {
+                return track.clips[i];
+            }
+        }
+    } catch (error) {
+        FXP.trace('freshClip failed: ' + FXP.errorText(error));
+    }
+    return entry.clip;
+};
+
 FXP.selectionByMedia = function (mediaType) {
     var all = FXP.collectSelection();
     var out = [];

@@ -162,8 +162,16 @@ body {
   border-color: var(--accent-dim);
 }
 
+.results-host {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
 .results {
   flex: 1;
+  min-height: 0;
   margin: 0;
   padding: 6px 0;
   list-style: none;
@@ -185,7 +193,7 @@ body {
   display: flex;
   align-items: center;
   gap: 10px;
-  height: var(--row-height);
+  height: calc(var(--row-height) * var(--font-scale));
   padding: 0 14px;
   cursor: default;
 }
