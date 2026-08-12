@@ -64,14 +64,12 @@ const indexed = performance.now() - bootStarted;
 
 const summonTimes = [];
 let summonRows = 0;
-let summonChips = 0;
 for (let attempt = 0; attempt < 5; attempt += 1) {
   const started = performance.now();
   cep.emit('com.fxpremiere.event.trigger', { settings: false });
   await settle(6);
   summonTimes.push(performance.now() - started);
   summonRows = rows();
-  summonChips = window.document.querySelectorAll('.quick .chip').length;
 }
 
 const input = window.document.querySelector('.search__input');
@@ -92,8 +90,6 @@ const median = (values) => [...values].sort((a, b) => a - b)[Math.floor(values.l
 
 console.log(`first paint (input on screen)      ${ms(firstPaint)}`);
 console.log(`index warmed up behind it          ${ms(indexed)}`);
-const indexSize = /(\d+) items/.exec(window.document.querySelector('.status')?.textContent ?? '')?.[1] ?? '?';
-console.log(`summon, median of 5                ${ms(median(summonTimes))}  (rows: ${summonRows}, chips: ${summonChips})`);
-console.log(`index size behind all of this       ${indexSize} items`);
+console.log(`summon, median of 5                ${ms(median(summonTimes))}  (rows drawn: ${summonRows})`);
 console.log(`keystroke, broad query             ${ms(broad)}  (rows rendered: ${broadRows})`);
 console.log(`keystroke, narrow query            ${ms(narrow)}  (rows rendered: ${narrowRows})`);

@@ -51,8 +51,22 @@ type ApplyIntent = 'default' | 'withOptions' | 'keepOpen';
 /** Rows built per render. The window follows the selection, so navigation stays O(1). */
 const MAX_ROWS = 50;
 
-/** Chips in the resting bar: enough to reach for, few enough to read at a glance. */
-const QUICK_LIMIT = 8;
+/** What the resting list offers: the last few things applied, then favourites not among them. */
+const RECENT_LIMIT = 6;
+const FAVORITE_LIMIT = 4;
+
+/** A labelled block of the resting list. Indices stay global so navigation ignores the grouping. */
+interface QuickGroup {
+  label: string;
+  items: CatalogItem[];
+}
+
+/** One entry of the footer line. A key with no label is a bare note, like the current scope. */
+interface Hint {
+  key?: string;
+  label: string;
+  scope?: boolean;
+}
 
 export class PaletteApp {
   private readonly root: HTMLElement;
@@ -65,21 +79,21 @@ export class PaletteApp {
     placeholder: 'Search effects, transitions, presets\u2026',
   });
 
-  private readonly selectionNode = el('span', { class: 'meta' });
-
-  private readonly scopeNode = el('button', { class: 'meta meta--button', title: 'Tab cycles the scope' });
-
   private readonly body = el('div', { class: 'results-host' });
 
   private readonly statusNode = el('span', { class: 'status' });
 
-  private readonly hintKeys = el('div', { class: 'hints__keys' });
+  private readonly hintNode = el('div', { class: 'hints' });
+
+  private readonly footNode = el('footer', { class: 'foot' });
 
   private settings: Settings = defaultSettings();
 
   private catalog: IndexedCatalog | null = null;
 
   private results: RankedItem[] = [];
+
+  private quick: QuickGroup[] = [];
 
   private active = 0;
 
@@ -95,7 +109,8 @@ export class PaletteApp {
 
   private toastTimer = 0;
 
-  private readonly gearButton = el('button', { class: 'icon-button', title: 'Settings', text: '\u2699' });
+  /** Set once a check finds a newer release, so the resting line can mention it. */
+  private updateNote = '';
 
   private readonly transitionDialog = new TransitionDialog(
     {
@@ -161,7 +176,6 @@ export class PaletteApp {
     if (cached) {
       this.catalog = cached;
       this.backfillRemembered();
-      this.setStatus(`${cached.items.length} items`, 'ok');
       if (this.input.value.trim() !== '') {
         this.updateResults();
       }
@@ -205,25 +219,15 @@ export class PaletteApp {
 
   private buildChrome(): void {
     clear(this.root);
-    const header = el('header', { class: 'search' }, [
-      el('span', { class: 'search__prompt', text: '\u203a' }),
-      this.input,
-      this.gearButton,
-    ]);
-    const footer = el('footer', { class: 'foot' }, [
-      this.statusNode,
-      el('span', { class: 'foot__right' }, [this.selectionNode, this.scopeNode, this.hintKeys]),
-    ]);
-    this.root.appendChild(header);
+    this.footNode.appendChild(this.statusNode);
+    this.footNode.appendChild(this.hintNode);
+    this.root.appendChild(el('header', { class: 'search' }, [this.input]));
     this.root.appendChild(this.body);
-    this.root.appendChild(footer);
-    this.scopeNode.addEventListener('click', () => this.cycleScope(1));
-    this.renderScopes();
+    this.root.appendChild(this.footNode);
     this.renderHints();
   }
 
   private bindEvents(): void {
-    this.gearButton.addEventListener('click', () => this.openSettings());
     this.input.addEventListener('input', () => {
       this.active = 0;
       this.updateResults();
@@ -254,6 +258,8 @@ export class PaletteApp {
     this.settingsSheet.closed();
     this.input.value = '';
     this.active = 0;
+    // Every summon starts clean: how the last thing went is stale news by now.
+    this.setStatus('');
     this.settings = loadSettings();
     this.applyTheme();
     this.updateResults();
@@ -282,6 +288,13 @@ export class PaletteApp {
   private setStatus(text: string, kind: 'info' | 'ok' | 'error' = 'info'): void {
     this.statusNode.textContent = text;
     this.statusNode.className = `status${kind === 'ok' ? ' status--ok' : ''}${kind === 'error' ? ' status--error' : ''}`;
+    this.syncFoot();
+  }
+
+  /** The footer earns its line or it does not appear at all. */
+  private syncFoot(): void {
+    const empty = this.statusNode.textContent === '' && this.hintNode.childElementCount === 0;
+    this.footNode.className = `foot${empty ? ' foot--hidden' : ''}`;
   }
 
   private toast(message: string, kind: 'info' | 'error' = 'info'): void {
@@ -298,62 +311,64 @@ export class PaletteApp {
   private async refreshSequence(): Promise<void> {
     const response = await callHost<SequenceInfo>({ op: 'sequenceInfo' });
     this.sequence = response.ok && response.data ? response.data : null;
-    this.renderSelectionPill();
+    this.renderHints();
   }
 
-  private renderSelectionPill(): void {
+  /** What Enter is aimed at right now, which is the one thing worth saying before pressing it. */
+  private targetLabel(): string {
     if (!this.sequence || !this.sequence.hasSequence) {
-      this.selectionNode.textContent = 'no sequence';
-      this.selectionNode.className = 'meta meta--warn';
-      return;
+      return 'no sequence';
     }
     const count = this.sequence.selectedClips;
-    if (count === 0) {
-      this.selectionNode.textContent = 'no selection';
-      this.selectionNode.className = 'meta meta--warn';
-      return;
-    }
-    this.selectionNode.textContent = `${count} clip${count === 1 ? '' : 's'}`;
-    this.selectionNode.className = 'meta';
+    return count === 0 ? 'nothing selected' : `apply to ${count} clip${count === 1 ? '' : 's'}`;
   }
 
-  private renderScopes(): void {
-    // 'all' is the default, so saying so would be noise; Tab makes the label appear.
-    const scope = SCOPES.find((entry) => entry.id === this.scope);
-    this.scopeNode.textContent = scope && scope.id !== 'all' ? scope.label.toLowerCase() : '';
-  }
-
-  /** Hints are only shown where they are not in the way: at rest, and inside the two sheets. */
+  /**
+   * Hints stay out of the way while you type. The scope is the exception: it changes what the
+   * search returns, so it stays visible for as long as it is not the default.
+   */
   private renderHints(): void {
-    clear(this.hintKeys);
-    const hints: Array<[string, string]> = this.hintsFor();
-    for (const [key, label] of hints) {
-      this.hintKeys.appendChild(el('span', {}, [el('kbd', { text: key }), label]));
+    clear(this.hintNode);
+    for (const hint of this.hintsFor()) {
+      this.hintNode.appendChild(
+        el('span', { class: hint.scope ? 'hints__scope' : undefined }, [
+          hint.key ? el('span', { class: 'hints__key', text: hint.key }) : null,
+          hint.label,
+        ]),
+      );
     }
+    this.syncFoot();
   }
 
-  private hintsFor(): Array<[string, string]> {
+  private hintsFor(): Hint[] {
     switch (this.view) {
       case 'transition':
         return [
-          ['\u2191\u2193', 'duration'],
-          ['\u21b5', 'apply'],
+          { key: '\u2191\u2193', label: 'duration' },
+          { key: '\u21b5', label: 'apply' },
         ];
       case 'settings':
-        return [['esc', 'back']];
+        return [{ key: 'esc', label: 'back' }];
       case 'inspect':
         return [
-          ['\u21b5', 'save preset'],
-          ['esc', 'back'],
+          { key: '\u21b5', label: 'save preset' },
+          { key: 'esc', label: 'back' },
         ];
-      case 'search':
-        return this.input.value.trim() === ''
-          ? [
-              ['\u21b5', 'apply'],
-              ['\u2318Z', 'undo'],
-              ['\u2318I', 'effects'],
-            ]
-          : [];
+      case 'search': {
+        const scope = SCOPES.find((entry) => entry.id === this.scope);
+        const hints: Hint[] =
+          scope && scope.id !== 'all' ? [{ key: '\u21e5', label: scope.label.toLowerCase(), scope: true }] : [];
+        if (this.input.value.trim() !== '') {
+          return hints;
+        }
+        hints.push(
+          { key: '\u21b5', label: this.targetLabel() },
+          { key: '\u2318I', label: 'effects on clip' },
+          { key: '\u2318Z', label: 'undo' },
+          { key: '\u2318,', label: this.updateNote === '' ? 'settings' : this.updateNote },
+        );
+        return hints;
+      }
       default: {
         const exhaustive: never = this.view;
         throw new Error(`Unhandled view: ${String(exhaustive)}`);
@@ -369,21 +384,30 @@ export class PaletteApp {
   }
 
   /**
-   * What the palette offers before anything is typed: the last things applied, then favourites.
-   * They come from the remembered copies in settings, so this renders and applies without the
-   * effect index being loaded at all.
+   * What the palette offers before anything is typed: the last things applied, then favourites
+   * that are not already up there. They come from the remembered copies in settings, so this
+   * renders and applies without the effect index being loaded at all.
    */
-  private quickItems(): CatalogItem[] {
-    const out: CatalogItem[] = [];
+  private quickGroups(): QuickGroup[] {
     const seen = new Set<string>();
-    for (const id of [...this.settings.recents, ...this.settings.favorites]) {
-      const item = this.settings.remembered[id];
-      if (item && !seen.has(id)) {
-        seen.add(id);
-        out.push(item);
+    const take = (ids: string[], limit: number): CatalogItem[] => {
+      const out: CatalogItem[] = [];
+      for (const id of ids) {
+        const item = this.settings.remembered[id];
+        if (item && !seen.has(id)) {
+          seen.add(id);
+          out.push(item);
+          if (out.length === limit) {
+            break;
+          }
+        }
       }
-    }
-    return out.slice(0, QUICK_LIMIT);
+      return out;
+    };
+    return [
+      { label: 'Recent', items: take(this.settings.recents, RECENT_LIMIT) },
+      { label: 'Favorites', items: take(this.settings.favorites, FAVORITE_LIMIT) },
+    ].filter((group) => group.items.length > 0);
   }
 
   private updateResults(): void {
@@ -392,8 +416,9 @@ export class PaletteApp {
     }
     const query = this.input.value;
     if (query.trim() === '') {
-      // Nothing typed: no ranking, no index needed, at most a handful of chips to build.
-      this.results = this.quickItems().map((item) => ({ item, score: 0, indices: [] }));
+      // Nothing typed: no ranking, no index needed, at most a handful of rows to build.
+      this.quick = this.quickGroups();
+      this.results = this.quick.flatMap((group) => group.items).map((item) => ({ item, score: 0, indices: [] }));
     } else {
       const dynamic = parseMotionQuery(query);
       this.results = rank(this.allItems(), this.catalog?.haystacks ?? new Map(), query, this.scope, this.settings);
@@ -413,11 +438,11 @@ export class PaletteApp {
 
   private renderResults(): void {
     clear(this.body);
+    this.body.className = 'results-host';
     if (this.input.value.trim() === '') {
-      this.renderQuickBar();
+      this.renderQuickList();
       return;
     }
-    this.body.className = 'results-host';
     if (this.results.length === 0) {
       this.body.appendChild(
         el('div', { class: 'empty' }, [this.catalog ? `No match for \u201c${this.input.value.trim()}\u201d` : 'Indexing\u2026']),
@@ -454,59 +479,38 @@ export class PaletteApp {
       },
       [
         this.settings.showTypeBadges ? el('span', { class: 'row__badge', text: badgeFor(entry.item.kind) }) : null,
-        name,
         this.settings.favorites.includes(entry.item.id) ? el('span', { class: 'row__star', text: '\u2605' }) : null,
+        name,
         el('span', { class: 'row__group', text: entry.item.group ?? '' }),
       ],
     );
   }
 
-  private renderQuickBar(): void {
-    this.body.className = 'quick-host';
+  /** The same rows as a search, under the one label that says where they came from. */
+  private renderQuickList(): void {
     if (this.results.length === 0) {
       this.body.appendChild(el('div', { class: 'empty' }, ['Type to search effects, transitions and presets.']));
       return;
     }
-    const bar = el('div', { class: 'quick' });
-    this.results.forEach((entry, index) => {
-      bar.appendChild(
-        el(
-          'button',
-          {
-            class: `chip${index === this.active ? ' chip--active' : ''}`,
-            onclick: () => {
-              this.active = index;
-              void this.applyActive('default');
-            },
-          },
-          [
-            this.settings.favorites.includes(entry.item.id) ? el('span', { class: 'chip__star', text: '\u2605' }) : null,
-            el('span', { text: entry.item.name }),
-          ],
-        ),
-      );
-    });
-    this.body.appendChild(bar);
+    const list = el('ul', { class: 'results' });
+    let index = 0;
+    for (const group of this.quick) {
+      list.appendChild(el('li', { class: 'cap', text: group.label }));
+      for (const item of group.items) {
+        list.appendChild(this.renderRow({ item, score: 0, indices: [] }, index));
+        index += 1;
+      }
+    }
+    this.body.appendChild(list);
     this.scrollActiveIntoView();
   }
 
   private scrollActiveIntoView(): void {
-    const chip = this.body.querySelector('.chip--active') as HTMLElement | null;
-    if (chip) {
-      const bar = chip.parentElement;
-      if (bar && chip.offsetLeft + chip.offsetWidth > bar.scrollLeft + bar.clientWidth) {
-        bar.scrollLeft = chip.offsetLeft + chip.offsetWidth - bar.clientWidth;
-      } else if (bar && chip.offsetLeft < bar.scrollLeft) {
-        bar.scrollLeft = chip.offsetLeft;
-      }
+    const container = this.body.querySelector('.results') as HTMLElement | null;
+    const row = container?.querySelector('.row--active') as HTMLElement | null;
+    if (!container || !row) {
       return;
     }
-    const list = this.body.querySelector('.results');
-    const row = list?.children[this.active] as HTMLElement | undefined;
-    if (!row || !list) {
-      return;
-    }
-    const container = list as HTMLElement;
     const top = row.offsetTop;
     const bottom = top + row.offsetHeight;
     if (top < container.scrollTop) {
@@ -604,7 +608,7 @@ export class PaletteApp {
     const next = (index + direction + SCOPES.length) % SCOPES.length;
     this.scope = SCOPES[next].id;
     this.active = 0;
-    this.renderScopes();
+    this.renderHints();
     this.updateResults();
   }
 
@@ -638,7 +642,9 @@ export class PaletteApp {
       this.catalog = await fetchCatalog(this.settings.presetSources);
       this.backfillRemembered();
       const presets = this.catalog.items.filter((item) => item.kind === 'preset').length;
-      this.setStatus(`${this.catalog.items.length} items \u00b7 ${presets} presets`, 'ok');
+      // The size of the index is worth one toast when it was just rebuilt, not a permanent line.
+      this.setStatus('');
+      this.toast(`${this.catalog.items.length} items \u00b7 ${presets} presets`);
       if (this.catalog.warnings.length > 0) {
         this.toast(this.catalog.warnings[0], 'error');
       }
@@ -655,8 +661,6 @@ export class PaletteApp {
       return;
     }
     this.catalog = await refreshPresets(this.catalog, this.settings.presetSources);
-    const presets = this.catalog.items.filter((item) => item.kind === 'preset').length;
-    this.setStatus(`${this.catalog.items.length} items \u00b7 ${presets} presets`);
     // A preset file that will not parse is worth a word on the warm path too, not just on a
     // full reindex: the warm path is the common one.
     if (this.catalog.warnings.length > 0) {
@@ -855,9 +859,10 @@ export class PaletteApp {
     void this.refreshSequence();
   }
 
+  /** With no gear to mark, an available update lives in the resting line next to its shortcut. */
   private flagUpdate(available: boolean, remote: string): void {
-    this.gearButton.classList.toggle('icon-button--flag', available);
-    this.gearButton.title = available ? `FX Premiere ${remote} is available` : 'Settings';
+    this.updateNote = available ? `update to ${remote}` : '';
+    this.renderHints();
   }
 
   private persistAndNotify(restartHelper: boolean): void {

@@ -71,6 +71,8 @@ shot('At rest, straight after the shortcut');
 const input = window.document.querySelector('.search__input');
 const type = async (text) => {
   input.value = text;
+  // innerHTML does not carry the live value, and these frames are meant to be looked at.
+  input.setAttribute('value', text);
   input.dispatchEvent(new window.Event('input', { bubbles: true }));
   await settle(4);
 };
@@ -88,10 +90,11 @@ const page = `<!doctype html>
 <html><head><meta charset="utf-8"><title>FX Premiere UI</title>
 <style>${css}</style>
 <style>
-  body { background: #101114; padding: 28px; overflow: auto; display: flex; gap: 26px; align-items: flex-start; }
-  figure { margin: 0; }
+  body { background: #1b1c1f; padding: 26px 30px; overflow: auto; }
+  figure { margin: 0 0 24px; }
   figcaption { color: #8b8d96; font: 11px/1.4 -apple-system, sans-serif; margin-bottom: 8px; }
-  .frame { width: 460px; height: 300px; display: flex; }
+  .frame { width: 520px; height: 300px; display: flex; }
+  .frame .app { width: 100%; }
 </style>
 </head><body>
 ${frames

@@ -64,11 +64,12 @@ const press = async (key, modifiers = {}) => {
 };
 
 const rows = () => [...window.document.querySelectorAll('.row')];
-const chips = () => [...window.document.querySelectorAll('.quick .chip')];
-const chipNames = () => chips().map((chip) => chip.textContent.replace('\u2605', ''));
 const rowNames = () => rows().map((row) => row.querySelector('.row__name')?.textContent ?? '');
 const activeRow = () => window.document.querySelector('.row--active')?.querySelector('.row__name')?.textContent ?? '';
 const status = () => window.document.querySelector('.status')?.textContent ?? '';
+const toastText = () => window.document.querySelector('.toast')?.textContent ?? '';
+/** The one footer line: hints at rest, the outcome of the last thing pressed otherwise. */
+const foot = () => window.document.querySelector('.foot:not(.foot--hidden)')?.textContent ?? '';
 
 // The panel reads the preset folders out of the settings file, so seed it before booting.
 const settingsDir = join(stage, 'Library', 'Application Support', 'FX Premiere');
@@ -90,12 +91,8 @@ check('key interest is registered with the host', cepCalls.keyInterest === 1, St
 // Nothing is rendered until something is typed: that is what makes the palette open fast.
 check('the resting palette builds no result rows', rows().length === 0, `${rows().length} rows`);
 check('a fresh profile invites you to type', /Type to search/.test(window.document.body.textContent ?? ''));
-check('the status line reports the index size', /items \u00b7 \d+ presets/.test(status()), status());
-check(
-  'the clip count reflects the mock timeline',
-  window.document.querySelector('.meta')?.textContent === '3 clips',
-  window.document.querySelector('.meta')?.textContent ?? '',
-);
+check('a finished index is announced once, not parked in the footer', /items \u00b7 \d+ presets/.test(toastText()), toastText());
+check('the clip count reflects the mock timeline', /apply to 3 clips/.test(foot()), foot());
 check(
   'the legacy presetFolders setting is migrated',
   JSON.parse(readFileSync(join(settingsDir, 'settings.json'), 'utf8')).presetFolders !== undefined,
@@ -106,15 +103,15 @@ check(
   rowNames().some((name) => name === 'Soft Blur'),
   JSON.stringify(rowNames().slice(0, 8)),
 );
-await type('');
-const indexedItems = () => Number(/(\d+) items/.exec(status())?.[1] ?? 0);
-check('the whole index is available but unrendered', indexedItems() > 120, status());
 await type('e');
+const hiddenMatches = () => Number(/\+(\d+) more/.exec(window.document.querySelector('.more')?.textContent ?? '')?.[1] ?? 0);
 check(
   'a broad query renders a window instead of every match',
   rows().length <= 50 && Boolean(window.document.querySelector('.more')),
   `${rows().length} rows`,
 );
+check('the whole index is searched even though it is not drawn', rows().length + hiddenMatches() > 120, `${rows().length} + ${hiddenMatches()}`);
+check('the footer stays out of the way while typing', foot() === '', foot());
 await type('');
 
 console.log('\nFuzzy search and keyboard navigation');
@@ -129,8 +126,8 @@ check('ArrowDown moves the active row', activeRow() !== beforeArrow, `${beforeAr
 await press('ArrowUp');
 check('ArrowUp returns to the first row', activeRow() === beforeArrow, activeRow());
 
-// The default scope shows no label at all, so a visible label means Tab did something.
-const scopeLabel = () => window.document.querySelector('.meta--button')?.textContent ?? '';
+// The default scope is not worth a word, so a visible label means Tab did something.
+const scopeLabel = () => window.document.querySelector('.hints__scope')?.textContent ?? '';
 await press('Tab');
 check('Tab switches the scope', scopeLabel() !== '', scopeLabel());
 await press('Tab', { shiftKey: true });
@@ -228,10 +225,11 @@ check('the palette leaves the dialog', !window.document.querySelector('.transiti
 check('the query is cleared for the next summon', window.document.querySelector('.search__input')?.value === '');
 const closesAfterTransition = cepCalls.closeExtension;
 check(
-  'the last thing applied is the first chip, ready for Enter',
-  chipNames()[0] === 'Cross Dissolve' && chips()[0].className.includes('chip--active'),
-  JSON.stringify(chipNames()),
+  'the last thing applied tops the resting list, ready for Enter',
+  rowNames()[0] === 'Cross Dissolve' && rows()[0].className.includes('row--active'),
+  JSON.stringify(rowNames()),
 );
+check('the resting list says where those rows came from', /Recent/.test(window.document.body.textContent ?? ''));
 // Arrow keys drive the duration field while the dialog owns the view, so a moving active row
 // proves the palette really went back to searching rather than only looking like it.
 await type('dis');
@@ -293,7 +291,7 @@ const sheetText = () => window.document.querySelector('.sheet')?.textContent ?? 
 check('the installed version is shown', /FX Premiere 1\.0\.0/.test(sheetText()), sheetText().slice(0, 90));
 const upToDate = await waitFor(() => /latest release/.test(sheetText()), { label: 'the update check to finish' });
 check('settings has an update section that checks on open', upToDate, sheetText().slice(0, 200));
-check('no update flag is shown when current', !window.document.querySelector('.icon-button--flag'));
+check('nothing is flagged while the installed version is current', !/update to/.test(foot()), foot());
 check(
   'the helper status is surfaced',
   /Listener active for/.test(window.document.querySelector('.sheet')?.textContent ?? ''),
@@ -349,7 +347,6 @@ const offered = await waitFor(() => versionButton()?.textContent === 'Update to 
 check('a newer release turns the button into an update action', offered, versionButton()?.textContent ?? '');
 check('the update is announced with both versions', /1\.0\.0 → 9\.9\.9 available/.test(sheetText()), sheetText().slice(0, 220));
 check('only the first line of the release notes is shown', /Arregla el zoom/.test(sheetText()) && !/mas detalles/.test(sheetText()));
-check('the gear is flagged so the update is visible from the palette', Boolean(window.document.querySelector('.icon-button--flag')));
 
 // The download endpoint is unreachable on purpose: a failed install must not break the panel.
 versionButton().dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
@@ -363,6 +360,7 @@ check('the update offer comes back so it can be retried', versionButton()?.textC
 const closesBeforeSettingsEscape = cepCalls.closeExtension;
 await press('Escape');
 check('Escape leaves settings', !window.document.querySelector('.sheet'));
+check('the update found in settings is carried back to the palette line', /update to 9\.9\.9/.test(foot()), foot());
 check(
   'Escape in settings does not close the panel',
   cepCalls.closeExtension === closesBeforeSettingsEscape,
@@ -374,13 +372,13 @@ world.select('A.mp4', 'B.mp4', 'audio.wav');
 await settle(10);
 cep.emit('com.fxpremiere.event.trigger', { settings: false });
 await settle(20);
-check('summoning shows the quick bar', chips().length > 0, JSON.stringify(chipNames()));
+check('summoning shows the recents', rows().length > 0, JSON.stringify(rowNames()));
 check(
   'the most recent item is preselected',
-  chips()[0].className.includes('chip--active'),
-  JSON.stringify(chipNames().slice(0, 3)),
+  rows()[0].className.includes('row--active'),
+  JSON.stringify(rowNames().slice(0, 3)),
 );
-const chipTarget = chipNames()[0];
+const chipTarget = rowNames()[0];
 const componentsBefore = world.clips.clipB.componentList.length;
 await press('Enter');
 await settle(10);
@@ -451,11 +449,7 @@ await press('Escape');
 world.select();
 cep.emit('com.fxpremiere.event.trigger', { settings: false });
 await settle(20);
-check(
-  'the footer warns that nothing is selected',
-  window.document.querySelector('.meta--warn')?.textContent === 'no selection',
-  window.document.querySelector('.meta')?.textContent ?? '',
-);
+check('the footer says there is nothing to apply to', /nothing selected/.test(foot()), foot());
 await type('gaussian');
 await press('Enter');
 check('the failure is reported in the status line', /select at least one clip/i.test(status()), status());

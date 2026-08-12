@@ -1,17 +1,19 @@
 :root {
   --accent: #4fc3f7;
   --accent-dim: rgba(79, 195, 247, 0.14);
-  --bg: #16181b;
-  --bg-raised: #1b1e22;
-  --bg-input: #16181b;
-  --border: #24272c;
-  --border-strong: #33373d;
-  --text: #ecedf0;
-  --text-dim: #8b8d96;
-  --text-faint: #5f616b;
+  --bg: #101113;
+  --bg-raised: #191b1f;
+  --bg-input: #101113;
+  --border: #23252a;
+  --border-strong: #2f3339;
+  /* Dimmer than the panel border: it separates the field from the list without drawing a line. */
+  --hairline: #1c1e22;
+  --text: #e2e5ea;
+  --text-dim: #9297a0;
+  --text-faint: #5d6169;
   --danger: #ff6b6b;
   --ok: #5ddba0;
-  --row-height: 32px;
+  --row-height: 28px;
   --font-scale: 1;
   --font: "Adobe Clean", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   --mono: "SF Mono", ui-monospace, Menlo, Consolas, monospace;
@@ -41,23 +43,19 @@ body {
   height: 100%;
   background: var(--bg);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: 10px;
   overflow: hidden;
 }
 
+/* The field and the list are the whole interface: one hairline between them and nothing else. */
 .search {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 13px 14px;
+  height: calc(44px * var(--font-scale));
+  flex-shrink: 0;
+  padding: 0 15px;
   background: var(--bg-input);
-}
-
-.search__prompt {
-  font-family: var(--mono);
-  font-size: calc(19px * var(--font-scale));
-  color: var(--accent);
-  line-height: 1;
+  border-bottom: 1px solid var(--hairline);
 }
 
 .search__input {
@@ -68,9 +66,8 @@ body {
   background: transparent;
   color: var(--text);
   font-family: var(--font);
-  font-size: calc(19px * var(--font-scale));
-  font-weight: 300;
-  letter-spacing: 0.2px;
+  font-size: calc(14px * var(--font-scale));
+  letter-spacing: 0.1px;
   user-select: text;
   cursor: text;
 }
@@ -79,34 +76,13 @@ body {
   color: var(--text-faint);
 }
 
-.search__meta {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-shrink: 0;
-}
-
-.meta {
-  font-size: calc(10.5px * var(--font-scale));
+/* The only label in the list: which handful of items is being offered before anything is typed. */
+.cap {
+  padding: 13px 15px 5px;
   color: var(--text-faint);
-  white-space: nowrap;
-}
-
-.meta--warn {
-  color: var(--danger);
-}
-
-.meta--button {
-  border: 0;
-  background: transparent;
-  color: var(--text-faint);
-  padding: 0;
-  cursor: default;
-  font-family: var(--font);
-}
-
-.meta--button:hover {
-  color: var(--accent);
+  font-size: calc(9.5px * var(--font-scale));
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
 }
 
 .icon-button {
@@ -123,50 +99,6 @@ body {
 .icon-button:hover {
   color: var(--text);
   background: rgba(255, 255, 255, 0.06);
-}
-
-/* Marks the gear when a newer release is waiting in Settings. */
-.icon-button--flag {
-  color: var(--accent);
-  position: relative;
-}
-
-.icon-button--flag::after {
-  content: '';
-  position: absolute;
-  top: 2px;
-  right: 2px;
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: var(--accent);
-}
-
-.quick-host {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  align-items: flex-start;
-  overflow: hidden;
-}
-
-.quick {
-  display: flex;
-  gap: 6px;
-  padding: 10px 14px 12px;
-  overflow-x: auto;
-  scrollbar-width: none;
-}
-
-.quick::-webkit-scrollbar {
-  display: none;
-}
-
-.chip__star {
-  color: var(--accent);
-  font-size: calc(8px * var(--font-scale));
-  margin-right: 4px;
-  vertical-align: 1px;
 }
 
 .results-host {
@@ -201,21 +133,22 @@ body {
   align-items: center;
   gap: 10px;
   height: calc(var(--row-height) * var(--font-scale));
-  padding: 0 14px;
+  padding: 0 15px;
+  /* Every row reserves the bar so the selection never shifts the text sideways. */
+  border-left: 2px solid transparent;
   cursor: default;
 }
 
 .row--active {
-  background: var(--accent-dim);
-  box-shadow: inset 2px 0 0 var(--accent);
+  border-left-color: var(--accent);
 }
 
 .row--active .row__name {
-  color: var(--accent);
+  color: #7fd3f9;
 }
 
 .more {
-  padding: 6px 14px 10px;
+  padding: 6px 15px 10px;
   color: var(--text-faint);
   font-size: calc(10.5px * var(--font-scale));
 }
@@ -244,7 +177,7 @@ body {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  font-size: calc(13px * var(--font-scale));
+  font-size: calc(12.5px * var(--font-scale));
 }
 
 .row__name mark {
@@ -266,8 +199,9 @@ body {
 .row__star {
   flex-shrink: 0;
   color: var(--accent);
-  font-size: calc(11px * var(--font-scale));
-  width: 12px;
+  font-size: calc(9px * var(--font-scale));
+  opacity: 0.75;
+  width: 10px;
 }
 
 .empty {
@@ -278,39 +212,37 @@ body {
   line-height: 1.6;
 }
 
+/* One quiet line, and only when it has something to say: what a key does while you are at rest,
+   or how the last thing you pressed went. Never both, never while you are typing. */
 .foot {
   display: flex;
-  align-items: center;
+  align-items: baseline;
   justify-content: space-between;
   gap: 12px;
-  padding: 7px 14px;
-  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+  padding: 11px 15px 12px;
   color: var(--text-faint);
   font-size: calc(10.5px * var(--font-scale));
 }
 
-.foot__right {
+.foot--hidden {
+  display: none;
+}
+
+.hints {
   display: flex;
-  align-items: center;
-  gap: 10px;
+  gap: 11px;
   flex-shrink: 0;
 }
 
-.hints__keys {
-  display: flex;
-  gap: 10px;
+.hints__key {
+  color: var(--text-dim);
+  font-family: var(--mono);
+  margin-right: 4px;
 }
 
-kbd {
-  font-family: var(--mono);
-  font-size: calc(10px * var(--font-scale));
-  color: var(--text-dim);
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid var(--border);
-  border-bottom-width: 2px;
-  border-radius: 4px;
-  padding: 1px 5px;
-  margin-right: 4px;
+.hints__scope {
+  color: var(--accent);
 }
 
 .status {
@@ -387,7 +319,8 @@ kbd {
   color: var(--text-faint);
 }
 
-input[type="text"],
+/* Sheet fields only: the search line is bare on purpose and must not grow a box. */
+input[type="text"]:not(.search__input),
 input[type="number"],
 select {
   background: var(--bg-input);
@@ -407,7 +340,7 @@ input[type="number"] {
   text-align: right;
 }
 
-input[type="text"]:focus,
+input[type="text"]:not(.search__input):focus,
 input[type="number"]:focus,
 select:focus {
   border-color: var(--accent);
@@ -637,7 +570,7 @@ input[type="color"] {
 .toast {
   position: absolute;
   left: 50%;
-  bottom: 44px;
+  bottom: 20px;
   transform: translateX(-50%);
   background: rgba(10, 10, 12, 0.94);
   border: 1px solid var(--border-strong);

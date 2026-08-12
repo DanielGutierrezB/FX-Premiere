@@ -27,19 +27,23 @@ Ctrl + Space  →  gsblr  →  Enter  →  Gaussian Blur en los 8 clips seleccio
   `rot 45`, `anchor 100 200`. Acepta valores relativos (`scale +10`) y porcentajes
   (`pos 50% 50%`), sin abrir Controles de efectos.
 - **Comandos de edición**: Scale to Frame Size, Reset Motion & Opacity, Toggle Clip Enable.
-- **Barra de recientes y favoritos**: al abrir la paleta, sin escribir nada, ves lo último que
+- **Lista de recientes y favoritos**: al abrir la paleta, sin escribir nada, ves lo último que
   aplicaste con el primer elemento ya seleccionado. Enter lo repite. Nada más se dibuja hasta
   que escribes, que es lo que hace que abra rápido.
 - **Ver los efectos de un clip y guardarlos como preset**: `Cmd/Ctrl + I` lista lo que el clip
   tiene puesto (con cuántos parámetros y cuántos tienen keyframes), le pones nombre y queda como
   preset propio, buscable al instante y reaplicable con los mismos valores y keyframes. Puedes
   incluir o excluir Motion y Opacidad.
+- **Interfaz desnuda a propósito**: el campo y la lista, nada más. La fila seleccionada se marca
+  con una barra celeste, sin rellenos, y la línea de abajo solo aparece cuando tiene algo que
+  decir: los atajos y a cuántos clips va Enter mientras no escribes, o cómo salió lo último que
+  aplicaste. Mientras escribes, desaparece.
 - **Deshacer** desde la paleta con `Cmd/Ctrl + Z`.
 - **Favoritos, recientes y ranking por uso**: lo que más usas sube solo.
 - **Atajo configurable** desde los ajustes del panel (por defecto `Ctrl + Space`).
 - **Actualización desde el propio panel**: los ajustes traen la sección *Updates* con la versión
   instalada y un botón que consulta los releases de GitHub, baja el `.zxp` y lo instala encima
-  de la extensión. Cuando hay versión nueva el engranaje de la barra queda marcado.
+  de la extensión. Cuando hay versión nueva la línea de abajo lo dice al abrir la paleta.
 
 ## Instalación
 
@@ -83,7 +87,7 @@ iscc /DAppVersion=$(node -p "require('./package.json').version") scripts\install
 | `Shift + Enter` | invertir el diálogo de transición (mostrarlo u omitirlo) |
 | `Cmd/Ctrl + Enter` | aplicar sin cerrar la paleta |
 | `Tab` / `Shift + Tab` | cambiar de ámbito (Todo, Efectos, Transiciones, Presets, Comandos, Favoritos) |
-| `←` `→` | moverse por la barra de recientes cuando no has escrito nada |
+| `←` `→` | moverse por la lista de recientes cuando no has escrito nada |
 | `Cmd/Ctrl + D` | marcar o desmarcar favorito |
 | `Cmd/Ctrl + I` | ver los efectos del clip y guardarlos como preset |
 | `Cmd/Ctrl + Z` | deshacer el último cambio |
@@ -96,7 +100,7 @@ en cinco) y `Enter` aplica.
 
 ## Cambiar el atajo
 
-Ajustes (`Cmd/Ctrl + ,` o el engranaje) > *Open the palette* > presiona la combinación que
+Ajustes (`Cmd/Ctrl + ,`, o escribiendo «settings») > *Open the palette* > presiona la combinación que
 quieras. Se aplica al instante, sin reiniciar Premiere.
 
 Dos advertencias sobre `Ctrl + Space`:
@@ -111,13 +115,13 @@ listener.
 
 ## Actualizar
 
-Ajustes (`Cmd/Ctrl + ,` o el engranaje) > sección *Updates*. Al abrir los ajustes consulta el
+Ajustes (`Cmd/Ctrl + ,`) > sección *Updates*. Al abrir los ajustes consulta el
 último release de GitHub:
 
 - Si estás al día lo dice y no hace nada más.
 - Si hay una versión nueva el botón pasa a *Update to X*: baja el `.zxp` del release, lo
-  descomprime encima de la extensión instalada y recarga el panel. El engranaje de la barra
-  queda marcado con un punto para que lo veas sin abrir los ajustes. La recarga solo afecta al
+  descomprime encima de la extensión instalada y recarga el panel. La línea inferior de la paleta
+  menciona la versión nueva junto a `Cmd/Ctrl + ,`, para que lo veas sin abrir los ajustes. La recarga solo afecta al
   panel: el listener en segundo plano sigue con la versión anterior hasta que reinicies Premiere.
 - Si no hay red, muestra el motivo en vez de fingir que estás actualizado.
 

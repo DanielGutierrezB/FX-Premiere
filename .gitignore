@@ -9,3 +9,6 @@ certs/
 *.exe
 .DS_Store
 .debug
+
+# Maquetas locales de interfaz, no forman parte del paquete
+.mockups/
