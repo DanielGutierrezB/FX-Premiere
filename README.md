@@ -105,7 +105,8 @@ Ajustes (`Cmd/Ctrl + ,` o el engranaje) > sección *Updates*. Al abrir los ajust
 - Si estás al día lo dice y no hace nada más.
 - Si hay una versión nueva el botón pasa a *Update to X*: baja el `.zxp` del release, lo
   descomprime encima de la extensión instalada y recarga el panel. El engranaje de la barra
-  queda marcado con un punto para que lo veas sin abrir los ajustes.
+  queda marcado con un punto para que lo veas sin abrir los ajustes. La recarga solo afecta al
+  panel: el listener en segundo plano sigue con la versión anterior hasta que reinicies Premiere.
 - Si no hay red, muestra el motivo en vez de fingir que estás actualizado.
 
 En una instalación de desarrollo (la carpeta CEP es un symlink a `dist/`) el botón se desactiva

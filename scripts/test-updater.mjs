@@ -141,7 +141,7 @@ check('a newer release without a .zxp explains itself', noAsset.available === fa
 
 process.env.FXP_UPDATE_ENDPOINT = `${base}/missing`;
 const failed = await updater.checkForUpdate();
-check('an unreachable release surfaces the reason', failed.error.includes('404'), failed.error);
+check('a missing release explains that a private repo needs a token', /private repository needs a token/.test(failed.error), failed.error);
 check('a failed check still reports the local version', failed.current === '1.0.0', failed.current);
 
 console.log('\nApplying the update');

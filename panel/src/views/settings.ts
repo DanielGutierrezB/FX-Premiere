@@ -379,7 +379,9 @@ export class SettingsSheet {
     }
     // Stays in the installing state until the reload, so the row cannot claim to be up to date
     // while the panel is still running the previous build.
-    this.host.toast(`FX Premiere ${target} installed. Reloading\u2026`);
+    // Reloading only refreshes the panel; the invisible service keeps the previous build until
+    // Premiere is restarted, so say so instead of implying the update is fully live.
+    this.host.toast(`FX Premiere ${target} installed. Reloading the panel \u00b7 restart Premiere to finish.`);
     window.setTimeout(() => {
       try {
         window.location.reload();

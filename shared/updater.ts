@@ -103,6 +103,11 @@ const getText = (url: string, redirects = 0): Promise<string> =>
         getText(redirectTarget(location, url), redirects + 1).then(resolve, reject);
         return;
       }
+      if (status === 404) {
+        response.resume();
+        reject(new Error('no published release found (a private repository needs a token)'));
+        return;
+      }
       if (status !== 200) {
         response.resume();
         reject(new Error(`GitHub answered ${status}`));
