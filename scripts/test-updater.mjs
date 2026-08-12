@@ -11,18 +11,10 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import * as esbuild from 'esbuild';
 
+import { check, finish } from './lib/check.mjs';
+
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const nodeRequire = createRequire(import.meta.url);
-
-let failures = 0;
-const check = (label, condition, detail = '') => {
-  if (condition) {
-    console.log(`  ok    ${label}`);
-  } else {
-    console.log(`  FAIL  ${label}${detail ? ` :: ${detail}` : ''}`);
-    failures += 1;
-  }
-};
 
 const stage = mkdtempSync(join(tmpdir(), 'fxp-updater-'));
 const installed = join(stage, 'extensions', 'com.fxpremiere.suite');
@@ -190,5 +182,4 @@ try {
 check('self-update refuses to overwrite a development install', /development install/i.test(devError), devError);
 
 rmSync(stage, { recursive: true, force: true });
-console.log(`\n${failures === 0 ? 'All updater tests passed' : `${failures} failing check(s)`}`);
-process.exit(failures === 0 ? 0 : 1);
+finish('updater');

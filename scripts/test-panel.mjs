@@ -10,6 +10,7 @@ import { fileURLToPath } from 'node:url';
 
 import { createServer } from 'node:http';
 
+import { check, finish } from './lib/check.mjs';
 import { createCepWindow, settle, waitFor } from './lib/mock-cep.mjs';
 import { createHost, writePresetFixture } from './lib/mock-premiere.mjs';
 
@@ -24,16 +25,6 @@ for (const required of [hostScript, panelBundle]) {
     process.exit(1);
   }
 }
-
-let failures = 0;
-const check = (label, condition, detail = '') => {
-  if (condition) {
-    console.log(`  ok    ${label}`);
-  } else {
-    console.log(`  FAIL  ${label}${detail ? ` :: ${detail}` : ''}`);
-    failures += 1;
-  }
-};
 
 const stage = mkdtempSync(join(tmpdir(), 'fxp-panel-'));
 const presetFixture = writePresetFixture(join(stage, 'presets'));
@@ -73,6 +64,8 @@ const press = async (key, modifiers = {}) => {
 };
 
 const rows = () => [...window.document.querySelectorAll('.row')];
+const chips = () => [...window.document.querySelectorAll('.quick .chip')];
+const chipNames = () => chips().map((chip) => chip.textContent.replace('\u2605', ''));
 const rowNames = () => rows().map((row) => row.querySelector('.row__name')?.textContent ?? '');
 const activeRow = () => window.document.querySelector('.row--active')?.querySelector('.row__name')?.textContent ?? '';
 const status = () => window.document.querySelector('.status')?.textContent ?? '';
@@ -80,6 +73,7 @@ const status = () => window.document.querySelector('.status')?.textContent ?? ''
 // The panel reads the preset folders out of the settings file, so seed it before booting.
 const settingsDir = join(stage, 'Library', 'Application Support', 'FX Premiere');
 mkdirSync(settingsDir, { recursive: true });
+// Written under the pre-v2 name on purpose: the rename has to keep reading old profiles.
 writeFileSync(join(settingsDir, 'settings.json'), JSON.stringify({ presetFolders: [presetFixture] }), 'utf8');
 writeFileSync(
   join(settingsDir, 'helper-status.json'),
@@ -93,18 +87,35 @@ await settle(40);
 
 check('the palette renders its search field', Boolean(window.document.querySelector('.search__input')));
 check('key interest is registered with the host', cepCalls.keyInterest === 1, String(cepCalls.keyInterest));
-check('the catalog is indexed through the host', rows().length > 0, `${rows().length} rows`);
+// Nothing is rendered until something is typed: that is what makes the palette open fast.
+check('the resting palette builds no result rows', rows().length === 0, `${rows().length} rows`);
+check('a fresh profile invites you to type', /Type to search/.test(window.document.body.textContent ?? ''));
 check('the status line reports the index size', /items \u00b7 \d+ presets/.test(status()), status());
 check(
-  'the selection pill reflects the mock timeline',
-  window.document.querySelector('.pill')?.textContent === '3 clips',
-  window.document.querySelector('.pill')?.textContent ?? '',
+  'the clip count reflects the mock timeline',
+  window.document.querySelector('.meta')?.textContent === '3 clips',
+  window.document.querySelector('.meta')?.textContent ?? '',
 );
+check(
+  'the legacy presetFolders setting is migrated',
+  JSON.parse(readFileSync(join(settingsDir, 'settings.json'), 'utf8')).presetFolders !== undefined,
+);
+await type('soft blur');
 check(
   'presets from the configured folder are searchable',
   rowNames().some((name) => name === 'Soft Blur'),
   JSON.stringify(rowNames().slice(0, 8)),
 );
+await type('');
+const indexedItems = () => Number(/(\d+) items/.exec(status())?.[1] ?? 0);
+check('the whole index is available but unrendered', indexedItems() > 120, status());
+await type('e');
+check(
+  'a broad query renders a window instead of every match',
+  rows().length <= 50 && Boolean(window.document.querySelector('.more')),
+  `${rows().length} rows`,
+);
+await type('');
 
 console.log('\nFuzzy search and keyboard navigation');
 await type('gblr');
@@ -118,15 +129,12 @@ check('ArrowDown moves the active row', activeRow() !== beforeArrow, `${beforeAr
 await press('ArrowUp');
 check('ArrowUp returns to the first row', activeRow() === beforeArrow, activeRow());
 
+// The default scope shows no label at all, so a visible label means Tab did something.
+const scopeLabel = () => window.document.querySelector('.meta--button')?.textContent ?? '';
 await press('Tab');
-check(
-  'Tab switches the scope',
-  Boolean(window.document.querySelector('.scope--active')) &&
-    window.document.querySelector('.scope--active')?.textContent !== 'All',
-  window.document.querySelector('.scope--active')?.textContent ?? '',
-);
+check('Tab switches the scope', scopeLabel() !== '', scopeLabel());
 await press('Tab', { shiftKey: true });
-check('Shift+Tab returns to the previous scope', window.document.querySelector('.scope--active')?.textContent === 'All');
+check('Shift+Tab returns to the default scope', scopeLabel() === '', scopeLabel());
 
 console.log('\nApplying an effect with Enter');
 await type('gaussian');
@@ -165,7 +173,7 @@ await press('Enter');
 check('choosing a transition opens the duration dialog', Boolean(window.document.querySelector('.transition')));
 check(
   'the dialog shows the sequence frame rate',
-  /25\.00 fps/.test(window.document.querySelector('.transition__meta')?.textContent ?? ''),
+  /30\.00 fps/.test(window.document.querySelector('.transition__meta')?.textContent ?? ''),
   window.document.querySelector('.transition__meta')?.textContent ?? '',
 );
 const durationField = () => window.document.querySelector('.transition input[type="number"]');
@@ -178,7 +186,7 @@ await press('ArrowDown');
 check('ArrowDown removes a frame', durationField()?.value === '20', durationField()?.value ?? '');
 check(
   'the seconds readout follows the frame rate',
-  /0\.80s/.test(window.document.querySelector('.duration__unit')?.textContent ?? ''),
+  /0\.67s/.test(window.document.querySelector('.duration__unit')?.textContent ?? ''),
   window.document.querySelector('.duration__unit')?.textContent ?? '',
 );
 
@@ -216,21 +224,28 @@ check(
 );
 
 console.log('\nState after applying');
-check('the palette returns to the search list, not the dialog', Boolean(window.document.querySelector('.results')));
+check('the palette leaves the dialog', !window.document.querySelector('.transition'));
 check('the query is cleared for the next summon', window.document.querySelector('.search__input')?.value === '');
 const closesAfterTransition = cepCalls.closeExtension;
+check(
+  'the last thing applied is the first chip, ready for Enter',
+  chipNames()[0] === 'Cross Dissolve' && chips()[0].className.includes('chip--active'),
+  JSON.stringify(chipNames()),
+);
 // Arrow keys drive the duration field while the dialog owns the view, so a moving active row
 // proves the palette really went back to searching rather than only looking like it.
+await type('dis');
 const beforeMove = activeRow();
 await press('ArrowDown');
 check('the keyboard drives the result list again', activeRow() !== beforeMove && rows().length > 0, `${beforeMove} -> ${activeRow()}`);
+await type('');
 
 console.log('\nEscape from the dialog');
 await type('film dissolve');
 await press('Enter');
 check('the dialog is open again', Boolean(window.document.querySelector('.transition')));
 await press('Escape');
-check('Escape returns to the search list', Boolean(window.document.querySelector('.results')));
+check('Escape returns to the palette', !window.document.querySelector('.transition'));
 check(
   'Escape in the dialog does not close the panel',
   cepCalls.closeExtension === closesAfterTransition,
@@ -241,18 +256,23 @@ console.log('\nMotion commands typed into the palette');
 await type('scale 50');
 check('the typed command is offered first', activeRow().startsWith('Scale'), activeRow());
 await press('Enter');
+// Looked up by matchName: indexing into the mock's component list breaks the moment the
+// fixture grows an intrinsic.
+const componentOn = (clip, matchName) => clip.componentList.find((entry) => entry.matchName === matchName);
+const paramOn = (clip, matchName, paramName) =>
+  componentOn(clip, matchName)?.paramList.find((param) => param.displayName === paramName);
 check(
   'scale was written to the Motion component',
-  world.clips.clipA.componentList[0].paramList[1].current === 50,
-  String(world.clips.clipA.componentList[0].paramList[1].current),
+  paramOn(world.clips.clipA, 'AE.ADBE Motion', 'Scale')?.current === 50,
+  String(paramOn(world.clips.clipA, 'AE.ADBE Motion', 'Scale')?.current),
 );
 
 await type('opacity 30');
 await press('Enter');
 check(
   'opacity was written to the Opacity component',
-  world.clips.clipA.componentList[1].paramList[0].current === 30,
-  String(world.clips.clipA.componentList[1].paramList[0].current),
+  paramOn(world.clips.clipA, 'AE.ADBE Opacity', 'Opacity')?.current === 30,
+  String(paramOn(world.clips.clipA, 'AE.ADBE Opacity', 'Opacity')?.current),
 );
 
 console.log('\nPresets applied from the palette');
@@ -340,8 +360,81 @@ const failedInstall = await waitFor(() => /Update failed/.test(window.document.q
 check('a failed install is explained instead of silently dying', failedInstall, window.document.querySelector('.toast')?.textContent ?? '');
 check('the update offer comes back so it can be retried', versionButton()?.textContent === 'Update to 9.9.9', versionButton()?.textContent ?? '');
 
+const closesBeforeSettingsEscape = cepCalls.closeExtension;
 await press('Escape');
-check('Escape leaves settings without closing the panel', Boolean(window.document.querySelector('.results')));
+check('Escape leaves settings', !window.document.querySelector('.sheet'));
+check(
+  'Escape in settings does not close the panel',
+  cepCalls.closeExtension === closesBeforeSettingsEscape,
+  String(cepCalls.closeExtension),
+);
+
+console.log('\nThe resting bar reapplies the last thing used');
+world.select('A.mp4', 'B.mp4', 'audio.wav');
+await settle(10);
+cep.emit('com.fxpremiere.event.trigger', { settings: false });
+await settle(20);
+check('summoning shows the quick bar', chips().length > 0, JSON.stringify(chipNames()));
+check(
+  'the most recent item is preselected',
+  chips()[0].className.includes('chip--active'),
+  JSON.stringify(chipNames().slice(0, 3)),
+);
+const chipTarget = chipNames()[0];
+const componentsBefore = world.clips.clipB.componentList.length;
+await press('Enter');
+await settle(10);
+check(
+  `Enter on the resting bar reapplies ${chipTarget}`,
+  world.clips.clipB.componentList.length > componentsBefore || world.transitionCalls.length > 0,
+  `${componentsBefore} -> ${world.clips.clipB.componentList.length}`,
+);
+
+console.log('\nInspecting a clip and saving it as a preset');
+cep.emit('com.fxpremiere.event.trigger', { settings: false });
+await settle(20);
+await press('i', { metaKey: true });
+await settle(20);
+check('Cmd+I lists what is on the clip', Boolean(window.document.querySelector('.stack')));
+check(
+  'the built-in Motion component is shown',
+  /Motion/.test(window.document.querySelector('.sheet')?.textContent ?? ''),
+  window.document.querySelector('.sheet')?.textContent?.slice(0, 120) ?? '',
+);
+const nameField = () => window.document.querySelector('.name-input');
+nameField().value = 'My Look';
+nameField().dispatchEvent(new window.Event('input', { bubbles: true }));
+await press('Enter');
+await settle(30);
+const capturedFile = join(settingsDir, 'captured', 'my-look.fxpreset.json');
+check('the preset is written to disk with its name', existsSync(capturedFile));
+const capturedPreset = existsSync(capturedFile) ? JSON.parse(readFileSync(capturedFile, 'utf8')) : null;
+check(
+  'the saved preset carries the effects it found',
+  (capturedPreset?.effects?.length ?? 0) > 0,
+  JSON.stringify(capturedPreset?.effects?.map((effect) => effect.name) ?? []),
+);
+check('saving returns to the palette', !window.document.querySelector('.stack'));
+
+await type('my look');
+check('the captured preset is searchable right away', activeRow() === 'My Look', activeRow());
+const beforeCaptured = world.clips.clipB.componentList.length;
+await press('Enter');
+await settle(20);
+check(
+  'applying it puts those effects back on the selection',
+  world.clips.clipB.componentList.length > beforeCaptured,
+  `${beforeCaptured} -> ${world.clips.clipB.componentList.length}`,
+);
+
+console.log('\nUndo');
+cep.emit('com.fxpremiere.event.trigger', { settings: false });
+await settle(20);
+const undoneBefore = world.undoCalls;
+await press('z', { metaKey: true });
+await settle(20);
+check('Cmd+Z asks Premiere to undo', world.undoCalls === undoneBefore + 1, String(world.undoCalls));
+check('the result is reported in the status line', /undone/i.test(status()), status());
 
 console.log('\nSummon event from the background listener');
 const before = cepCalls.closeExtension;
@@ -359,9 +452,9 @@ world.select();
 cep.emit('com.fxpremiere.event.trigger', { settings: false });
 await settle(20);
 check(
-  'the pill warns that nothing is selected',
-  window.document.querySelector('.pill')?.textContent === 'no selection',
-  window.document.querySelector('.pill')?.textContent ?? '',
+  'the footer warns that nothing is selected',
+  window.document.querySelector('.meta--warn')?.textContent === 'no selection',
+  window.document.querySelector('.meta')?.textContent ?? '',
 );
 await type('gaussian');
 await press('Enter');
@@ -375,5 +468,4 @@ check('an empty result set shows guidance', Boolean(window.document.querySelecto
 cep.close();
 releaseServer.close();
 rmSync(stage, { recursive: true, force: true });
-console.log(`\n${failures === 0 ? 'All panel tests passed' : `${failures} failing check(s)`}`);
-process.exit(failures === 0 ? 0 : 1);
+finish('panel');

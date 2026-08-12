@@ -27,6 +27,14 @@ Ctrl + Space  →  gsblr  →  Enter  →  Gaussian Blur en los 8 clips seleccio
   `rot 45`, `anchor 100 200`. Acepta valores relativos (`scale +10`) y porcentajes
   (`pos 50% 50%`), sin abrir Controles de efectos.
 - **Comandos de edición**: Scale to Frame Size, Reset Motion & Opacity, Toggle Clip Enable.
+- **Barra de recientes y favoritos**: al abrir la paleta, sin escribir nada, ves lo último que
+  aplicaste con el primer elemento ya seleccionado. Enter lo repite. Nada más se dibuja hasta
+  que escribes, que es lo que hace que abra rápido.
+- **Ver los efectos de un clip y guardarlos como preset**: `Cmd/Ctrl + I` lista lo que el clip
+  tiene puesto (con cuántos parámetros y cuántos tienen keyframes), le pones nombre y queda como
+  preset propio, buscable al instante y reaplicable con los mismos valores y keyframes. Puedes
+  incluir o excluir Motion y Opacidad.
+- **Deshacer** desde la paleta con `Cmd/Ctrl + Z`.
 - **Favoritos, recientes y ranking por uso**: lo que más usas sube solo.
 - **Atajo configurable** desde los ajustes del panel (por defecto `Ctrl + Space`).
 - **Actualización desde el propio panel**: los ajustes traen la sección *Updates* con la versión
@@ -74,7 +82,10 @@ iscc scripts/installer-win.iss   # release/FX-Premiere-1.0.0-setup.exe (solo Win
 | `Shift + Enter` | invertir el diálogo de transición (mostrarlo u omitirlo) |
 | `Cmd/Ctrl + Enter` | aplicar sin cerrar la paleta |
 | `Tab` / `Shift + Tab` | cambiar de ámbito (Todo, Efectos, Transiciones, Presets, Comandos, Favoritos) |
+| `←` `→` | moverse por la barra de recientes cuando no has escrito nada |
 | `Cmd/Ctrl + D` | marcar o desmarcar favorito |
+| `Cmd/Ctrl + I` | ver los efectos del clip y guardarlos como preset |
+| `Cmd/Ctrl + Z` | deshacer el último cambio |
 | `Cmd/Ctrl + R` | reindexar efectos |
 | `Cmd/Ctrl + ,` | ajustes |
 | `Esc` | cerrar (o volver atrás desde un diálogo) |
@@ -165,7 +176,7 @@ Los logs de la extensión invisible y del helper se escriben en:
 - Windows: `%APPDATA%\FX Premiere\fx-premiere.log`
 
 Los ajustes (atajo, favoritos, uso, carpetas de presets) viven junto al log en
-`settings.json`.
+`settings.json`, y los presets que captures de un clip en `captured/*.fxpreset.json`.
 
 ### Pruebas
 
@@ -173,8 +184,6 @@ Los ajustes (atajo, favoritos, uso, carpetas de presets) viven junto al log en
 
 - `scripts/test-search.mjs` valida el ranking difuso (incluye casos como `gsblr` →
   `Gaussian Blur`) y el parser de comandos de motion.
-- `scripts/test-preset-parser.mjs` ejecuta el parser de `.prfpset` real bajo Node con
-  `File`/`Folder` simulados y recorre todos los presets que tengas instalados.
 - `scripts/test-host.mjs` corre el host ExtendScript contra un Premiere simulado
   (`scripts/lib/mock-premiere.mjs`: secuencia, pistas, clips, componentes y QE DOM) y verifica
   que los efectos lleguen a cada clip seleccionado, los timecodes de las transiciones, los
@@ -188,7 +197,21 @@ Los ajustes (atajo, favoritos, uso, carpetas de presets) viven junto al log en
 - `scripts/test-service.mjs` corre la extensión invisible contra un helper de hotkey falso que
   habla el mismo protocolo: comprueba el arranque, que una pulsación abra el panel, el cambio
   de atajo en caliente sin reiniciar el proceso, el reinicio tras una caída y que no quede
-  ningún proceso vivo al cerrar Premiere.
+  ningún proceso vivo al cerrar Premiere. El helper falso puede tardar en confirmar o no
+  confirmar nunca, porque el servicio solo debe reportar el atajo como activo cuando el helper
+  lo confirmó de verdad.
+
+Dos herramientas que no son pruebas y por eso no están en `npm test`:
+
+- `npm run inspect:presets` pasa tus `.prfpset` reales por el parser del host y te dice qué
+  entendió de cada uno. Útil cuando un preset tuyo no se aplica como esperabas.
+- `node scripts/bench-panel.mjs` mide lo que cuesta el primer pintado, invocar la paleta y cada
+  tecla. En jsdom (más lento que Premiere) el primer pintado va sobre 9 ms, invocarla sobre
+  8 ms y una consulta amplia 16 ms dibujando como máximo 50 filas, sin importar el tamaño del
+  índice.
+- `node scripts/snapshot-ui.mjs` escribe un HTML con el panel real en sus tres estados (en
+  reposo, escribiendo y el inspector de efectos) y la hoja de estilos de verdad, para revisar el
+  diseño en un navegador sin instalar nada en Premiere.
 
 ## Límites conocidos
 
@@ -196,10 +219,15 @@ Los ajustes (atajo, favoritos, uso, carpetas de presets) viven junto al log en
   Adobe. Es el mismo camino que usan las extensiones comerciales del sector, pero una
   actualización mayor de Premiere puede requerir ajustes.
 - Premiere no expone agrupación de deshacer a los scripts: aplicar a diez clips genera diez
-  pasos en el historial.
+  pasos en el historial. `Cmd/Ctrl + Z` en la paleta deshace un paso usando el QE DOM; si tu
+  versión de Premiere no lo expone, la paleta lo dice y deshaces desde la línea de tiempo.
 - Los presets se aplican reconstruyendo cada efecto y sus parámetros (no existe API para
   cargar un `.prfpset`). Valores y keyframes se replican; la curva de interpolación se
   aproxima a lineal, hold o bezier, y algunos parámetros muy particulares (por ejemplo
-  curvas de Lumetri) pueden quedar en su valor por defecto.
+  curvas de Lumetri) pueden quedar en su valor por defecto. Si un parámetro del preset no
+  existe con ese nombre en tu versión del efecto, se salta y se te informa, en vez de escribirlo
+  en el parámetro que estuviera en esa posición.
+- Los presets capturados de un clip guardan el valor de cada parámetro tal como estaba en ese
+  momento. Si el clip tenía dos veces el mismo efecto, el preset también.
 - El atajo global necesita el helper nativo. Si falta o el sistema lo bloquea, la paleta
   sigue abriéndose desde `Ventana > Extensiones`.

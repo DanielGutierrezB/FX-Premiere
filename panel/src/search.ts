@@ -1,5 +1,5 @@
 import { fuzzyMatch, prepare, type HaystackEntry } from '@shared/fuzzy';
-import type { CatalogItem, ItemKind, Settings } from '@shared/types';
+import type { CatalogItem, ItemKind } from '@shared/types';
 
 export type Scope = 'all' | 'effects' | 'transitions' | 'presets' | 'commands' | 'favorites';
 
@@ -11,6 +11,13 @@ export const SCOPES: Array<{ id: Scope; label: string }> = [
   { id: 'commands', label: 'Commands' },
   { id: 'favorites', label: 'Favorites' },
 ];
+
+/** The only part of the settings that changes the order of results. */
+export interface RankingPrefs {
+  favorites: string[];
+  recents: string[];
+  usage: Record<string, number>;
+}
 
 export interface RankedItem {
   item: CatalogItem;
@@ -53,10 +60,10 @@ export const rank = (
   haystacks: Map<string, HaystackEntry>,
   query: string,
   scope: Scope,
-  settings: Settings,
+  prefs: RankingPrefs,
 ): RankedItem[] => {
-  const favorites = new Set(settings.favorites);
-  const recentIndex = new Map(settings.recents.map((id, index) => [id, index]));
+  const favorites = new Set(prefs.favorites);
+  const recentIndex = new Map(prefs.recents.map((id, index) => [id, index]));
   const trimmed = query.trim();
   const results: RankedItem[] = [];
 
@@ -78,7 +85,7 @@ export const rank = (
     if (favorites.has(item.id)) {
       score += 1500;
     }
-    const usage = settings.usage[item.id] ?? 0;
+    const usage = prefs.usage[item.id] ?? 0;
     score += Math.min(usage * 12, 260);
     const recent = recentIndex.get(item.id);
     if (recent !== undefined) {

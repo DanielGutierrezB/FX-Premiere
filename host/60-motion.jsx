@@ -164,6 +164,10 @@ FXP.applyMotion = function (request) {
         throw new Error('Open a sequence first.');
     }
     var frame = FXP.frameSize(sequence);
+    var needsFrame = command.percent === true || command.property === 'position' || command.property === 'anchor';
+    if (!frame && needsFrame) {
+        throw new Error('Premiere did not report the frame size, so this value cannot be placed.');
+    }
     var selection = FXP.requireSelection();
     var outcome = { applied: 0, skipped: 0, failed: 0, messages: [] };
     var isOpacity = command.property === 'opacity';
@@ -212,44 +216,69 @@ FXP.applyMotion = function (request) {
     return outcome;
 };
 
+/**
+ * One row per command: which media it applies to, whether it needs a QE item, and what it does.
+ * Adding a command means adding a row here and nothing else.
+ */
+FXP.COMMANDS = {
+    scaleToFrameSize: {
+        videoOnly: true,
+        needsQE: true,
+        run: function (entry) {
+            var item = FXP.itemFor(entry);
+            if (!item) {
+                return false;
+            }
+            try {
+                item.setScaleToFrameSize(true);
+                return true;
+            } catch (error) {
+                FXP.trace('setScaleToFrameSize failed: ' + FXP.errorText(error));
+                return false;
+            }
+        }
+    },
+    resetMotion: {
+        videoOnly: true,
+        needsQE: false,
+        run: function (entry) {
+            return FXP.resetMotion(entry);
+        }
+    },
+    toggleDisabled: {
+        videoOnly: false,
+        needsQE: false,
+        run: function (entry) {
+            try {
+                entry.clip.disabled = !entry.clip.disabled;
+                return true;
+            } catch (error) {
+                FXP.trace('toggleDisabled failed: ' + FXP.errorText(error));
+                return false;
+            }
+        }
+    }
+};
+
 FXP.runCommand = function (request) {
-    var selection = FXP.requireSelection();
-    var outcome = { applied: 0, skipped: 0, failed: 0, messages: [] };
     var commandId = String(request.commandId || '');
-    var videoOnly = commandId === 'scaleToFrameSize' || commandId === 'resetMotion';
-    if (commandId !== 'scaleToFrameSize' && commandId !== 'resetMotion' && commandId !== 'toggleDisabled') {
+    var command = FXP.COMMANDS[commandId];
+    if (!command || !FXP.COMMANDS.hasOwnProperty(commandId)) {
         throw new Error('Unknown command: ' + commandId);
     }
-    FXP.attachQEItems(selection);
+    var selection = FXP.requireSelection();
+    var outcome = { applied: 0, skipped: 0, failed: 0, messages: [] };
+    if (command.needsQE) {
+        FXP.attachQEItems(selection);
+    }
 
     for (var i = 0; i < selection.length; i++) {
         var entry = selection[i];
-        if (videoOnly && entry.mediaType !== 'video') {
+        if (command.videoOnly && entry.mediaType !== 'video') {
             outcome.skipped++;
             continue;
         }
-        var done = false;
-        if (commandId === 'scaleToFrameSize') {
-            var item = FXP.itemFor(entry);
-            if (item) {
-                try {
-                    item.setScaleToFrameSize(true);
-                    done = true;
-                } catch (error) {
-                    FXP.trace('setScaleToFrameSize failed: ' + FXP.errorText(error));
-                }
-            }
-        } else if (commandId === 'resetMotion') {
-            done = FXP.resetMotion(entry);
-        } else {
-            try {
-                entry.clip.disabled = !entry.clip.disabled;
-                done = true;
-            } catch (error) {
-                FXP.trace('toggleDisabled failed: ' + FXP.errorText(error));
-            }
-        }
-        if (done) {
+        if (command.run(entry)) {
             outcome.applied++;
         } else {
             outcome.failed++;

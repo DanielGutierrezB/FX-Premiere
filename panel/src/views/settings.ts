@@ -196,7 +196,7 @@ export class SettingsSheet {
               if (value === '') {
                 return;
               }
-              settings.presetFolders = [...new Set([...settings.presetFolders, value])];
+              settings.presetSources = [...new Set([...settings.presetSources, value])];
               this.host.persist(false);
               void this.host.refreshPresets();
               this.rerender();
@@ -205,9 +205,9 @@ export class SettingsSheet {
         ]),
       ),
     );
-    if (settings.presetFolders.length > 0) {
+    if (settings.presetSources.length > 0) {
       const list = el('div', { class: 'folder-list' });
-      for (const folder of settings.presetFolders) {
+      for (const folder of settings.presetSources) {
         list.appendChild(
           el('div', { class: 'folder-row' }, [
             el('span', { text: folder }),
@@ -215,7 +215,7 @@ export class SettingsSheet {
               class: 'icon-button',
               text: '\u2715',
               onclick: () => {
-                settings.presetFolders = settings.presetFolders.filter((entry) => entry !== folder);
+                settings.presetSources = settings.presetSources.filter((entry) => entry !== folder);
                 this.host.persist(false);
                 void this.host.refreshPresets();
                 this.rerender();

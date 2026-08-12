@@ -115,7 +115,7 @@ FXP.buildCatalog = function (presetSources) {
     var warnings = [];
     if (!FXP.enableQE()) {
         warnings[warnings.length] = 'QE DOM unavailable: effects and transitions cannot be listed.';
-        return { items: items, hostVersion: FXP.hostVersion(), builtAt: new Date().getTime(), warnings: warnings };
+        return { items: items, hostVersion: FXP.hostVersion(), warnings: warnings };
     }
 
     var lists = [

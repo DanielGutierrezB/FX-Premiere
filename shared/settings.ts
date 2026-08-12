@@ -1,15 +1,22 @@
-import { nodeRequire } from './cep';
 import { DEFAULT_HOTKEY } from './hotkey';
-import { TransitionAlignment, type HelperStatus, type Settings } from './types';
+import { nodeRequire } from './node';
+import { helperStatusFile, settingsDir, settingsFile } from './paths';
+import { TransitionAlignment, type CatalogItem, type HelperStatus, type Settings } from './types';
 
-const SETTINGS_VERSION = 1;
+const SETTINGS_VERSION = 2;
+
+/** A light sky blue that reads well on Premiere's dark chrome. */
+export const ACCENT = '#4fc3f7';
+const LEGACY_ACCENT = '#a48cff';
+
+/** Keeps the resting palette small: only what you actually reach for is remembered. */
+const REMEMBERED_LIMIT = 60;
 
 export const defaultSettings = (): Settings => ({
   version: SETTINGS_VERSION,
   hotkey: { ...DEFAULT_HOTKEY },
   settingsHotkey: null,
   closeAfterApply: true,
-  applyToAllSelected: true,
   transitionPromptEnabled: true,
   lastTransition: {
     durationFrames: 15,
@@ -17,34 +24,23 @@ export const defaultSettings = (): Settings => ({
     side: 'end',
     applyToAudio: true,
   },
-  presetFolders: [],
+  presetSources: [],
   favorites: [],
   recents: [],
+  remembered: {},
   usage: {},
-  showTypeBadges: true,
+  showTypeBadges: false,
   fontScale: 1,
-  accent: '#a48cff',
+  accent: ACCENT,
   hotkeyEnabled: true,
 });
 
-export const settingsDir = (): string => {
-  const os = nodeRequire()('os') as typeof import('os');
-  const path = nodeRequire()('path') as typeof import('path');
-  if (process.platform === 'win32') {
-    const appData = process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming');
-    return path.join(appData, 'FX Premiere');
+/** `presetFolders` was the name until v2, and it always accepted files too. */
+const presetSourcesFrom = (raw: Partial<Settings> & { presetFolders?: unknown }, fallback: string[]): string[] => {
+  if (Array.isArray(raw.presetSources)) {
+    return raw.presetSources;
   }
-  return path.join(os.homedir(), 'Library', 'Application Support', 'FX Premiere');
-};
-
-export const settingsFile = (): string => {
-  const path = nodeRequire()('path') as typeof import('path');
-  return path.join(settingsDir(), 'settings.json');
-};
-
-export const logFile = (): string => {
-  const path = nodeRequire()('path') as typeof import('path');
-  return path.join(settingsDir(), 'fx-premiere.log');
+  return Array.isArray(raw.presetFolders) ? (raw.presetFolders as string[]) : fallback;
 };
 
 const mergeSettings = (raw: Partial<Settings> | null): Settings => {
@@ -58,12 +54,37 @@ const mergeSettings = (raw: Partial<Settings> | null): Settings => {
     hotkey: { ...base.hotkey, ...(raw.hotkey ?? {}) },
     settingsHotkey: raw.settingsHotkey ?? null,
     lastTransition: { ...base.lastTransition, ...(raw.lastTransition ?? {}) },
-    presetFolders: Array.isArray(raw.presetFolders) ? raw.presetFolders : base.presetFolders,
+    presetSources: presetSourcesFrom(raw, base.presetSources),
     favorites: Array.isArray(raw.favorites) ? raw.favorites : base.favorites,
     recents: Array.isArray(raw.recents) ? raw.recents : base.recents,
+    remembered: raw.remembered && typeof raw.remembered === 'object' ? raw.remembered : base.remembered,
     usage: raw.usage && typeof raw.usage === 'object' ? raw.usage : base.usage,
+    // Nobody chose the old purple on purpose, so carry them over to the new default.
+    accent: raw.accent === LEGACY_ACCENT || !raw.accent ? base.accent : raw.accent,
     version: SETTINGS_VERSION,
   };
+};
+
+/**
+ * Keeps a copy of an item next to the favourite and recent id lists. Without this the resting
+ * palette could show a name but not apply it until the whole index had loaded.
+ */
+export const rememberItem = (settings: Settings, item: CatalogItem): void => {
+  settings.remembered[item.id] = item;
+  const keep = new Set([...settings.favorites, ...settings.recents]);
+  const ids = Object.keys(settings.remembered);
+  for (const id of ids) {
+    if (!keep.has(id)) {
+      delete settings.remembered[id];
+    }
+  }
+  if (ids.length > REMEMBERED_LIMIT) {
+    for (const id of settings.recents.slice(REMEMBERED_LIMIT)) {
+      if (!settings.favorites.includes(id)) {
+        delete settings.remembered[id];
+      }
+    }
+  }
 };
 
 export const loadSettings = (): Settings => {
@@ -89,11 +110,6 @@ export const saveSettings = (settings: Settings): void => {
   fs.renameSync(temp, file);
 };
 
-export const helperStatusFile = (): string => {
-  const path = nodeRequire()('path') as typeof import('path');
-  return path.join(settingsDir(), 'helper-status.json');
-};
-
 export const readHelperStatus = (): HelperStatus | null => {
   try {
     const fs = nodeRequire()('fs') as typeof import('fs');
@@ -114,15 +130,5 @@ export const writeHelperStatus = (status: HelperStatus): void => {
     fs.writeFileSync(helperStatusFile(), JSON.stringify(status, null, 2), 'utf8');
   } catch {
     /* status reporting is advisory only */
-  }
-};
-
-export const appendLog = (scope: string, message: string): void => {
-  try {
-    const fs = nodeRequire()('fs') as typeof import('fs');
-    fs.mkdirSync(settingsDir(), { recursive: true });
-    fs.appendFileSync(logFile(), `${new Date().toISOString()} [${scope}] ${message}\n`, 'utf8');
-  } catch {
-    /* logging must never break the palette */
   }
 };

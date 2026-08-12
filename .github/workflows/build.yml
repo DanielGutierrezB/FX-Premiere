@@ -7,6 +7,10 @@ on:
   pull_request:
   workflow_dispatch:
 
+# Read-only by default; only the release job is allowed to write, and it asks below.
+permissions:
+  contents: read
+
 jobs:
   helper-mac:
     runs-on: macos-latest

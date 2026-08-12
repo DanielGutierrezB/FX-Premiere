@@ -45,25 +45,33 @@ FXP.ticksPerFrame = function (sequence) {
     return ticks && !isNaN(ticks) ? ticks : FXP.TICKS_PER_SECOND / 25;
 };
 
+/**
+ * Returns null when the sequence will not answer. Pixel-mode motion commands normalise against
+ * this, so inventing 1920x1080 would land the clip in the wrong place without a warning.
+ */
 FXP.frameSize = function (sequence) {
-    var size = { width: 1920, height: 1080 };
     try {
         var settings = sequence.getSettings();
         if (settings) {
-            size.width = Number(settings.videoFrameWidth) || size.width;
-            size.height = Number(settings.videoFrameHeight) || size.height;
-            return size;
+            var width = Number(settings.videoFrameWidth);
+            var height = Number(settings.videoFrameHeight);
+            if (width > 0 && height > 0) {
+                return { width: width, height: height };
+            }
         }
     } catch (error) {
         FXP.trace('frameSize via settings failed: ' + FXP.errorText(error));
     }
     try {
-        size.width = Number(sequence.frameSizeHorizontal) || size.width;
-        size.height = Number(sequence.frameSizeVertical) || size.height;
+        var fallbackWidth = Number(sequence.frameSizeHorizontal);
+        var fallbackHeight = Number(sequence.frameSizeVertical);
+        if (fallbackWidth > 0 && fallbackHeight > 0) {
+            return { width: fallbackWidth, height: fallbackHeight };
+        }
     } catch (error) {
         FXP.trace('frameSize via properties failed: ' + FXP.errorText(error));
     }
-    return size;
+    return null;
 };
 
 FXP.sequenceInfo = function () {
@@ -90,8 +98,8 @@ FXP.sequenceInfo = function () {
     info.ticksPerFrame = ticksPerFrame;
     info.fps = FXP.round(FXP.TICKS_PER_SECOND / ticksPerFrame, 3);
     var size = FXP.frameSize(sequence);
-    info.width = size.width;
-    info.height = size.height;
+    info.width = size ? size.width : 0;
+    info.height = size ? size.height : 0;
     info.selectedClips = FXP.collectSelection().length;
     return info;
 };

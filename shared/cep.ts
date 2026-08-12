@@ -1,3 +1,4 @@
+import { appendLog } from './paths';
 import type { HostRequest, HostResponse } from './types';
 
 interface CepEvent {
@@ -49,17 +50,6 @@ const cepApi = (): AdobeCep => {
 
 export const isInsideCep = (): boolean => Boolean(window.__adobe_cep__);
 
-export const nodeRequire = (): NodeRequire => {
-  if (window.cep_node?.require) {
-    return window.cep_node.require;
-  }
-  const globalRequire = (globalThis as { require?: NodeRequire }).require;
-  if (globalRequire) {
-    return globalRequire;
-  }
-  throw new Error('Node.js is not enabled for this extension');
-};
-
 const stripFileScheme = (raw: string): string => {
   const decoded = decodeURI(raw);
   if (decoded.startsWith('file:///') && /^file:\/\/\/[A-Za-z]:/.test(decoded)) {
@@ -92,8 +82,17 @@ export const evalScript = (script: string): Promise<string> =>
     cepApi().evalScript(script, (result) => resolve(result));
   });
 
+/**
+ * U+2028 and U+2029 are line terminators in the ExtendScript string grammar and JSON.stringify
+ * leaves them raw, so an effect name or path containing one would break the whole call.
+ */
 const quoteForExtendScript = (value: string): string =>
-  `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\r?\n/g, '\\n')}"`;
+  `"${value
+    .replace(/\\/g, '\\\\')
+    .replace(/"/g, '\\"')
+    .replace(/\r?\n/g, '\\n')
+    .replace(/\u2028/g, '\\u2028')
+    .replace(/\u2029/g, '\\u2029')}"`;
 
 export const callHost = async <T>(request: HostRequest): Promise<HostResponse<T>> => {
   const payload = quoteForExtendScript(JSON.stringify(request));
@@ -101,11 +100,17 @@ export const callHost = async <T>(request: HostRequest): Promise<HostResponse<T>
   if (!raw || raw === 'EvalScript error.') {
     return { ok: false, error: `Host script failed for "${request.op}"` };
   }
+  let response: HostResponse<T>;
   try {
-    return JSON.parse(raw) as HostResponse<T>;
+    response = JSON.parse(raw) as HostResponse<T>;
   } catch {
     return { ok: false, error: `Malformed host response: ${raw.slice(0, 400)}` };
   }
+  // The host cannot be debugged from here, so its trace is the only account of what happened.
+  if (response.log && response.log.length > 0) {
+    appendLog('host', `${request.op}: ${response.log.join(' | ')}`);
+  }
+  return response;
 };
 
 export const dispatchCepEvent = (type: string, data: unknown): void => {
@@ -126,8 +131,6 @@ export const onCepEvent = (type: string, handler: (data: string | undefined) => 
 export const openPanel = (): void => cepApi().requestOpenExtension(PANEL_EXTENSION_ID, '');
 
 export const closeSelf = (): void => cepApi().closeExtension();
-
-export const resizeSelf = (width: number, height: number): void => cepApi().resizeContent(width, height);
 
 /**
  * Premiere consumes most keystrokes before the panel sees them, so every key the palette

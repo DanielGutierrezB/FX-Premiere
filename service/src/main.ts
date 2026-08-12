@@ -3,13 +3,14 @@ import {
   EVENT_TRIGGER_PALETTE,
   dispatchCepEvent,
   isInsideCep,
-  nodeRequire,
   onCepEvent,
   openPanel,
   systemPath,
 } from '@shared/cep';
+import { nodeRequire } from '@shared/node';
 import { serializeHotkey } from '@shared/hotkey';
-import { appendLog, loadSettings, settingsFile, writeHelperStatus } from '@shared/settings';
+import { appendLog, settingsFile } from '@shared/paths';
+import { loadSettings, writeHelperStatus } from '@shared/settings';
 import type { Settings } from '@shared/types';
 import type { ChildProcessWithoutNullStreams } from 'child_process';
 
@@ -179,12 +180,16 @@ const reload = (forceRestart: boolean): void => {
     startHelper();
     return;
   }
+  // A successful stdin write only means the bytes were buffered. The helper answers READY once
+  // it has actually reserved the shortcut, and that answer is the only thing allowed to report
+  // the listener as live.
   if (hotkeyChanged) {
+    status(false, `Switching the shortcut to ${serializeHotkey(settings.hotkey)}\u2026`);
     try {
       child.stdin.write(`HOTKEY ${serializeHotkey(settings.hotkey)}\n`);
-      status(true, `Listening for ${serializeHotkey(settings.hotkey)}.`);
     } catch {
       startHelper();
+      return;
     }
   }
   if (settingsHotkeyChanged) {
@@ -194,6 +199,7 @@ const reload = (forceRestart: boolean): void => {
       );
     } catch {
       startHelper();
+      return;
     }
   }
 };

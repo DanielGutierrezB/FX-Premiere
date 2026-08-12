@@ -10,6 +10,8 @@ CERTS="$ROOT/certs"
 VERSION="$(node -p "require('$ROOT/package.json').version")"
 ZXP="$RELEASE/FX-Premiere-$VERSION.zxp"
 
+# Not a secret: it locks a throwaway self-signed certificate that this script creates locally.
+# Set FXP_CERT_PASSWORD if you sign with a certificate of your own.
 CERT_PASSWORD="${FXP_CERT_PASSWORD:-fxpremiere}"
 CERT_FILE="$CERTS/fxpremiere.p12"
 SIGN_TOOL="${FXP_ZXPSIGNCMD:-$CERTS/ZXPSignCmd}"

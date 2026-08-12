@@ -96,54 +96,12 @@ FXP.qeTrack = function (mediaType, trackIndex) {
 };
 
 /**
- * QE tracks expose gaps and transitions as items too, so the QE index never matches the
- * vanilla clip index. Matching on the start time is the reliable bridge between both DOMs.
- */
-FXP.qeItemFor = function (entry) {
-    var track = FXP.qeTrack(entry.mediaType, entry.trackIndex);
-    if (!track) {
-        return null;
-    }
-    var count = 0;
-    try {
-        count = track.numItems;
-    } catch (error) {
-        count = 0;
-    }
-    var fallback = null;
-    for (var i = 0; i < count; i++) {
-        var item = null;
-        try {
-            item = track.getItemAt(i);
-        } catch (error) {
-            item = null;
-        }
-        if (!item) {
-            continue;
-        }
-        var type = '';
-        try {
-            type = String(item.type);
-        } catch (error) {
-            type = '';
-        }
-        if (type !== 'Clip') {
-            continue;
-        }
-        var startTicks = FXP.clipTicks(item.start);
-        if (startTicks !== '' && startTicks === entry.startTicks) {
-            return item;
-        }
-        if (Math.abs(FXP.clipSeconds(item.start) - entry.startSeconds) < 0.0005) {
-            fallback = item;
-        }
-    }
-    return fallback;
-};
-
-/**
  * Resolves the QE item for every selected clip with a single pass per track. Scanning the
  * track once per clip instead turns a large selection into thousands of QE calls.
+ *
+ * QE tracks expose gaps and transitions as items too, so the QE index never matches the
+ * vanilla clip index; the start time is the reliable bridge between both DOMs. Mutates the
+ * entries in place: call this before `FXP.itemFor`.
  */
 FXP.attachQEItems = function (entries) {
     var buckets = {};
@@ -211,15 +169,11 @@ FXP.attachQEItems = function (entries) {
             entry.qeItem = matched || null;
         }
     }
-    return entries;
 };
 
+/** Only meaningful after `FXP.attachQEItems` has run over the same entries. */
 FXP.itemFor = function (entry) {
-    if (entry.qeItem !== undefined) {
-        return entry.qeItem;
-    }
-    entry.qeItem = FXP.qeItemFor(entry);
-    return entry.qeItem;
+    return entry.qeItem || null;
 };
 
 /** Re-reads a clip from the sequence so component lists reflect edits made through QE. */
@@ -246,13 +200,3 @@ FXP.freshClip = function (entry) {
     return entry.clip;
 };
 
-FXP.selectionByMedia = function (mediaType) {
-    var all = FXP.collectSelection();
-    var out = [];
-    for (var i = 0; i < all.length; i++) {
-        if (all[i].mediaType === mediaType) {
-            out[out.length] = all[i];
-        }
-    }
-    return out;
-};

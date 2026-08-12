@@ -5,11 +5,21 @@ FXP.route = function (request) {
         case 'sequenceInfo':
             return FXP.sequenceInfo();
         case 'catalog':
-            return FXP.buildCatalog(request.presetFiles || []);
-        case 'presets':
-            return { items: FXP.collectPresets(request.presetFiles || [], []) };
-        case 'presetFiles':
-            return { files: FXP.expandPresetSources(request.presetFiles || []) };
+            return FXP.buildCatalog(request.presetSources || []);
+        case 'presets': {
+            // The warnings array has to reach the panel: a corrupt .prfpset is silent otherwise.
+            var warnings = [];
+            var items = FXP.collectPresets(request.presetSources || [], warnings);
+            return { items: items, warnings: warnings };
+        }
+        case 'inspect':
+            return FXP.inspectSelection();
+        case 'capture':
+            return FXP.captureSelection();
+        case 'applyCaptured':
+            return FXP.applyCapturedPreset(request);
+        case 'undo':
+            return FXP.undoLast();
         case 'applyEffect':
             return FXP.applyEffect(request);
         case 'applyTransition':

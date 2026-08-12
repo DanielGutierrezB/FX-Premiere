@@ -1,4 +1,5 @@
-import { nodeRequire, systemPath } from './cep';
+import { systemPath } from './cep';
+import { nodeRequire } from './node';
 
 const REPO = 'DanielGutierrezB/FX-Premiere';
 const RELEASES_URL = `https://api.github.com/repos/${REPO}/releases/latest`;

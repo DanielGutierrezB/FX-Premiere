@@ -108,7 +108,7 @@ export const hotkeyFromEvent = (event: KeyboardEvent): HotkeySpec | null => {
 
 /** A bare letter would swallow typing inside Premiere, so at least one modifier or an F-key is required. */
 export const isHotkeyUsable = (spec: HotkeySpec): boolean => {
-  if (spec.key === 'escape' || spec.key === 'tab') {
+  if (spec.key === 'tab') {
     return false;
   }
   const hasModifier = spec.ctrl || spec.alt || spec.meta;
@@ -129,7 +129,7 @@ export const formatHotkey = (spec: HotkeySpec, mac = isMac()): string => {
     if (spec.shift) parts.push('Shift');
     if (spec.meta) parts.push('Win');
   }
-  const label = KEY_LABELS[spec.key] ?? (/^f\d+$/.test(spec.key) ? spec.key.toUpperCase() : spec.key.toUpperCase());
+  const label = KEY_LABELS[spec.key] ?? spec.key.toUpperCase();
   parts.push(label);
   return mac ? parts.join('') : parts.join('+');
 };
@@ -143,51 +143,4 @@ export const serializeHotkey = (spec: HotkeySpec): string => {
   if (spec.meta) parts.push('meta');
   parts.push(spec.key);
   return parts.join('+');
-};
-
-export const parseHotkey = (value: string): HotkeySpec | null => {
-  const tokens = value.toLowerCase().split('+').map((token) => token.trim()).filter(Boolean);
-  if (tokens.length === 0) {
-    return null;
-  }
-  const spec: HotkeySpec = { key: '', ctrl: false, alt: false, shift: false, meta: false };
-  for (const token of tokens) {
-    switch (token) {
-      case 'ctrl':
-      case 'control':
-        spec.ctrl = true;
-        break;
-      case 'alt':
-      case 'option':
-        spec.alt = true;
-        break;
-      case 'shift':
-        spec.shift = true;
-        break;
-      case 'meta':
-      case 'cmd':
-      case 'command':
-      case 'win':
-        spec.meta = true;
-        break;
-      default:
-        spec.key = token;
-        break;
-    }
-  }
-  return spec.key ? spec : null;
-};
-
-export const hotkeysEqual = (a: HotkeySpec, b: HotkeySpec): boolean =>
-  a.key === b.key && a.ctrl === b.ctrl && a.alt === b.alt && a.shift === b.shift && a.meta === b.meta;
-
-export const eventMatchesHotkey = (event: KeyboardEvent, spec: HotkeySpec): boolean => {
-  const key = normalizeKeyName(event.code || event.key);
-  return (
-    key === spec.key &&
-    event.ctrlKey === spec.ctrl &&
-    event.altKey === spec.alt &&
-    event.shiftKey === spec.shift &&
-    event.metaKey === spec.meta
-  );
 };

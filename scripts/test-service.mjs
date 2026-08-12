@@ -8,6 +8,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { check, finish } from './lib/check.mjs';
 import { createCepWindow, settle, waitFor } from './lib/mock-cep.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -18,16 +19,6 @@ if (!existsSync(serviceBundle)) {
   console.error('dist/service/service.js missing. Run: npm run build');
   process.exit(1);
 }
-
-let failures = 0;
-const check = (label, condition, detail = '') => {
-  if (condition) {
-    console.log(`  ok    ${label}`);
-  } else {
-    console.log(`  FAIL  ${label}${detail ? ` :: ${detail}` : ''}`);
-    failures += 1;
-  }
-};
 
 const EVENT_TRIGGER = 'com.fxpremiere.event.trigger';
 const EVENT_SETTINGS = 'com.fxpremiere.event.settings';
@@ -41,7 +32,23 @@ const inbox = __filename + '.inbox';
 const hotkey = process.argv[process.argv.indexOf('--hotkey') + 1] || 'none';
 const settingsIndex = process.argv.indexOf('--settings-hotkey');
 const settingsHotkey = settingsIndex > 0 ? process.argv[settingsIndex + 1] : 'none';
-process.stdout.write('READY pid=' + process.pid + ' hotkey=' + hotkey + ' settings=' + settingsHotkey + '\\n');
+const marker = (suffix) => {
+  try {
+    const value = fs.readFileSync(__filename + suffix, 'utf8');
+    fs.unlinkSync(__filename + suffix);
+    return value.trim();
+  } catch (error) {
+    return '';
+  }
+};
+const ready = (spec) =>
+  process.stdout.write('READY pid=' + process.pid + ' hotkey=' + spec + ' settings=' + settingsHotkey + '\\n');
+// One-shot markers: '.delay' makes the first confirmation slow, '.mute' makes the next shortcut
+// change land in the pipe without ever being acknowledged, which is the wedged helper the
+// service must never report as listening.
+const delay = Number(marker('.delay')) || 0;
+if (delay > 0) setTimeout(() => ready(hotkey), delay);
+else ready(hotkey);
 let buffer = '';
 process.stdin.setEncoding('utf8');
 process.stdin.on('data', (chunk) => {
@@ -56,6 +63,8 @@ process.stdin.on('data', (chunk) => {
       process.exit(0);
     }
     process.stdout.write('GOT ' + trimmed + '\\n');
+    // The real helpers re-register and answer READY again; the service depends on that.
+    if (trimmed.indexOf('HOTKEY ') === 0 && marker('.mute') === '') ready(trimmed.slice(7));
   }
 });
 setInterval(() => {
@@ -129,7 +138,15 @@ const triggers = [];
 cep.window.__adobe_cep__.addEventListener(EVENT_TRIGGER, (event) => triggers.push(event.data));
 
 console.log('Startup');
+// Make the first helper slow to confirm so the pre-READY window is observable.
+writeFileSync(`${join(helperDir, helperName)}.delay`, '600', 'utf8');
 cep.run(serviceBundle);
+const starting = await waitFor(() => status() !== null, { label: 'the first status write' });
+check(
+  'a helper that has not confirmed yet is not reported as listening',
+  starting && status()?.running === false && /Starting listener/i.test(status()?.message ?? ''),
+  JSON.stringify(status()),
+);
 const spawned = await waitFor(() => /READY pid=/.test(log()), { label: 'the helper to report READY' });
 check('the helper is spawned and answers READY', spawned, log().slice(0, 300));
 check('only a confirmed helper is reported as listening', status()?.running === true, JSON.stringify(status()));
@@ -156,6 +173,27 @@ const forwarded = await waitFor(() => /GOT HOTKEY alt\+shift\+j/.test(log()), { 
 check('a shortcut change is sent to the running helper', forwarded, log().slice(-200));
 check('the helper was not restarted for it', helperPid() === firstPid, `${firstPid} -> ${helperPid()}`);
 check('the status file follows the new shortcut', status()?.hotkey === 'alt+shift+j', status()?.hotkey ?? '');
+
+console.log('\nA helper that never acknowledges the change');
+writeFileSync(`${join(helperDir, helperName)}.mute`, 'yes', 'utf8');
+writeSettings({ hotkey: { key: 'm', ctrl: true, alt: false, shift: false, meta: false } });
+cep.emit(EVENT_SETTINGS, { restart: false });
+const sentToWedged = await waitFor(() => /GOT HOTKEY ctrl\+m/.test(log()), { label: 'the muted change to be sent' });
+check('the change still reaches the helper', sentToWedged, log().slice(-160));
+await new Promise((done) => setTimeout(done, 250));
+check(
+  'an unacknowledged shortcut change is not reported as live',
+  status()?.running === false && /Switching the shortcut/i.test(status()?.message ?? ''),
+  JSON.stringify(status()),
+);
+
+writeSettings({ hotkey: { key: 'j', ctrl: false, alt: true, shift: true, meta: false } });
+cep.emit(EVENT_SETTINGS, { restart: false });
+const reconfirmed = await waitFor(
+  () => status()?.running === true && /while Premiere is in front/.test(status()?.message ?? ''),
+  { label: 'the helper to confirm the shortcut again' },
+);
+check('once the helper confirms, it is reported as live again', reconfirmed, JSON.stringify(status()));
 
 console.log('\nSecondary settings shortcut');
 writeSettings({
@@ -195,7 +233,11 @@ console.log('\nRe-enabling restarts it');
 writeSettings({ hotkeyEnabled: true });
 cep.emit(EVENT_SETTINGS, { restart: true });
 const restarted = await waitFor(() => status()?.running === true, { label: 'the helper to come back' });
-check('re-enabling spawns a fresh helper', restarted && helperPid() !== firstPid, `${firstPid} -> ${helperPid()}`);
+check(
+  're-enabling spawns a fresh helper',
+  restarted && helperPid() !== pidBeforeDisable,
+  `${pidBeforeDisable} -> ${helperPid()}`,
+);
 
 console.log('\nShutdown');
 const pidAtShutdown = helperPid();
@@ -209,5 +251,4 @@ check('no helper process is left behind', cleanedUp, String(pidAtShutdown));
 cep.close();
 await settle(10);
 rmSync(stage, { recursive: true, force: true });
-console.log(`\n${failures === 0 ? 'All service tests passed' : `${failures} failing check(s)`}`);
-process.exit(failures === 0 ? 0 : 1);
+finish('service');

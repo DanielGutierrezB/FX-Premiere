@@ -2,6 +2,7 @@
 // engine, transition timecodes, motion commands and preset replay are verifiable in CI.
 // Usage: node scripts/test-host.mjs
 
+import { check, finish } from './lib/check.mjs';
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -17,15 +18,6 @@ if (!existsSync(hostScript)) {
   process.exit(1);
 }
 
-let failures = 0;
-const check = (label, condition, detail = '') => {
-  if (condition) {
-    console.log(`  ok    ${label}`);
-  } else {
-    console.log(`  FAIL  ${label}${detail ? ` :: ${detail}` : ''}`);
-    failures += 1;
-  }
-};
 
 const stage = mkdtempSync(join(tmpdir(), 'fxp-host-'));
 const fixtureFile = writePresetFixture(stage);
@@ -34,12 +26,16 @@ const { world, call } = createHost({ hostScript, documentsRoot: join(stage, 'Doc
 console.log('Sequence and selection');
 const info = call({ op: 'sequenceInfo' });
 check('sequenceInfo succeeds', info.ok, info.error);
-check('frame rate is read from the timebase', info.data.fps === 25, String(info.data?.fps));
-check('frame size is read', info.data.width === 1920 && info.data.height === 1080);
+check('frame rate is read from the timebase, not the 25fps fallback', info.data.fps === 30, String(info.data?.fps));
+check(
+  'frame size is read, not the 1920x1080 fallback',
+  info.data.width === 1280 && info.data.height === 720,
+  `${info.data?.width}x${info.data?.height}`,
+);
 check('three selected clips are found', info.data.selectedClips === 3, String(info.data?.selectedClips));
 
 console.log('\nCatalog');
-const catalog = call({ op: 'catalog', presetFiles: [fixtureFile] });
+const catalog = call({ op: 'catalog', presetSources: [fixtureFile] });
 check('catalog succeeds', catalog.ok, catalog.error);
 const items = catalog.data?.items ?? [];
 const gaussian = items.find((item) => item.name === 'Gaussian Blur' && item.kind === 'videoEffect');
@@ -107,7 +103,7 @@ check('addToStart is false for end placement', firstCall[1] === false, String(fi
 check('alignment is forwarded', firstCall[4] === 1, String(firstCall[4]));
 
 world.transitionCalls.length = 0;
-call({
+const bothSides = call({
   op: 'applyTransition',
   name: 'Cross Dissolve',
   mediaType: 'video',
@@ -115,8 +111,13 @@ call({
 });
 check('both edges produce two calls per clip', world.transitionCalls.length === 4, String(world.transitionCalls.length));
 check(
+  'applied counts clips, not transition edges',
+  bothSides.data.applied === 2,
+  JSON.stringify(bothSides.data),
+);
+check(
   'durations over one second roll into seconds',
-  world.transitionCalls[0].args[2] === '00;00;01;05',
+  world.transitionCalls[0].args[2] === '00;00;01;00',
   String(world.transitionCalls[0]?.args[2]),
 );
 
@@ -148,7 +149,8 @@ check('scale writes to the Scale parameter', motionA.paramList[1].current === 50
 call({ op: 'motion', command: { property: 'scale', values: [10], relative: true } });
 check('relative scale adds to the current value', motionA.paramList[1].current === 60, String(motionA.paramList[1].current));
 
-call({ op: 'motion', command: { property: 'position', values: [960, 540], relative: false } });
+// 640x360 is the centre of the mock's 1280x720 frame.
+call({ op: 'motion', command: { property: 'position', values: [640, 360], relative: false } });
 check(
   'pixel positions are normalised against the frame',
   JSON.stringify(motionA.paramList[0].current) === JSON.stringify([0.5, 0.5]),
@@ -228,10 +230,18 @@ check(
 );
 
 const blurPreset = presets.find((item) => item.name === 'Soft Blur');
+const blursOnA = () =>
+  world.clips.clipA.componentList.filter((component) => component.matchName === 'AE.ADBE Gaussian Blur 2');
+// clipA already carries a blur from the applyEffect section, so only a delta proves anything.
+const blursBefore = blursOnA().length;
 const blurResult = call({ op: 'applyPreset', preset: blurPreset.preset });
 check('non-intrinsic presets add the effect', blurResult.data.applied === 2, JSON.stringify(blurResult.data));
-const addedBlur = world.clips.clipA.componentList.filter((component) => component.matchName === 'AE.ADBE Gaussian Blur 2');
-check('the blur effect was added by the preset', addedBlur.length >= 1);
+const addedBlur = blursOnA();
+check(
+  'the preset added exactly one blur of its own',
+  addedBlur.length === blursBefore + 1,
+  `${blursBefore} -> ${addedBlur.length}`,
+);
 check(
   'preset parameters are written by name',
   addedBlur[addedBlur.length - 1].paramList[0].current === 25.5,
@@ -243,11 +253,75 @@ check(
   String(addedBlur[addedBlur.length - 1].paramList[1].current),
 );
 
+console.log('\nInspecting a clip and capturing it as a preset');
+world.select('A.mp4');
+const inspection = call({ op: 'inspect' });
+check('inspect succeeds', inspection.ok, inspection.error);
+check(
+  'the intrinsic Motion component is reported as built in',
+  inspection.data.effects.some((effect) => effect.name === 'Motion' && effect.intrinsic === true),
+  JSON.stringify(inspection.data.effects.map((effect) => `${effect.name}:${effect.intrinsic}`)),
+);
+check(
+  'an added effect is reported as not built in',
+  inspection.data.effects.some((effect) => effect.matchName === 'AE.ADBE Gaussian Blur 2' && effect.intrinsic === false),
+  JSON.stringify(inspection.data.effects.map((effect) => effect.matchName)),
+);
+check(
+  'keyframed parameters are counted',
+  inspection.data.effects.some((effect) => effect.keyframedParams > 0),
+  JSON.stringify(inspection.data.effects.map((effect) => effect.keyframedParams)),
+);
+
+const captured = call({ op: 'capture' });
+check('capture succeeds', captured.ok, captured.error);
+// clipA carries two blurs by now: a default one and the preset's 25.5. Both must come across
+// with their own values, which is what "the same settings as what we did" means.
+const capturedBlurs = captured.data.effects.filter((effect) => effect.matchName === 'AE.ADBE Gaussian Blur 2');
+check(
+  'every copy of an effect is captured, not just the first',
+  capturedBlurs.length === 2,
+  String(capturedBlurs.length),
+);
+check(
+  'captured parameters keep the values that are on the clip',
+  capturedBlurs.some((effect) => effect.params[0].value === 25.5),
+  JSON.stringify(capturedBlurs.map((effect) => effect.params[0].value)),
+);
+const capturedMotion = captured.data.effects.find((effect) => effect.intrinsic === true);
+check(
+  'captured keyframes come back as times and values',
+  capturedMotion.params.some((param) => param.keyframes.length === 2),
+  JSON.stringify(capturedMotion.params.map((param) => param.keyframes.length)),
+);
+
+// Replaying onto a different clip is the whole point of capturing.
+world.select('B.mp4');
+const blursOnB = () =>
+  world.clips.clipB.componentList.filter((component) => component.matchName === 'AE.ADBE Gaussian Blur 2');
+const beforeReplay = blursOnB().length;
+const replay = call({ op: 'applyCaptured', preset: captured.data });
+check('a captured preset replays', replay.ok && replay.data.applied === 1, JSON.stringify(replay.data ?? replay.error));
+check(
+  'both captured copies landed on the new clip',
+  blursOnB().length === beforeReplay + 2,
+  `${beforeReplay} -> ${blursOnB().length}`,
+);
+check(
+  'the captured values landed with them',
+  blursOnB().some((component) => component.paramList[0].current === 25.5),
+  JSON.stringify(blursOnB().map((component) => component.paramList[0].current)),
+);
+
+console.log('\nUndo');
+const undone = call({ op: 'undo' });
+check('undo reaches the QE undo stack', undone.ok && undone.data.undone === true, JSON.stringify(undone.data));
+check('the host asked Premiere to undo', world.undoCalls === 1, String(world.undoCalls));
+
 console.log('\nEmpty selection is reported clearly');
 world.select();
 const empty = call({ op: 'applyEffect', name: 'Gaussian Blur', mediaType: 'video' });
 check('no selection returns a helpful error', empty.ok === false && /select at least one clip/i.test(empty.error), empty.error);
 
 rmSync(stage, { recursive: true, force: true });
-console.log(`\n${failures === 0 ? 'All host tests passed' : `${failures} failing check(s)`}`);
-process.exit(failures === 0 ? 0 : 1);
+finish('host');

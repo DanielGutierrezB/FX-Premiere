@@ -75,31 +75,52 @@ FXP.defaultAudioCrossfade = function () {
             return { name: names[i], transition: transition };
         }
     }
-    var fallbackIndex = names.length > 1 ? 1 : 0;
-    return { name: names[fallbackIndex], transition: FXP.lookupTransition(names[fallbackIndex], 'audio') };
+    // Also try the display name, which is what a localised install exposes.
+    for (var d = 0; d < names.length; d++) {
+        if (String(names[d]).toLowerCase().indexOf('constant power') >= 0) {
+            return { name: names[d], transition: FXP.lookupTransition(names[d], 'audio') };
+        }
+    }
+    // Picking "some other audio transition" would be a guess dressed as logic.
+    return null;
 };
 
+/**
+ * addTransition changed signature across Premiere versions. The short form cannot carry the
+ * alignment, so the result says whether the alignment actually made it through instead of
+ * reporting plain success for a transition that silently centred itself on the cut.
+ */
 FXP.addTransitionToItem = function (item, transition, addToStart, duration, alignment) {
     var attempts = [
-        [transition, addToStart, duration, '00;00;00;00', alignment, false, true],
-        [transition, addToStart, duration, '00;00;00;00', alignment, true, true],
-        [transition, addToStart, duration]
+        {
+            alignmentHonoured: true,
+            call: function () {
+                return item.addTransition(transition, addToStart, duration, '00;00;00;00', alignment, false, true);
+            }
+        },
+        {
+            alignmentHonoured: true,
+            call: function () {
+                return item.addTransition(transition, addToStart, duration, '00;00;00;00', alignment, true, true);
+            }
+        },
+        {
+            alignmentHonoured: false,
+            call: function () {
+                return item.addTransition(transition, addToStart, duration);
+            }
+        }
     ];
     for (var i = 0; i < attempts.length; i++) {
-        var args = attempts[i];
         try {
-            var ok =
-                args.length === 3
-                    ? item.addTransition(args[0], args[1], args[2])
-                    : item.addTransition(args[0], args[1], args[2], args[3], args[4], args[5], args[6]);
-            if (ok) {
-                return true;
+            if (attempts[i].call()) {
+                return { ok: true, alignmentHonoured: attempts[i].alignmentHonoured };
             }
         } catch (error) {
             FXP.trace('addTransition attempt ' + i + ' failed: ' + FXP.errorText(error));
         }
     }
-    return false;
+    return { ok: false, alignmentHonoured: true };
 };
 
 FXP.applyTransition = function (request) {
@@ -125,12 +146,15 @@ FXP.applyTransition = function (request) {
     }
 
     var outcome = { applied: 0, skipped: 0, failed: 0, messages: [] };
+    var alignmentDropped = false;
     var jobs = [{ mediaType: mediaType, transition: transition, label: request.name }];
 
     if (mediaType === 'video' && options.applyToAudio) {
         var crossfade = FXP.defaultAudioCrossfade();
         if (crossfade && crossfade.transition) {
             jobs[jobs.length] = { mediaType: 'audio', transition: crossfade.transition, label: crossfade.name };
+        } else {
+            outcome.messages[outcome.messages.length] = 'No Constant Power crossfade found, audio left alone';
         }
     }
 
@@ -152,6 +176,7 @@ FXP.applyTransition = function (request) {
         }
         var sides = side === 'both' ? [true, false] : [side === 'start'];
         var placed = 0;
+        var missedEdges = 0;
         FXP.attachQEItems(targets);
         for (var t = 0; t < targets.length; t++) {
             var item = FXP.itemFor(targets[t]);
@@ -159,14 +184,29 @@ FXP.applyTransition = function (request) {
                 outcome.failed++;
                 continue;
             }
+            // `applied` is a clip count everywhere else in the protocol, so a clip that takes a
+            // transition on both edges still counts once.
+            var clipPlaced = false;
             for (var k = 0; k < sides.length; k++) {
-                if (FXP.addTransitionToItem(item, job.transition, sides[k], duration, alignment)) {
-                    outcome.applied++;
+                var result = FXP.addTransitionToItem(item, job.transition, sides[k], duration, alignment);
+                if (result.ok) {
+                    clipPlaced = true;
                     placed++;
+                    if (!result.alignmentHonoured) {
+                        alignmentDropped = true;
+                    }
                 } else {
-                    outcome.failed++;
+                    missedEdges++;
                 }
             }
+            if (clipPlaced) {
+                outcome.applied++;
+            } else {
+                outcome.failed++;
+            }
+        }
+        if (missedEdges > 0 && job.mediaType === mediaType) {
+            outcome.messages[outcome.messages.length] = missedEdges + ' edge(s) had no room for the transition';
         }
         if (job.mediaType === 'audio' && mediaType === 'video' && placed > 0) {
             outcome.messages[outcome.messages.length] = 'Audio crossfade: ' + job.label;
@@ -174,5 +214,8 @@ FXP.applyTransition = function (request) {
     }
 
     outcome.messages[outcome.messages.length] = frames + ' frame' + (frames === 1 ? '' : 's') + ' (' + duration + ')';
+    if (alignmentDropped && alignment !== 0) {
+        outcome.messages[outcome.messages.length] = 'This Premiere build ignored the alignment and centred the transition';
+    }
     return outcome;
 };

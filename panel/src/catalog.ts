@@ -6,7 +6,6 @@ const CACHE_KEY = 'fxp.catalog.v2';
 
 interface CachedCatalog {
   hostVersion: string;
-  builtAt: number;
   items: CatalogItem[];
 }
 
@@ -14,8 +13,6 @@ export interface IndexedCatalog {
   items: CatalogItem[];
   haystacks: Map<string, HaystackEntry>;
   warnings: string[];
-  builtAt: number;
-  fromCache: boolean;
 }
 
 const buildHaystacks = (items: CatalogItem[]): Map<string, HaystackEntry> => {
@@ -60,29 +57,17 @@ export const loadCachedCatalog = (hostVersion: string): IndexedCatalog | null =>
   if (!cached || cached.hostVersion !== hostVersion) {
     return null;
   }
-  return {
-    items: cached.items,
-    haystacks: buildHaystacks(cached.items),
-    warnings: [],
-    builtAt: cached.builtAt,
-    fromCache: true,
-  };
+  return { items: cached.items, haystacks: buildHaystacks(cached.items), warnings: [] };
 };
 
-export const fetchCatalog = async (presetFiles: string[]): Promise<IndexedCatalog> => {
-  const response = await callHost<Catalog>({ op: 'catalog', presetFiles });
+export const fetchCatalog = async (presetSources: string[]): Promise<IndexedCatalog> => {
+  const response = await callHost<Catalog>({ op: 'catalog', presetSources });
   if (!response.ok || !response.data) {
     throw new Error(response.error ?? 'The effect index could not be built.');
   }
   const catalog = response.data;
-  writeCache({ hostVersion: catalog.hostVersion, builtAt: catalog.builtAt, items: catalog.items });
-  return {
-    items: catalog.items,
-    haystacks: buildHaystacks(catalog.items),
-    warnings: catalog.warnings ?? [],
-    builtAt: catalog.builtAt,
-    fromCache: false,
-  };
+  writeCache({ hostVersion: catalog.hostVersion, items: catalog.items });
+  return { items: catalog.items, haystacks: buildHaystacks(catalog.items), warnings: catalog.warnings ?? [] };
 };
 
 /**
@@ -91,9 +76,9 @@ export const fetchCatalog = async (presetFiles: string[]): Promise<IndexedCatalo
  */
 export const refreshPresets = async (
   current: IndexedCatalog,
-  presetFiles: string[],
+  presetSources: string[],
 ): Promise<IndexedCatalog> => {
-  const response = await callHost<{ items: CatalogItem[] }>({ op: 'presets', presetFiles });
+  const response = await callHost<{ items: CatalogItem[]; warnings: string[] }>({ op: 'presets', presetSources });
   if (!response.ok || !response.data) {
     return current;
   }
@@ -103,5 +88,6 @@ export const refreshPresets = async (
   if (cached) {
     writeCache({ ...cached, items });
   }
-  return { ...current, items, haystacks: buildHaystacks(items) };
+  // Preset parse failures only reach the user if they are carried out of here.
+  return { items, haystacks: buildHaystacks(items), warnings: response.data.warnings ?? [] };
 };

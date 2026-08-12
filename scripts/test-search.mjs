@@ -1,6 +1,7 @@
 // Checks the fuzzy ranking and the motion command parser without needing Premiere.
 // Usage: node scripts/test-search.mjs
 
+import { check, finish } from './lib/check.mjs';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -86,16 +87,6 @@ const settings = {
   usage: {},
 };
 
-let failures = 0;
-
-const check = (label, condition, detail = '') => {
-  if (condition) {
-    console.log(`  ok    ${label}`);
-  } else {
-    console.log(`  FAIL  ${label}${detail ? ` :: ${detail}` : ''}`);
-    failures += 1;
-  }
-};
 
 console.log('Fuzzy ranking');
 const expectations = [
@@ -178,5 +169,4 @@ for (const query of ['scale', 'zoom 5', 'scale abc', 'gaussian blur']) {
 }
 
 rmSync(stage, { recursive: true, force: true });
-console.log(`\n${failures === 0 ? 'All search tests passed' : `${failures} failing check(s)`}`);
-process.exit(failures === 0 ? 0 : 1);
+finish('search');

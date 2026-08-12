@@ -23,6 +23,7 @@ export const makeParam = (displayName, value) => ({
   calls: [],
   current: value,
   timeVarying: false,
+  keys: [],
   getValue() {
     return this.current;
   },
@@ -42,7 +43,18 @@ export const makeParam = (displayName, value) => ({
   },
   setValueAtKey(at, next) {
     this.calls.push(['setValueAtKey', Number(Number(at).toFixed(6)), next]);
+    this.keys.push({ at: Number(Number(at).toFixed(6)), value: next });
     this.current = next;
+  },
+  getKeys() {
+    return this.keys.map((key) => key.at);
+  },
+  getValueAtKey(at) {
+    const found = this.keys.find((key) => Math.abs(key.at - Number(at)) < 1e-6);
+    if (!found) {
+      throw new Error(`no keyframe at ${at}`);
+    }
+    return found.value;
   },
   setInterpolationTypeAtKey(at, type) {
     this.calls.push(['setInterpolationTypeAtKey', Number(Number(at).toFixed(6)), type]);
@@ -92,6 +104,16 @@ export const makeClip = ({ name, start, end, inPoint, selected, audio = false })
   return clip;
 };
 
+/**
+ * A real install exposes several hundred effects, and the palette is supposed to stay cheap at
+ * that size, so the library is padded to a realistic length. The filler names deliberately
+ * share no letters-in-order with the queries the tests use.
+ */
+const FILLER_EFFECTS = Array.from({ length: 140 }, (_, index) => ({
+  name: `Test Filler ${String(index + 1).padStart(3, '0')}`,
+  matchName: `AE.FXP Filler ${index + 1}`,
+}));
+
 export const EFFECT_LIBRARY = {
   video: [
     { name: 'Gaussian Blur', matchName: 'AE.ADBE Gaussian Blur 2' },
@@ -99,6 +121,7 @@ export const EFFECT_LIBRARY = {
     { name: 'Drop Shadow', matchName: 'AE.ADBE Drop Shadow' },
     { name: 'Lumetri Color', matchName: 'AE.ADBE Lumetri' },
     { name: 'Ultra Key', matchName: 'AE.ADBE Ultra Keyer' },
+    ...FILLER_EFFECTS,
   ],
   audio: [
     { name: 'Studio Reverb', matchName: 'AE.ADBE Studio Reverb' },
@@ -128,15 +151,17 @@ export const buildWorld = () => {
   const videoClips = [clipA, clipB, clipC];
   const audioClips = [audioA];
 
+  // Deliberately not 25fps or 1920x1080: those are the host's own fallback values, so a mock
+  // that agreed with them would let a broken read pass every assertion.
   const sequence = {
     name: 'Mock Sequence',
-    timebase: String(TICKS_PER_SECOND / 25),
+    timebase: String(TICKS_PER_SECOND / 30),
     videoTracks: collection([{ clips: collection(videoClips, 'numItems') }], 'numTracks'),
     audioTracks: collection([{ clips: collection(audioClips, 'numItems') }], 'numTracks'),
     getSettings: () => ({
-      videoFrameWidth: 1920,
-      videoFrameHeight: 1080,
-      videoFrameRate: { ticks: String(TICKS_PER_SECOND / 25) },
+      videoFrameWidth: 1280,
+      videoFrameHeight: 720,
+      videoFrameRate: { ticks: String(TICKS_PER_SECOND / 30) },
     }),
     getPlayerPosition: () => time(1),
   };
@@ -189,8 +214,12 @@ export const buildWorld = () => {
     return found ? { ...found } : undefined;
   };
 
+  const undo = { calls: 0 };
   const qe = {
     project: {
+      undo: () => {
+        undo.calls += 1;
+      },
       getVideoEffectList: () => EFFECT_LIBRARY.video.map((entry) => entry.name),
       getAudioEffectList: () => EFFECT_LIBRARY.audio.map((entry) => entry.name),
       getVideoTransitionList: () => TRANSITION_LIBRARY.video.map((entry) => entry.name),
@@ -210,6 +239,9 @@ export const buildWorld = () => {
     sequence,
     qe,
     clips: { clipA, clipB, clipC, audioA },
+    get undoCalls() {
+      return undo.calls;
+    },
     transitionCalls,
     scaleToFrameCalls,
     select(...names) {
@@ -220,7 +252,7 @@ export const buildWorld = () => {
   };
 };
 
-class FileStub {
+export class FileStub {
   constructor(path) {
     this.path = String(path);
     this.encoding = 'UTF-8';
@@ -257,7 +289,7 @@ class FileStub {
   }
 }
 
-class FolderStub {
+export class FolderStub {
   constructor(path) {
     this.path = String(path);
   }

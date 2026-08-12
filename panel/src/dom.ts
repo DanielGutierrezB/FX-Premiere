@@ -14,8 +14,6 @@ export const el = <K extends keyof HTMLElementTagNameMap>(
       node.className = String(value);
     } else if (key === 'text') {
       node.textContent = String(value);
-    } else if (key === 'html') {
-      node.innerHTML = String(value);
     } else if (key.startsWith('on') && typeof value === 'function') {
       node.addEventListener(key.slice(2).toLowerCase(), value as EventListener);
     } else if (value === true) {

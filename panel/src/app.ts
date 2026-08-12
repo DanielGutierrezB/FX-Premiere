@@ -7,10 +7,13 @@ import {
   onCepEvent,
   registerKeyInterest,
 } from '@shared/cep';
-import { defaultSettings, loadSettings, saveSettings } from '@shared/settings';
+import { capturedItems, listCaptured, saveCaptured } from '@shared/captured';
+import { defaultSettings, loadSettings, rememberItem, saveSettings } from '@shared/settings';
 import {
   type ApplyOutcome,
+  type CapturedPreset,
   type CatalogItem,
+  type ClipInspection,
   type HostResponse,
   type SequenceInfo,
   type Settings,
@@ -23,13 +26,33 @@ import {
   refreshPresets,
   type IndexedCatalog,
 } from './catalog';
-import { LOCAL_COMMAND_REFRESH, LOCAL_COMMAND_SETTINGS, STATIC_COMMANDS, parseMotionQuery } from './commands';
+import {
+  LOCAL_COMMAND_INSPECT,
+  LOCAL_COMMAND_REFRESH,
+  LOCAL_COMMAND_SETTINGS,
+  LOCAL_COMMAND_UNDO,
+  STATIC_COMMANDS,
+  parseMotionQuery,
+} from './commands';
 import { clear, el, highlight } from './dom';
 import { SCOPES, badgeFor, rank, type RankedItem, type Scope } from './search';
+import { InspectView } from './views/inspect';
 import { SettingsSheet } from './views/settings';
 import { TransitionDialog } from './views/transition';
 
-type View = 'search' | 'transition' | 'settings';
+type View = 'search' | 'transition' | 'settings' | 'inspect';
+
+/**
+ * How Enter was pressed. `withOptions` means Shift was held, which flips whatever the transition
+ * prompt setting says; `keepOpen` means Cmd/Ctrl was held to apply several things in a row.
+ */
+type ApplyIntent = 'default' | 'withOptions' | 'keepOpen';
+
+/** Rows built per render. The window follows the selection, so navigation stays O(1). */
+const MAX_ROWS = 50;
+
+/** Chips in the resting bar: enough to reach for, few enough to read at a glance. */
+const QUICK_LIMIT = 8;
 
 export class PaletteApp {
   private readonly root: HTMLElement;
@@ -42,9 +65,9 @@ export class PaletteApp {
     placeholder: 'Search effects, transitions, presets\u2026',
   });
 
-  private readonly selectionPill = el('span', { class: 'pill' }, ['\u2026']);
+  private readonly selectionNode = el('span', { class: 'meta' });
 
-  private readonly scopesBar = el('nav', { class: 'scopes' });
+  private readonly scopeNode = el('button', { class: 'meta meta--button', title: 'Tab cycles the scope' });
 
   private readonly body = el('div', { class: 'results-host' });
 
@@ -84,6 +107,15 @@ export class PaletteApp {
     defaultSettings().lastTransition,
   );
 
+  private captured: CatalogItem[] = [];
+
+  private readonly inspectView = new InspectView({
+    capture: () => this.captureSelection(),
+    save: (preset) => this.storeCaptured(preset),
+    toast: (message, kind) => this.toast(message, kind),
+    back: () => this.backToSearch(),
+  });
+
   private readonly settingsSheet = new SettingsSheet({
     settings: () => this.settings,
     replaceSettings: (next) => {
@@ -104,27 +136,58 @@ export class PaletteApp {
     this.root = root;
   }
 
+  /**
+   * Paints and accepts input before talking to Premiere at all. The index only matters once
+   * something is typed, so it is warmed up behind the first paint.
+   */
   async boot(): Promise<void> {
     this.settings = loadSettings();
     this.applyTheme();
     this.buildChrome();
     registerKeyInterest();
     this.bindEvents();
+    this.captured = capturedItems(listCaptured());
+    this.updateResults();
+    this.focusInput();
+    await this.warmUp();
+  }
 
+  private async warmUp(): Promise<void> {
     const ping = await callHost<{ host: string }>({ op: 'ping' });
     this.hostVersion = ping.data?.host ?? 'unknown';
+    void this.refreshSequence();
 
     const cached = loadCachedCatalog(this.hostVersion);
     if (cached) {
       this.catalog = cached;
-      this.updateResults();
+      this.backfillRemembered();
+      this.setStatus(`${cached.items.length} items`, 'ok');
+      if (this.input.value.trim() !== '') {
+        this.updateResults();
+      }
       void this.refreshPresetsOnly();
-    } else {
-      this.setStatus('Indexing effects, transitions and presets\u2026');
-      await this.ensureCatalog(true);
+      return;
     }
-    void this.refreshSequence();
-    this.focusInput();
+    await this.ensureCatalog(true);
+  }
+
+  /**
+   * Older settings files only kept ids, and a favourite applied from a previous version has no
+   * remembered copy yet. One pass over the fresh index fills the gaps.
+   */
+  private backfillRemembered(): void {
+    const wanted = new Set(
+      [...this.settings.recents, ...this.settings.favorites].filter((id) => !this.settings.remembered[id]),
+    );
+    if (wanted.size === 0 || !this.catalog) {
+      return;
+    }
+    for (const item of this.catalog.items) {
+      if (wanted.has(item.id)) {
+        this.settings.remembered[item.id] = item;
+      }
+    }
+    saveSettings(this.settings);
   }
 
   private applyTheme(): void {
@@ -145,13 +208,16 @@ export class PaletteApp {
     const header = el('header', { class: 'search' }, [
       el('span', { class: 'search__prompt', text: '\u203a' }),
       this.input,
-      el('div', { class: 'search__meta' }, [this.selectionPill, this.gearButton]),
+      this.gearButton,
     ]);
-    const footer = el('footer', { class: 'hints' }, [this.hintKeys, this.statusNode]);
+    const footer = el('footer', { class: 'foot' }, [
+      this.statusNode,
+      el('span', { class: 'foot__right' }, [this.selectionNode, this.scopeNode, this.hintKeys]),
+    ]);
     this.root.appendChild(header);
-    this.root.appendChild(this.scopesBar);
     this.root.appendChild(this.body);
     this.root.appendChild(footer);
+    this.scopeNode.addEventListener('click', () => this.cycleScope(1));
     this.renderScopes();
     this.renderHints();
   }
@@ -161,6 +227,7 @@ export class PaletteApp {
     this.input.addEventListener('input', () => {
       this.active = 0;
       this.updateResults();
+      this.renderHints();
     });
     window.addEventListener('keydown', (event) => this.onKeyDown(event), true);
     window.addEventListener('focus', () => this.focusInput());
@@ -236,85 +303,106 @@ export class PaletteApp {
 
   private renderSelectionPill(): void {
     if (!this.sequence || !this.sequence.hasSequence) {
-      this.selectionPill.textContent = 'no sequence';
-      this.selectionPill.className = 'pill pill--warn';
+      this.selectionNode.textContent = 'no sequence';
+      this.selectionNode.className = 'meta meta--warn';
       return;
     }
     const count = this.sequence.selectedClips;
     if (count === 0) {
-      this.selectionPill.textContent = 'no selection';
-      this.selectionPill.className = 'pill pill--warn';
+      this.selectionNode.textContent = 'no selection';
+      this.selectionNode.className = 'meta meta--warn';
       return;
     }
-    this.selectionPill.textContent = `${count} clip${count === 1 ? '' : 's'}`;
-    this.selectionPill.className = 'pill pill--live';
+    this.selectionNode.textContent = `${count} clip${count === 1 ? '' : 's'}`;
+    this.selectionNode.className = 'meta';
   }
 
   private renderScopes(): void {
-    clear(this.scopesBar);
-    for (const scope of SCOPES) {
-      this.scopesBar.appendChild(
-        el('button', {
-          class: `scope${scope.id === this.scope ? ' scope--active' : ''}`,
-          text: scope.label,
-          onclick: () => {
-            this.scope = scope.id;
-            this.active = 0;
-            this.renderScopes();
-            this.updateResults();
-            this.focusInput();
-          },
-        }),
-      );
+    // 'all' is the default, so saying so would be noise; Tab makes the label appear.
+    const scope = SCOPES.find((entry) => entry.id === this.scope);
+    this.scopeNode.textContent = scope && scope.id !== 'all' ? scope.label.toLowerCase() : '';
+  }
+
+  /** Hints are only shown where they are not in the way: at rest, and inside the two sheets. */
+  private renderHints(): void {
+    clear(this.hintKeys);
+    const hints: Array<[string, string]> = this.hintsFor();
+    for (const [key, label] of hints) {
+      this.hintKeys.appendChild(el('span', {}, [el('kbd', { text: key }), label]));
     }
   }
 
-  private renderHints(): void {
-    clear(this.hintKeys);
-    const hints: Array<[string, string]> =
-      this.view === 'search'
-        ? [
-            ['\u2191\u2193', 'navigate'],
-            ['\u21b5', 'apply'],
-            ['\u21e7\u21b5', 'options'],
-            ['\u21e5', 'scope'],
-            ['\u2318D', 'favorite'],
-            ['esc', 'close'],
-          ]
-        : this.view === 'transition'
+  private hintsFor(): Array<[string, string]> {
+    switch (this.view) {
+      case 'transition':
+        return [
+          ['\u2191\u2193', 'duration'],
+          ['\u21b5', 'apply'],
+        ];
+      case 'settings':
+        return [['esc', 'back']];
+      case 'inspect':
+        return [
+          ['\u21b5', 'save preset'],
+          ['esc', 'back'],
+        ];
+      case 'search':
+        return this.input.value.trim() === ''
           ? [
-              ['\u2191\u2193', 'duration'],
               ['\u21b5', 'apply'],
-              ['esc', 'back'],
+              ['\u2318Z', 'undo'],
+              ['\u2318I', 'effects'],
             ]
-          : [
-              ['esc', 'back'],
-              ['\u2318R', 'reindex'],
-            ];
-    for (const [key, label] of hints) {
-      this.hintKeys.appendChild(el('span', {}, [el('kbd', { text: key }), label]));
+          : [];
+      default: {
+        const exhaustive: never = this.view;
+        throw new Error(`Unhandled view: ${String(exhaustive)}`);
+      }
     }
   }
 
   private allItems(): CatalogItem[] {
     const base = this.catalog ? this.catalog.items : [];
     const dynamic = parseMotionQuery(this.input.value);
-    return dynamic ? [dynamic, ...base, ...STATIC_COMMANDS] : [...base, ...STATIC_COMMANDS];
+    const items = [...this.captured, ...base, ...STATIC_COMMANDS];
+    return dynamic ? [dynamic, ...items] : items;
+  }
+
+  /**
+   * What the palette offers before anything is typed: the last things applied, then favourites.
+   * They come from the remembered copies in settings, so this renders and applies without the
+   * effect index being loaded at all.
+   */
+  private quickItems(): CatalogItem[] {
+    const out: CatalogItem[] = [];
+    const seen = new Set<string>();
+    for (const id of [...this.settings.recents, ...this.settings.favorites]) {
+      const item = this.settings.remembered[id];
+      if (item && !seen.has(id)) {
+        seen.add(id);
+        out.push(item);
+      }
+    }
+    return out.slice(0, QUICK_LIMIT);
   }
 
   private updateResults(): void {
     if (this.view !== 'search') {
       return;
     }
-    const items = this.allItems();
-    const haystacks = this.catalog?.haystacks ?? new Map();
-    const dynamic = parseMotionQuery(this.input.value);
-    this.results = rank(items, haystacks, this.input.value, this.scope, this.settings);
-    if (dynamic) {
-      const index = this.results.findIndex((entry) => entry.item.id === dynamic.id);
-      if (index > 0) {
-        const [row] = this.results.splice(index, 1);
-        this.results.unshift(row);
+    const query = this.input.value;
+    if (query.trim() === '') {
+      // Nothing typed: no ranking, no index needed, at most a handful of chips to build.
+      this.results = this.quickItems().map((item) => ({ item, score: 0, indices: [] }));
+    } else {
+      const dynamic = parseMotionQuery(query);
+      this.results = rank(this.allItems(), this.catalog?.haystacks ?? new Map(), query, this.scope, this.settings);
+      if (dynamic) {
+        const index = this.results.findIndex((entry) => entry.item.id === dynamic.id);
+        if (index > 0) {
+          const [row] = this.results.splice(index, 1);
+          this.results.unshift(row);
+        }
       }
     }
     if (this.active >= this.results.length) {
@@ -325,51 +413,94 @@ export class PaletteApp {
 
   private renderResults(): void {
     clear(this.body);
-    this.body.className = 'results-host';
-    if (!this.catalog) {
-      this.body.appendChild(
-        el('div', { class: 'empty' }, ['Building the effect index\u2026', el('br'), 'This only happens once per Premiere version.']),
-      );
+    if (this.input.value.trim() === '') {
+      this.renderQuickBar();
       return;
     }
+    this.body.className = 'results-host';
     if (this.results.length === 0) {
       this.body.appendChild(
-        el('div', { class: 'empty' }, [
-          this.input.value.trim() === '' ? 'Nothing indexed yet.' : `No match for "${this.input.value.trim()}"`,
-          el('br'),
-          'Try a shorter query, or reindex from Settings.',
-        ]),
+        el('div', { class: 'empty' }, [this.catalog ? `No match for \u201c${this.input.value.trim()}\u201d` : 'Indexing\u2026']),
       );
       return;
     }
+    // Only a window of rows is built, so a 1500 item index costs the same as a 50 item one.
+    const start = Math.max(0, Math.min(this.active - 8, this.results.length - MAX_ROWS));
+    const window = this.results.slice(start, start + MAX_ROWS);
     const list = el('ul', { class: 'results' });
-    this.results.forEach((entry, index) => {
-      const isFavorite = this.settings.favorites.includes(entry.item.id);
-      const name = el('span', { class: 'row__name' });
-      name.appendChild(highlight(entry.item.name, entry.indices));
-      const row = el(
-        'li',
-        {
-          class: `row${index === this.active ? ' row--active' : ''}`,
-          onclick: () => {
-            this.active = index;
-            void this.applyActive(false, false);
-          },
-        },
-        [
-          this.settings.showTypeBadges ? el('span', { class: 'row__badge', text: badgeFor(entry.item.kind) }) : null,
-          name,
-          el('span', { class: 'row__star', text: isFavorite ? '\u2605' : '' }),
-          el('span', { class: 'row__group', text: entry.item.group ?? '' }),
-        ],
-      );
-      list.appendChild(row);
+    window.forEach((entry, offset) => {
+      list.appendChild(this.renderRow(entry, start + offset));
     });
     this.body.appendChild(list);
+    if (this.results.length > window.length) {
+      this.body.appendChild(
+        el('div', { class: 'more', text: `+${this.results.length - window.length} more \u00b7 keep typing to narrow` }),
+      );
+    }
+    this.scrollActiveIntoView();
+  }
+
+  private renderRow(entry: RankedItem, index: number): HTMLElement {
+    const name = el('span', { class: 'row__name' });
+    name.appendChild(highlight(entry.item.name, entry.indices));
+    return el(
+      'li',
+      {
+        class: `row${index === this.active ? ' row--active' : ''}`,
+        onclick: () => {
+          this.active = index;
+          void this.applyActive('default');
+        },
+      },
+      [
+        this.settings.showTypeBadges ? el('span', { class: 'row__badge', text: badgeFor(entry.item.kind) }) : null,
+        name,
+        this.settings.favorites.includes(entry.item.id) ? el('span', { class: 'row__star', text: '\u2605' }) : null,
+        el('span', { class: 'row__group', text: entry.item.group ?? '' }),
+      ],
+    );
+  }
+
+  private renderQuickBar(): void {
+    this.body.className = 'quick-host';
+    if (this.results.length === 0) {
+      this.body.appendChild(el('div', { class: 'empty' }, ['Type to search effects, transitions and presets.']));
+      return;
+    }
+    const bar = el('div', { class: 'quick' });
+    this.results.forEach((entry, index) => {
+      bar.appendChild(
+        el(
+          'button',
+          {
+            class: `chip${index === this.active ? ' chip--active' : ''}`,
+            onclick: () => {
+              this.active = index;
+              void this.applyActive('default');
+            },
+          },
+          [
+            this.settings.favorites.includes(entry.item.id) ? el('span', { class: 'chip__star', text: '\u2605' }) : null,
+            el('span', { text: entry.item.name }),
+          ],
+        ),
+      );
+    });
+    this.body.appendChild(bar);
     this.scrollActiveIntoView();
   }
 
   private scrollActiveIntoView(): void {
+    const chip = this.body.querySelector('.chip--active') as HTMLElement | null;
+    if (chip) {
+      const bar = chip.parentElement;
+      if (bar && chip.offsetLeft + chip.offsetWidth > bar.scrollLeft + bar.clientWidth) {
+        bar.scrollLeft = chip.offsetLeft + chip.offsetWidth - bar.clientWidth;
+      } else if (bar && chip.offsetLeft < bar.scrollLeft) {
+        bar.scrollLeft = chip.offsetLeft;
+      }
+      return;
+    }
     const list = this.body.querySelector('.results');
     const row = list?.children[this.active] as HTMLElement | undefined;
     if (!row || !list) {
@@ -402,14 +533,20 @@ export class PaletteApp {
       this.settingsSheet.handleKey(event);
       return;
     }
+    if (this.view === 'inspect') {
+      this.inspectView.handleKey(event);
+      return;
+    }
 
     const accel = event.metaKey || event.ctrlKey;
     switch (event.key) {
       case 'ArrowDown':
+      case 'ArrowRight':
         event.preventDefault();
         this.moveActive(1);
         return;
       case 'ArrowUp':
+      case 'ArrowLeft':
         event.preventDefault();
         this.moveActive(-1);
         return;
@@ -423,7 +560,7 @@ export class PaletteApp {
         return;
       case 'Enter':
         event.preventDefault();
-        void this.applyActive(event.shiftKey, accel);
+        void this.applyActive(event.shiftKey ? 'withOptions' : accel ? 'keepOpen' : 'default');
         return;
       case 'Escape':
         event.preventDefault();
@@ -444,6 +581,16 @@ export class PaletteApp {
     if (accel && (event.key === 'r' || event.key === 'R')) {
       event.preventDefault();
       void this.ensureCatalog(true);
+      return;
+    }
+    if (accel && (event.key === 'z' || event.key === 'Z')) {
+      event.preventDefault();
+      void this.undoLast();
+      return;
+    }
+    if (accel && (event.key === 'i' || event.key === 'I')) {
+      event.preventDefault();
+      void this.openInspector();
       return;
     }
     if (accel && event.key === ',') {
@@ -473,6 +620,7 @@ export class PaletteApp {
       favorites.add(entry.item.id);
     }
     this.settings.favorites = [...favorites];
+    rememberItem(this.settings, entry.item);
     saveSettings(this.settings);
     this.renderResults();
   }
@@ -487,7 +635,8 @@ export class PaletteApp {
     }
     this.setStatus('Indexing\u2026');
     try {
-      this.catalog = await fetchCatalog(this.settings.presetFolders);
+      this.catalog = await fetchCatalog(this.settings.presetSources);
+      this.backfillRemembered();
       const presets = this.catalog.items.filter((item) => item.kind === 'preset').length;
       this.setStatus(`${this.catalog.items.length} items \u00b7 ${presets} presets`, 'ok');
       if (this.catalog.warnings.length > 0) {
@@ -505,21 +654,26 @@ export class PaletteApp {
     if (!this.catalog) {
       return;
     }
-    this.catalog = await refreshPresets(this.catalog, this.settings.presetFolders);
+    this.catalog = await refreshPresets(this.catalog, this.settings.presetSources);
     const presets = this.catalog.items.filter((item) => item.kind === 'preset').length;
     this.setStatus(`${this.catalog.items.length} items \u00b7 ${presets} presets`);
+    // A preset file that will not parse is worth a word on the warm path too, not just on a
+    // full reindex: the warm path is the common one.
+    if (this.catalog.warnings.length > 0) {
+      this.toast(this.catalog.warnings[0], 'error');
+    }
     this.updateResults();
   }
 
-  private async applyActive(withOptions: boolean, keepOpen: boolean): Promise<void> {
+  private async applyActive(intent: ApplyIntent): Promise<void> {
     const entry = this.results[this.active];
     if (!entry) {
       return;
     }
-    await this.applyItem(entry.item, withOptions, keepOpen);
+    await this.applyItem(entry.item, intent);
   }
 
-  private async applyItem(item: CatalogItem, withOptions: boolean, keepOpen: boolean): Promise<void> {
+  private async applyItem(item: CatalogItem, intent: ApplyIntent): Promise<void> {
     if (item.commandId === LOCAL_COMMAND_REFRESH) {
       await this.ensureCatalog(true);
       return;
@@ -528,15 +682,22 @@ export class PaletteApp {
       this.openSettings();
       return;
     }
+    if (item.commandId === LOCAL_COMMAND_INSPECT) {
+      await this.openInspector();
+      return;
+    }
+    if (item.commandId === LOCAL_COMMAND_UNDO) {
+      await this.undoLast();
+      return;
+    }
     const isTransition = item.kind === 'videoTransition' || item.kind === 'audioTransition';
     if (isTransition) {
-      const wantsDialog = this.settings.transitionPromptEnabled ? !withOptions : withOptions;
-      if (wantsDialog) {
+      if (this.settings.transitionPromptEnabled !== (intent === 'withOptions')) {
         this.openTransition(item);
         return;
       }
     }
-    await this.runApply(item, keepOpen);
+    await this.runApply(item, intent === 'keepOpen');
   }
 
   private async runApply(item: CatalogItem, keepOpen: boolean, options?: TransitionOptions): Promise<void> {
@@ -553,7 +714,7 @@ export class PaletteApp {
         return;
       }
       const outcome = response.data ?? { applied: 0, skipped: 0, failed: 0, messages: [] };
-      this.recordUsage(item.id);
+      this.recordUsage(item);
       if (outcome.applied === 0) {
         const reason = outcome.messages[0] ?? 'Nothing was applied.';
         this.setStatus(reason, 'error');
@@ -604,7 +765,9 @@ export class PaletteApp {
           options: options ?? this.settings.lastTransition,
         });
       case 'preset':
-        return callHost<ApplyOutcome>({ op: 'applyPreset', preset: item.preset! });
+        return item.captured
+          ? callHost<ApplyOutcome>({ op: 'applyCaptured', preset: item.captured })
+          : callHost<ApplyOutcome>({ op: 'applyPreset', preset: item.preset! });
       case 'command':
         return item.motion
           ? callHost<ApplyOutcome>({ op: 'motion', command: item.motion })
@@ -616,9 +779,10 @@ export class PaletteApp {
     }
   }
 
-  private recordUsage(id: string): void {
-    this.settings.usage[id] = (this.settings.usage[id] ?? 0) + 1;
-    this.settings.recents = [id, ...this.settings.recents.filter((entry) => entry !== id)].slice(0, 24);
+  private recordUsage(item: CatalogItem): void {
+    this.settings.usage[item.id] = (this.settings.usage[item.id] ?? 0) + 1;
+    this.settings.recents = [item.id, ...this.settings.recents.filter((entry) => entry !== item.id)].slice(0, 24);
+    rememberItem(this.settings, item);
     saveSettings(this.settings);
   }
 
@@ -653,6 +817,42 @@ export class PaletteApp {
     this.settingsSheet.render(this.body);
     this.settingsSheet.opened();
     this.renderHints();
+  }
+
+  private async openInspector(): Promise<void> {
+    const response = await callHost<ClipInspection>({ op: 'inspect' });
+    if (!response.ok || !response.data) {
+      const reason = response.error ?? 'Could not read the effects on this clip.';
+      this.setStatus(reason, 'error');
+      this.toast(reason, 'error');
+      return;
+    }
+    this.view = 'inspect';
+    this.inspectView.open(response.data);
+    this.inspectView.render(this.body);
+    this.renderHints();
+  }
+
+  private async captureSelection(): Promise<CapturedPreset | null> {
+    const response = await callHost<CapturedPreset>({ op: 'capture' });
+    if (!response.ok || !response.data) {
+      this.toast(response.error ?? 'Could not capture this clip.', 'error');
+      return null;
+    }
+    return response.data;
+  }
+
+  private storeCaptured(preset: CapturedPreset): void {
+    saveCaptured(preset);
+    this.captured = capturedItems(listCaptured());
+  }
+
+  private async undoLast(): Promise<void> {
+    const response = await callHost<{ undone: boolean; message: string }>({ op: 'undo' });
+    const message = response.data?.message ?? response.error ?? 'Undo is not available.';
+    this.setStatus(message, response.data?.undone ? 'ok' : 'error');
+    this.toast(message, response.data?.undone ? 'info' : 'error');
+    void this.refreshSequence();
   }
 
   private flagUpdate(available: boolean, remote: string): void {

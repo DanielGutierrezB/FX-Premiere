@@ -49,7 +49,8 @@ FXP.discoverPresetFiles = function () {
         return found;
     }
     var current = FXP.hostVersion().split('.')[0];
-    var versionFolders = root.getFolders ? root.getFolders() : root.getFiles();
+    // ExtendScript's Folder has no getFolders; getFiles returns folders too.
+    var versionFolders = root.getFiles();
     var preferred = [];
     var others = [];
     for (var i = 0; i < versionFolders.length; i++) {
@@ -483,12 +484,32 @@ FXP.lastComponentWithMatchName = function (clip, matchName) {
     return found;
 };
 
+/** How a preset anchors its keyframes to the clip, as stored in the .prfpset. */
+FXP.PRESET_ANCHOR = {
+    SCALE_TO_CLIP: 0,
+    ANCHOR_TO_IN: 1,
+    ANCHOR_TO_OUT: 2
+};
+
+/** Premiere's keyframe interpolation values, which differ from the ones stored in presets. */
+FXP.KEYFRAME_INTERPOLATION = {
+    LINEAR: 0,
+    HOLD: 1,
+    BEZIER: 2
+};
+
+/** The same values as written inside a .prfpset. */
+FXP.PRESET_INTERPOLATION = {
+    HOLD: 4,
+    BEZIER: 5
+};
+
 FXP.presetKeyTime = function (detail, ticks, context) {
     var offsetSeconds = (ticks - detail.anchorIn) / FXP.TICKS_PER_SECOND;
-    if (detail.type === 2) {
+    if (detail.type === FXP.PRESET_ANCHOR.ANCHOR_TO_OUT) {
         return context.outPoint - (detail.anchorOut - ticks) / FXP.TICKS_PER_SECOND;
     }
-    if (detail.type === 0 && detail.anchorOut > detail.anchorIn) {
+    if (detail.type === FXP.PRESET_ANCHOR.SCALE_TO_CLIP && detail.anchorOut > detail.anchorIn) {
         var fraction = (ticks - detail.anchorIn) / (detail.anchorOut - detail.anchorIn);
         return context.inPoint + fraction * Math.max(0, context.outPoint - context.inPoint);
     }
@@ -496,13 +517,13 @@ FXP.presetKeyTime = function (detail, ticks, context) {
 };
 
 FXP.mapInterpolation = function (raw) {
-    if (raw === 5) {
-        return 2;
+    if (raw === FXP.PRESET_INTERPOLATION.BEZIER) {
+        return FXP.KEYFRAME_INTERPOLATION.BEZIER;
     }
-    if (raw === 4) {
-        return 1;
+    if (raw === FXP.PRESET_INTERPOLATION.HOLD) {
+        return FXP.KEYFRAME_INTERPOLATION.HOLD;
     }
-    return 0;
+    return FXP.KEYFRAME_INTERPOLATION.LINEAR;
 };
 
 FXP.applyPresetParam = function (param, definition, detail, context) {
@@ -585,10 +606,15 @@ FXP.applyPresetEffectParams = function (component, effect, detail, context) {
                 used['@' + definition.name] = cursor + 1;
             }
         }
-        if (index < 0 && definition.index < count) {
+        // Only fall back to the ordinal when the preset had no name to match on. Writing a
+        // named value into whatever parameter sits at that index is how "Blurriness" ends up
+        // in "Repeat Edge Pixels" on a localised or newer build of the effect.
+        if (index < 0 && definition.name === '' && definition.index < count) {
             index = definition.index;
         }
         if (index < 0) {
+            context.unmatched = (context.unmatched || 0) + 1;
+            FXP.trace('no parameter named "' + definition.name + '" on ' + effect.matchName);
             continue;
         }
         if (FXP.applyPresetParam(properties[index], definition, detail, context)) {
@@ -647,12 +673,14 @@ FXP.applyPreset = function (request) {
     }
 
     var missing = [];
+    var unmatched = 0;
     FXP.attachQEItems(targets);
     for (var t = 0; t < targets.length; t++) {
         var entry = targets[t];
         var context = {
             inPoint: FXP.clipSeconds(entry.clip.inPoint),
-            outPoint: FXP.clipSeconds(entry.clip.outPoint)
+            outPoint: FXP.clipSeconds(entry.clip.outPoint),
+            unmatched: 0
         };
         if (context.outPoint <= context.inPoint) {
             context.outPoint = context.inPoint + Math.max(0.04, entry.endSeconds - entry.startSeconds);
@@ -681,10 +709,14 @@ FXP.applyPreset = function (request) {
         } else {
             outcome.failed++;
         }
+        unmatched += context.unmatched;
     }
 
     if (missing.length > 0) {
         outcome.messages[outcome.messages.length] = 'Missing effects: ' + missing.join(', ');
+    }
+    if (unmatched > 0) {
+        outcome.messages[outcome.messages.length] = unmatched + ' parameter(s) could not be matched by name';
     }
     return outcome;
 };

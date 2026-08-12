@@ -1,14 +1,15 @@
-// Runs the ExtendScript preset parser under Node against real .prfpset files.
-// Usage: node scripts/test-preset-parser.mjs [path-to.prfpset ...]
-//
-// The host script is plain ES3, so it evaluates in Node once ExtendScript's File and
-// Folder objects are stubbed. This keeps the parsing logic verifiable without Premiere.
+// Parses the real .prfpset files installed on this machine with the shipping ExtendScript
+// parser, and prints what it found. This is a diagnostic tool, not a test: the parser's
+// assertions live in scripts/test-host.mjs against a fixture, which is what CI runs.
+// Usage: node scripts/inspect-presets.mjs [path-to.prfpset ...]
 
-import { readFileSync, existsSync, statSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, join, resolve, basename } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runInNewContext } from 'node:vm';
+
+import { FileStub, FolderStub } from './lib/mock-premiere.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const hostScript = join(root, 'dist', 'host', 'fxpremiere.jsx');
@@ -16,93 +17,6 @@ const hostScript = join(root, 'dist', 'host', 'fxpremiere.jsx');
 if (!existsSync(hostScript)) {
   console.error('dist/host/fxpremiere.jsx missing. Run: npm run build');
   process.exit(1);
-}
-
-const globToRegExp = (pattern) =>
-  new RegExp(`^${pattern.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.')}$`, 'i');
-
-class FileStub {
-  constructor(path) {
-    this.path = String(path);
-    this.encoding = 'UTF-8';
-    this.handle = null;
-  }
-
-  get name() {
-    return basename(this.path);
-  }
-
-  get fsName() {
-    return this.path;
-  }
-
-  get exists() {
-    return existsSync(this.path) && statSync(this.path).isFile();
-  }
-
-  get length() {
-    return this.exists ? statSync(this.path).size : 0;
-  }
-
-  get modified() {
-    return this.exists ? statSync(this.path).mtime : null;
-  }
-
-  open() {
-    if (!this.exists) {
-      return false;
-    }
-    this.handle = readFileSync(this.path, 'utf8');
-    return true;
-  }
-
-  read() {
-    return this.handle ?? '';
-  }
-
-  close() {
-    this.handle = null;
-    return true;
-  }
-}
-
-class FolderStub {
-  constructor(path) {
-    this.path = String(path);
-  }
-
-  get name() {
-    return basename(this.path);
-  }
-
-  get fsName() {
-    return this.path;
-  }
-
-  get exists() {
-    return existsSync(this.path) && statSync(this.path).isDirectory();
-  }
-
-  entries(pattern) {
-    if (!this.exists) {
-      return [];
-    }
-    const matcher = pattern ? globToRegExp(pattern) : null;
-    return readdirSync(this.path)
-      .filter((name) => !matcher || matcher.test(name))
-      .map((name) => {
-        const full = join(this.path, name);
-        return statSync(full).isDirectory() ? new FolderStub(full) : new FileStub(full);
-      });
-  }
-
-  getFiles(pattern) {
-    return this.entries(pattern);
-  }
-
-  getFolders() {
-    return this.entries().filter((entry) => entry instanceof FolderStub);
-  }
 }
 
 FolderStub.myDocuments = new FolderStub(join(homedir(), 'Documents'));
@@ -162,7 +76,9 @@ for (const file of files) {
     totalEffects += detail.effects.length;
     totalParams += params;
     totalKeyframes += keys;
-    const anchorType = ['scale to clip', 'anchor to in', 'anchor to out'][detail.type] ?? `type ${detail.type}`;
+    // The parser's own names for these, so the tool cannot drift from the host.
+    const anchorNames = Object.keys(FXP.PRESET_ANCHOR);
+    const anchorType = anchorNames.find((name) => FXP.PRESET_ANCHOR[name] === detail.type) ?? `type ${detail.type}`;
     const folder = preset.path === '' ? '(root)' : preset.path;
     console.log(
       `  ok    ${preset.name} [${folder}] ${detail.mediaType}, ${anchorType}: ` +

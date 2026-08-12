@@ -109,6 +109,8 @@ export const parseMotionQuery = (query: string): CatalogItem | null => {
 
 export const LOCAL_COMMAND_REFRESH = 'local:refresh';
 export const LOCAL_COMMAND_SETTINGS = 'local:settings';
+export const LOCAL_COMMAND_INSPECT = 'local:inspect';
+export const LOCAL_COMMAND_UNDO = 'local:undo';
 
 export const STATIC_COMMANDS: CatalogItem[] = [
   {
@@ -131,6 +133,20 @@ export const STATIC_COMMANDS: CatalogItem[] = [
     name: 'Toggle Clip Enable',
     group: 'Command',
     commandId: 'toggleDisabled',
+  },
+  {
+    id: 'command:inspect',
+    kind: 'command',
+    name: 'Effects on This Clip \u2026 save as preset',
+    group: 'FX Premiere',
+    commandId: LOCAL_COMMAND_INSPECT,
+  },
+  {
+    id: 'command:undo',
+    kind: 'command',
+    name: 'Undo Last Change',
+    group: 'FX Premiere',
+    commandId: LOCAL_COMMAND_UNDO,
   },
   {
     id: 'command:refresh',
