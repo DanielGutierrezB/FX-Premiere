@@ -182,7 +182,8 @@ export const applyUpdate = async (downloadUrl: string): Promise<void> => {
   const childProcess = nodeRequire()('child_process') as typeof import('child_process');
 
   const staging = fs.mkdtempSync(path.join(os.tmpdir(), 'fxp-update-'));
-  const archive = path.join(staging, 'FX-Premiere.zxp');
+  // Windows PowerShell only expands files named .zip, and a .zxp is just a signed zip.
+  const archive = path.join(staging, 'FX-Premiere.zip');
   const unpacked = path.join(staging, 'unpacked');
   try {
     await download(downloadUrl, archive);

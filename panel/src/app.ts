@@ -7,18 +7,14 @@ import {
   onCepEvent,
   registerKeyInterest,
 } from '@shared/cep';
-import { formatHotkey, hotkeyFromEvent, isHotkeyUsable } from '@shared/hotkey';
-import { defaultSettings, loadSettings, readHelperStatus, saveSettings } from '@shared/settings';
-import { applyUpdate, checkForUpdate, isDevInstall, localVersion, type UpdateCheck } from '@shared/updater';
+import { defaultSettings, loadSettings, saveSettings } from '@shared/settings';
 import {
-  TransitionAlignment,
   type ApplyOutcome,
   type CatalogItem,
   type HostResponse,
   type SequenceInfo,
   type Settings,
   type TransitionOptions,
-  type TransitionSide,
 } from '@shared/types';
 import {
   clearCatalogCache,
@@ -30,20 +26,10 @@ import {
 import { LOCAL_COMMAND_REFRESH, LOCAL_COMMAND_SETTINGS, STATIC_COMMANDS, parseMotionQuery } from './commands';
 import { clear, el, highlight } from './dom';
 import { SCOPES, badgeFor, rank, type RankedItem, type Scope } from './search';
+import { SettingsSheet } from './views/settings';
+import { TransitionDialog } from './views/transition';
 
 type View = 'search' | 'transition' | 'settings';
-
-const ALIGNMENT_OPTIONS: Array<{ value: TransitionAlignment; label: string }> = [
-  { value: TransitionAlignment.CenterAtCut, label: 'Center at cut' },
-  { value: TransitionAlignment.StartAtCut, label: 'Start at cut' },
-  { value: TransitionAlignment.EndAtCut, label: 'End at cut' },
-];
-
-const SIDE_OPTIONS: Array<{ value: TransitionSide; label: string }> = [
-  { value: 'end', label: 'End of clip' },
-  { value: 'start', label: 'Start of clip' },
-  { value: 'both', label: 'Both edges' },
-];
 
 export class PaletteApp {
   private readonly root: HTMLElement;
@@ -78,25 +64,41 @@ export class PaletteApp {
 
   private view: View = 'search';
 
-  private pendingTransition: CatalogItem | null = null;
-
-  private transitionOptions: TransitionOptions = defaultSettings().lastTransition;
-
   private sequence: SequenceInfo | null = null;
 
   private hostVersion = '';
 
   private busy = false;
 
-  private recordingTarget: 'hotkey' | 'settingsHotkey' | null = null;
-
   private toastTimer = 0;
 
   private readonly gearButton = el('button', { class: 'icon-button', title: 'Settings', text: '\u2699' });
 
-  private update: UpdateCheck | null = null;
+  private readonly transitionDialog = new TransitionDialog(
+    {
+      fps: () => this.sequence?.fps ?? 25,
+      selectedClips: () => this.sequence?.selectedClips ?? 0,
+      apply: (item, options) => void this.confirmTransition(item, options),
+      back: () => this.backToSearch(),
+    },
+    defaultSettings().lastTransition,
+  );
 
-  private updateState: 'idle' | 'checking' | 'installing' = 'idle';
+  private readonly settingsSheet = new SettingsSheet({
+    settings: () => this.settings,
+    replaceSettings: (next) => {
+      this.settings = next;
+    },
+    persist: (restartHelper) => this.persistAndNotify(restartHelper),
+    hostVersion: () => this.hostVersion,
+    indexedItems: () => this.catalog?.items.length ?? 0,
+    applyTheme: () => this.applyTheme(),
+    toast: (message, kind) => this.toast(message, kind),
+    reindex: () => this.ensureCatalog(true),
+    refreshPresets: () => this.refreshPresetsOnly(),
+    flagUpdate: (available, remote) => this.flagUpdate(available, remote),
+    close: () => this.backToSearch(),
+  });
 
   constructor(root: HTMLElement) {
     this.root = root;
@@ -104,7 +106,6 @@ export class PaletteApp {
 
   async boot(): Promise<void> {
     this.settings = loadSettings();
-    this.transitionOptions = { ...this.settings.lastTransition };
     this.applyTheme();
     this.buildChrome();
     registerKeyInterest();
@@ -182,7 +183,8 @@ export class PaletteApp {
 
   private onSummon(wantsSettings = false): void {
     this.view = 'search';
-    this.pendingTransition = null;
+    this.transitionDialog.clear();
+    this.settingsSheet.closed();
     this.input.value = '';
     this.active = 0;
     this.settings = loadSettings();
@@ -392,19 +394,12 @@ export class PaletteApp {
   }
 
   private onKeyDown(event: KeyboardEvent): void {
-    if (this.recordingTarget) {
-      this.captureHotkey(event);
-      return;
-    }
     if (this.view === 'transition') {
-      this.onTransitionKey(event);
+      this.transitionDialog.handleKey(event);
       return;
     }
     if (this.view === 'settings') {
-      if (event.key === 'Escape') {
-        event.preventDefault();
-        this.closeSettings();
-      }
+      this.settingsSheet.handleKey(event);
       return;
     }
 
@@ -628,171 +623,22 @@ export class PaletteApp {
   }
 
   private openTransition(item: CatalogItem): void {
-    this.pendingTransition = item;
     this.view = 'transition';
-    this.transitionOptions = { ...this.settings.lastTransition };
-    this.renderTransition();
+    this.transitionDialog.open(item, this.settings.lastTransition);
+    this.transitionDialog.render(this.body);
     this.renderHints();
   }
 
-  private frameSeconds(): number {
-    const fps = this.sequence?.fps ?? 25;
-    return fps > 0 ? 1 / fps : 0.04;
-  }
-
-  private renderTransition(): void {
-    const item = this.pendingTransition;
-    if (!item) {
-      return;
-    }
-    clear(this.body);
-    this.body.className = 'transition';
-    const seconds = (this.transitionOptions.durationFrames * this.frameSeconds()).toFixed(2);
-    const durationInput = el('input', {
-      type: 'number',
-      min: '1',
-      max: '600',
-      step: '1',
-      value: String(this.transitionOptions.durationFrames),
-      oninput: (event: Event) => {
-        const value = Number((event.target as HTMLInputElement).value);
-        if (!Number.isNaN(value)) {
-          this.transitionOptions.durationFrames = Math.max(1, Math.round(value));
-          const label = this.body.querySelector('.duration__unit');
-          if (label) {
-            label.textContent = `frames \u00b7 ${(this.transitionOptions.durationFrames * this.frameSeconds()).toFixed(2)}s`;
-          }
-        }
-      },
-    });
-
-    this.body.appendChild(el('div', { class: 'transition__name', text: item.name }));
-    this.body.appendChild(
-      el('div', {
-        class: 'transition__meta',
-        text: `${item.kind === 'audioTransition' ? 'Audio' : 'Video'} transition \u00b7 ${
-          this.sequence?.selectedClips ?? 0
-        } clip(s) selected \u00b7 ${(this.sequence?.fps ?? 0).toFixed(2)} fps`,
-      }),
-    );
-    this.body.appendChild(
-      el('div', { class: 'duration' }, [
-        durationInput,
-        el('span', { class: 'duration__unit', text: `frames \u00b7 ${seconds}s` }),
-      ]),
-    );
-
-    this.body.appendChild(el('div', { class: 'section-title', text: 'Alignment' }));
-    this.body.appendChild(
-      el(
-        'div',
-        { class: 'chips' },
-        ALIGNMENT_OPTIONS.map((option) =>
-          el('button', {
-            class: `chip${this.transitionOptions.alignment === option.value ? ' chip--active' : ''}`,
-            text: option.label,
-            onclick: () => {
-              this.transitionOptions.alignment = option.value;
-              this.renderTransition();
-            },
-          }),
-        ),
-      ),
-    );
-
-    this.body.appendChild(el('div', { class: 'section-title', text: 'Placement' }));
-    this.body.appendChild(
-      el(
-        'div',
-        { class: 'chips' },
-        SIDE_OPTIONS.map((option) =>
-          el('button', {
-            class: `chip${this.transitionOptions.side === option.value ? ' chip--active' : ''}`,
-            text: option.label,
-            onclick: () => {
-              this.transitionOptions.side = option.value;
-              this.renderTransition();
-            },
-          }),
-        ),
-      ),
-    );
-
-    if (item.kind === 'videoTransition') {
-      this.body.appendChild(
-        el('div', { class: 'field' }, [
-          el('div', {}, [
-            el('div', { class: 'field__label', text: 'Also crossfade selected audio' }),
-            el('span', {
-              class: 'field__hint',
-              text: 'Adds the Constant Power audio crossfade to the audio clips in the selection.',
-            }),
-          ]),
-          el('div', { class: 'field__control' }, [
-            this.switchNode(this.transitionOptions.applyToAudio, (next) => {
-              this.transitionOptions.applyToAudio = next;
-              this.renderTransition();
-            }),
-          ]),
-        ]),
-      );
-    }
-
-    this.body.appendChild(
-      el('div', { class: 'field' }, [
-        el('span', { class: 'field__hint', text: 'Enter applies to every selected clip. Esc goes back.' }),
-        el('div', { class: 'field__control' }, [
-          el('button', { class: 'button', text: 'Back', onclick: () => this.backToSearch() }),
-          el('button', { class: 'button button--primary', text: 'Apply', onclick: () => void this.confirmTransition() }),
-        ]),
-      ]),
-    );
-
-    window.setTimeout(() => {
-      durationInput.focus();
-      durationInput.select();
-    }, 20);
-  }
-
-  private onTransitionKey(event: KeyboardEvent): void {
-    const step = event.shiftKey ? 5 : 1;
-    switch (event.key) {
-      case 'Escape':
-        event.preventDefault();
-        this.backToSearch();
-        return;
-      case 'Enter':
-        event.preventDefault();
-        void this.confirmTransition();
-        return;
-      case 'ArrowUp':
-        event.preventDefault();
-        this.transitionOptions.durationFrames = Math.min(600, this.transitionOptions.durationFrames + step);
-        this.renderTransition();
-        return;
-      case 'ArrowDown':
-        event.preventDefault();
-        this.transitionOptions.durationFrames = Math.max(1, this.transitionOptions.durationFrames - step);
-        this.renderTransition();
-        return;
-      default:
-        break;
-    }
-  }
-
-  private async confirmTransition(): Promise<void> {
-    const item = this.pendingTransition;
-    if (!item) {
-      return;
-    }
-    this.settings.lastTransition = { ...this.transitionOptions };
+  private async confirmTransition(item: CatalogItem, options: TransitionOptions): Promise<void> {
+    this.settings.lastTransition = { ...options };
     saveSettings(this.settings);
-    await this.runApply(item, false, this.transitionOptions);
+    await this.runApply(item, false, options);
   }
 
   private backToSearch(clearQuery = false): void {
     this.view = 'search';
-    this.pendingTransition = null;
+    this.transitionDialog.clear();
+    this.settingsSheet.closed();
     if (clearQuery) {
       this.input.value = '';
       this.active = 0;
@@ -802,399 +648,16 @@ export class PaletteApp {
     this.focusInput();
   }
 
-  private switchNode(value: boolean, onChange: (next: boolean) => void): HTMLElement {
-    return el('button', {
-      class: `switch${value ? ' switch--on' : ''}`,
-      onclick: () => onChange(!value),
-    });
-  }
-
-  private fieldRow(label: string, hint: string, control: HTMLElement): HTMLElement {
-    return el('div', { class: 'field' }, [
-      el('div', {}, [el('div', { class: 'field__label', text: label }), el('span', { class: 'field__hint', text: hint })]),
-      el('div', { class: 'field__control' }, [control]),
-    ]);
-  }
-
   private openSettings(): void {
     this.view = 'settings';
-    this.renderSettings();
+    this.settingsSheet.render(this.body);
+    this.settingsSheet.opened();
     this.renderHints();
-    if (this.update === null && this.updateState === 'idle' && !isDevInstall()) {
-      void this.runUpdateCheck();
-    }
   }
 
-  private async runUpdateCheck(): Promise<void> {
-    this.updateState = 'checking';
-    this.renderSettingsIfOpen();
-    this.update = await checkForUpdate();
-    this.updateState = 'idle';
-    this.gearButton.classList.toggle('icon-button--flag', this.update.available);
-    this.gearButton.title = this.update.available ? `FX Premiere ${this.update.remote} is available` : 'Settings';
-    this.renderSettingsIfOpen();
-  }
-
-  private async installUpdate(): Promise<void> {
-    if (!this.update?.available || this.updateState !== 'idle') {
-      return;
-    }
-    const target = this.update.remote;
-    this.updateState = 'installing';
-    this.renderSettingsIfOpen();
-    try {
-      await applyUpdate(this.update.downloadUrl);
-    } catch (error) {
-      this.updateState = 'idle';
-      this.toast(`Update failed: ${error instanceof Error ? error.message : String(error)}`, 'error');
-      this.renderSettingsIfOpen();
-      return;
-    }
-    // Stays in the installing state until the reload, so the row cannot claim to be up to
-    // date while the panel is still running the previous build.
-    this.toast(`FX Premiere ${target} installed. Reloading\u2026`);
-    window.setTimeout(() => {
-      try {
-        window.location.reload();
-      } catch {
-        /* the panel picks up the new build the next time Premiere opens it */
-      }
-    }, 900);
-  }
-
-  private renderSettingsIfOpen(): void {
-    if (this.view === 'settings') {
-      this.renderSettings();
-    }
-  }
-
-  private updateRow(): HTMLElement {
-    const current = localVersion();
-    if (isDevInstall()) {
-      return this.fieldRow(
-        'Version',
-        `${current} \u00b7 development install: run npm run install-dev to update.`,
-        el('button', { class: 'button', text: 'Dev build', disabled: true }),
-      );
-    }
-    if (this.updateState === 'installing') {
-      return this.fieldRow('Version', `Installing ${this.update?.remote ?? ''}\u2026`, el('button', { class: 'button', text: 'Installing\u2026', disabled: true }));
-    }
-    if (this.updateState === 'checking') {
-      return this.fieldRow('Version', `${current} \u00b7 checking GitHub\u2026`, el('button', { class: 'button', text: 'Checking\u2026', disabled: true }));
-    }
-    if (this.update?.available) {
-      return this.fieldRow(
-        'Version',
-        `${current} \u2192 ${this.update.remote} available.${this.update.notes ? ` ${this.update.notes.split('\n')[0]}` : ''}`,
-        el('button', {
-          class: 'button button--primary',
-          text: `Update to ${this.update.remote}`,
-          onclick: () => void this.installUpdate(),
-        }),
-      );
-    }
-    const hint = this.update
-      ? this.update.error
-        ? `${current} \u00b7 could not reach GitHub: ${this.update.error}`
-        : `${current} \u00b7 this is the latest release.`
-      : `${current} \u00b7 check GitHub for a newer release.`;
-    return this.fieldRow(
-      'Version',
-      hint,
-      el('button', { class: 'button', text: 'Check for updates', onclick: () => void this.runUpdateCheck() }),
-    );
-  }
-
-  private closeSettings(): void {
-    this.recordingTarget = null;
-    this.backToSearch();
-  }
-
-  private renderSettings(): void {
-    clear(this.body);
-    this.body.className = 'sheet';
-    const status = readHelperStatus();
-
-    this.body.appendChild(el('h1', { class: 'sheet__title', text: 'FX Premiere settings' }));
-    this.body.appendChild(
-      el('p', {
-        class: 'sheet__subtitle',
-        text: `FX Premiere ${localVersion()} \u00b7 Premiere ${this.hostVersion} \u00b7 ${
-          this.catalog?.items.length ?? 0
-        } indexed items`,
-      }),
-    );
-
-    this.body.appendChild(el('div', { class: 'section-title', text: 'Updates' }));
-    this.body.appendChild(this.updateRow());
-
-    this.body.appendChild(el('div', { class: 'section-title', text: 'Shortcut' }));
-    this.body.appendChild(
-      this.fieldRow(
-        'Open the palette',
-        status?.running
-          ? `Listener active for ${status.hotkey}. It only reacts while Premiere is the front application.`
-          : status?.message || 'The background listener is not running yet. Restart Premiere or press Restart listener.',
-        el('button', {
-          class: `button${this.recordingTarget === 'hotkey' ? ' button--recording' : ''}`,
-          text: this.recordingTarget === 'hotkey' ? 'Press keys\u2026' : formatHotkey(this.settings.hotkey),
-          onclick: () => {
-            this.recordingTarget = 'hotkey';
-            this.renderSettings();
-          },
-        }),
-      ),
-    );
-    this.body.appendChild(
-      this.fieldRow(
-        'Open settings directly',
-        'Optional second shortcut that opens this screen.',
-        el('div', { class: 'field__control' }, [
-          el('button', {
-            class: `button${this.recordingTarget === 'settingsHotkey' ? ' button--recording' : ''}`,
-            text:
-              this.recordingTarget === 'settingsHotkey'
-                ? 'Press keys\u2026'
-                : this.settings.settingsHotkey
-                  ? formatHotkey(this.settings.settingsHotkey)
-                  : 'None',
-            onclick: () => {
-              this.recordingTarget = 'settingsHotkey';
-              this.renderSettings();
-            },
-          }),
-          this.settings.settingsHotkey
-            ? el('button', {
-                class: 'icon-button',
-                text: '\u2715',
-                title: 'Clear',
-                onclick: () => {
-                  this.settings.settingsHotkey = null;
-                  this.persistAndNotify(true);
-                  this.renderSettings();
-                },
-              })
-            : null,
-        ]),
-      ),
-    );
-    this.body.appendChild(
-      this.fieldRow(
-        'Enable the global listener',
-        'Turn this off to stop the background hotkey process entirely.',
-        this.switchNode(this.settings.hotkeyEnabled, (next) => {
-          this.settings.hotkeyEnabled = next;
-          this.persistAndNotify(true);
-          this.renderSettings();
-        }),
-      ),
-    );
-    this.body.appendChild(
-      this.fieldRow(
-        'Restart listener',
-        status?.running ? 'Reload the helper process after changing keyboard layouts.' : 'Try to start the helper again.',
-        el('button', {
-          class: 'button',
-          text: 'Restart',
-          onclick: () => {
-            this.persistAndNotify(true);
-            this.toast('Listener restart requested.');
-          },
-        }),
-      ),
-    );
-
-    this.body.appendChild(el('div', { class: 'section-title', text: 'Behaviour' }));
-    this.body.appendChild(
-      this.fieldRow(
-        'Close the palette after applying',
-        'Keeps the keyboard flow: summon, type, Enter, back to the timeline.',
-        this.switchNode(this.settings.closeAfterApply, (next) => {
-          this.settings.closeAfterApply = next;
-          this.persistAndNotify(false);
-          this.renderSettings();
-        }),
-      ),
-    );
-    this.body.appendChild(
-      this.fieldRow(
-        'Ask for transition duration',
-        'When off, transitions apply with the last used duration. Shift+Enter always shows the dialog.',
-        this.switchNode(this.settings.transitionPromptEnabled, (next) => {
-          this.settings.transitionPromptEnabled = next;
-          this.persistAndNotify(false);
-          this.renderSettings();
-        }),
-      ),
-    );
-    this.body.appendChild(
-      this.fieldRow(
-        'Show type badges',
-        'The VFX / VTR / PRE tags on the left of each row.',
-        this.switchNode(this.settings.showTypeBadges, (next) => {
-          this.settings.showTypeBadges = next;
-          this.persistAndNotify(false);
-          this.renderSettings();
-        }),
-      ),
-    );
-
-    this.body.appendChild(el('div', { class: 'section-title', text: 'Presets' }));
-    const folderInput = el('input', { type: 'text', placeholder: '/path/to/my/presets' });
-    this.body.appendChild(
-      this.fieldRow(
-        'Extra preset folders',
-        'Premiere profile presets are found automatically. Add folders that hold exported .prfpset files.',
-        el('div', { class: 'field__control' }, [
-          folderInput,
-          el('button', {
-            class: 'button',
-            text: 'Add',
-            onclick: () => {
-              const value = folderInput.value.trim();
-              if (value === '') {
-                return;
-              }
-              this.settings.presetFolders = [...new Set([...this.settings.presetFolders, value])];
-              this.persistAndNotify(false);
-              void this.refreshPresetsOnly();
-              this.renderSettings();
-            },
-          }),
-        ]),
-      ),
-    );
-    if (this.settings.presetFolders.length > 0) {
-      const list = el('div', { class: 'folder-list' });
-      for (const folder of this.settings.presetFolders) {
-        list.appendChild(
-          el('div', { class: 'folder-row' }, [
-            el('span', { text: folder }),
-            el('button', {
-              class: 'icon-button',
-              text: '\u2715',
-              onclick: () => {
-                this.settings.presetFolders = this.settings.presetFolders.filter((entry) => entry !== folder);
-                this.persistAndNotify(false);
-                void this.refreshPresetsOnly();
-                this.renderSettings();
-              },
-            }),
-          ]),
-        );
-      }
-      this.body.appendChild(list);
-    }
-
-    this.body.appendChild(el('div', { class: 'section-title', text: 'Appearance' }));
-    this.body.appendChild(
-      this.fieldRow(
-        'Accent colour',
-        'Used for highlights and the active row.',
-        el('input', {
-          type: 'color',
-          value: this.settings.accent,
-          oninput: (event: Event) => {
-            this.settings.accent = (event.target as HTMLInputElement).value;
-            this.applyTheme();
-            this.persistAndNotify(false);
-          },
-        }),
-      ),
-    );
-    this.body.appendChild(
-      this.fieldRow(
-        'Text size',
-        'Scales the whole palette between 80% and 140%.',
-        el('input', {
-          type: 'number',
-          min: '0.8',
-          max: '1.4',
-          step: '0.05',
-          value: String(this.settings.fontScale),
-          oninput: (event: Event) => {
-            const value = Number((event.target as HTMLInputElement).value);
-            if (!Number.isNaN(value)) {
-              this.settings.fontScale = Math.min(1.4, Math.max(0.8, value));
-              this.applyTheme();
-              this.persistAndNotify(false);
-            }
-          },
-        }),
-      ),
-    );
-
-    this.body.appendChild(el('div', { class: 'section-title', text: 'Index' }));
-    this.body.appendChild(
-      this.fieldRow(
-        'Rebuild the effect index',
-        'Run this after installing new plug-ins. Presets refresh on every launch already.',
-        el('button', {
-          class: 'button',
-          text: 'Reindex now',
-          onclick: () => {
-            void this.ensureCatalog(true).then(() => this.renderSettings());
-          },
-        }),
-      ),
-    );
-    this.body.appendChild(
-      this.fieldRow(
-        'Reset everything',
-        'Clears favourites, usage history and preferences.',
-        el('button', {
-          class: 'button',
-          text: 'Reset',
-          onclick: () => {
-            this.settings = defaultSettings();
-            this.persistAndNotify(true);
-            this.applyTheme();
-            this.renderSettings();
-            this.toast('Settings reset to defaults.');
-          },
-        }),
-      ),
-    );
-    this.body.appendChild(
-      el('div', { class: 'field' }, [
-        el('span', { class: 'field__hint', text: 'Esc returns to the search palette.' }),
-        el('div', { class: 'field__control' }, [
-          el('button', { class: 'button button--primary', text: 'Done', onclick: () => this.closeSettings() }),
-        ]),
-      ]),
-    );
-  }
-
-  private captureHotkey(event: KeyboardEvent): void {
-    event.preventDefault();
-    event.stopPropagation();
-    if (event.key === 'Escape') {
-      this.recordingTarget = null;
-      this.renderSettings();
-      return;
-    }
-    if (['Shift', 'Control', 'Alt', 'Meta'].includes(event.key)) {
-      return;
-    }
-    const spec = hotkeyFromEvent(event);
-    if (!spec) {
-      this.toast('That key cannot be used.', 'error');
-      return;
-    }
-    if (!isHotkeyUsable(spec)) {
-      this.toast('Add a modifier such as Ctrl, Alt or Cmd.', 'error');
-      return;
-    }
-    if (this.recordingTarget === 'hotkey') {
-      this.settings.hotkey = spec;
-    } else if (this.recordingTarget === 'settingsHotkey') {
-      this.settings.settingsHotkey = spec;
-    }
-    this.recordingTarget = null;
-    this.persistAndNotify(true);
-    this.renderSettings();
-    this.toast(`Shortcut set to ${formatHotkey(spec)}`);
+  private flagUpdate(available: boolean, remote: string): void {
+    this.gearButton.classList.toggle('icon-button--flag', available);
+    this.gearButton.title = available ? `FX Premiere ${remote} is available` : 'Settings';
   }
 
   private persistAndNotify(restartHelper: boolean): void {
