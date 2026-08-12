@@ -1,10 +1,15 @@
 ; FX Premiere installer for Windows (Inno Setup 6).
-; Build with: iscc scripts\installer-win.iss
+; Build with: iscc /DAppVersion=1.2.3 scripts\installer-win.iss
 ; Expects dist\ to already contain the built extension and helper\win\fxp-hotkey.exe.
 
 #define AppName "FX Premiere"
-#define AppVersion "1.0.0"
 #define BundleId "com.fxpremiere.suite"
+
+; The version comes from package.json through the command line. Guessing it here once shipped an
+; installer stamped with the previous release, so an unstamped build now refuses to be made.
+#ifndef AppVersion
+  #error Pass the version: iscc /DAppVersion=$(node -p "require('./package.json').version") scripts\installer-win.iss
+#endif
 
 [Setup]
 AppId={{9C4A1F2E-6F3B-4E2A-9C67-FX0PREMIERE01}

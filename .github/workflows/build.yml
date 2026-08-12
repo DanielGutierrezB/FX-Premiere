@@ -101,7 +101,10 @@ jobs:
       - name: Install Inno Setup
         run: choco install innosetup --no-progress -y
       - name: Build Windows installer
-        run: iscc scripts\installer-win.iss
+        shell: pwsh
+        run: |
+          $version = (Get-Content package.json | ConvertFrom-Json).version
+          iscc /DAppVersion=$version scripts\installer-win.iss
       - uses: actions/upload-artifact@v4
         with:
           name: FX-Premiere-windows

@@ -66,9 +66,10 @@ información > Ejecutar de todas formas"). El `.zxp` no tiene ese aviso.
 ```bash
 npm install
 npm run build          # bundle en dist/ + compila el helper nativo del sistema actual
-npm run package:zxp    # release/FX-Premiere-1.0.0.zxp (descarga ZXPSignCmd la primera vez)
-npm run package:pkg    # release/FX-Premiere-1.0.0.pkg (solo macOS)
-iscc scripts/installer-win.iss   # release/FX-Premiere-1.0.0-setup.exe (solo Windows)
+npm run package:zxp    # release/FX-Premiere-<versión>.zxp (descarga ZXPSignCmd la primera vez)
+npm run package:pkg    # release/FX-Premiere-<versión>.pkg (solo macOS)
+# solo Windows; la versión se pasa a mano porque el .iss no la adivina
+iscc /DAppVersion=$(node -p "require('./package.json').version") scripts\installer-win.iss
 ```
 
 ## Atajos dentro de la paleta
