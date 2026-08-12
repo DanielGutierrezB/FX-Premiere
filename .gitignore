@@ -1,0 +1,11 @@
+node_modules/
+assets/icons/
+dist/
+build/
+release/
+certs/
+*.zxp
+*.pkg
+*.exe
+.DS_Store
+.debug

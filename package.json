@@ -1,0 +1,22 @@
+{
+  "name": "fx-premiere",
+  "version": "1.0.0",
+  "private": true,
+  "description": "FX Premiere - keyboard-first effects, transitions and preset palette for Adobe Premiere Pro",
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "watch": "node scripts/build.mjs --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "node scripts/test-search.mjs && node scripts/test-preset-parser.mjs",
+    "icons": "node scripts/make-icons.mjs",
+    "install-dev": "node scripts/build.mjs && bash scripts/dev-install.sh",
+    "package:zxp": "node scripts/build.mjs && bash scripts/sign.sh",
+    "package:pkg": "bash scripts/make-pkg.sh"
+  },
+  "devDependencies": {
+    "@types/node": "^26.2.0",
+    "esbuild": "^0.28.2",
+    "typescript": "^7.0.2"
+  }
+}
