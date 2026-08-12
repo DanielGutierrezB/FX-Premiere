@@ -29,6 +29,9 @@ Ctrl + Space  →  gsblr  →  Enter  →  Gaussian Blur en los 8 clips seleccio
 - **Comandos de edición**: Scale to Frame Size, Reset Motion & Opacity, Toggle Clip Enable.
 - **Favoritos, recientes y ranking por uso**: lo que más usas sube solo.
 - **Atajo configurable** desde los ajustes del panel (por defecto `Ctrl + Space`).
+- **Actualización desde el propio panel**: los ajustes traen la sección *Updates* con la versión
+  instalada y un botón que consulta los releases de GitHub, baja el `.zxp` y lo instala encima
+  de la extensión. Cuando hay versión nueva el engranaje de la barra queda marcado.
 
 ## Instalación
 
@@ -93,6 +96,20 @@ Dos advertencias sobre `Ctrl + Space`:
 
 Si otra aplicación ya reservó la combinación, los ajustes lo informan en el estado del
 listener.
+
+## Actualizar
+
+Ajustes (`Cmd/Ctrl + ,` o el engranaje) > sección *Updates*. Al abrir los ajustes consulta el
+último release de GitHub:
+
+- Si estás al día lo dice y no hace nada más.
+- Si hay una versión nueva el botón pasa a *Update to X*: baja el `.zxp` del release, lo
+  descomprime encima de la extensión instalada y recarga el panel. El engranaje de la barra
+  queda marcado con un punto para que lo veas sin abrir los ajustes.
+- Si no hay red, muestra el motivo en vez de fingir que estás actualizado.
+
+En una instalación de desarrollo (la carpeta CEP es un symlink a `dist/`) el botón se desactiva
+a propósito para no pisarte el repo: ahí actualizas con `npm run install-dev`.
 
 ## Cómo funciona
 
@@ -164,6 +181,9 @@ Los ajustes (atajo, favoritos, uso, carpetas de presets) viven junto al log en
 - `scripts/test-panel.mjs` arranca el panel real dentro de jsdom conectado a ese mismo host
   simulado, así que el flujo completo de teclado (invocar, escribir, ↑/↓, Enter, diálogo de
   transición, ajustes, grabar atajo) se prueba de punta a punta.
+- `scripts/test-updater.mjs` levanta un servidor de releases local con un `.zxp` real y verifica
+  la comparación de versiones, la descarga con redirecciones, el reemplazo en sitio y que se
+  niegue a pisar una instalación de desarrollo o un paquete incompleto.
 - `scripts/test-service.mjs` corre la extensión invisible contra un helper de hotkey falso que
   habla el mismo protocolo: comprueba el arranque, que una pulsación abra el panel, el cambio
   de atajo en caliente sin reiniciar el proceso, el reinicio tras una caída y que no quede

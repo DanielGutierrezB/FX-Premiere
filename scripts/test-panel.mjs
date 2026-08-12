@@ -8,7 +8,9 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { createCepWindow, settle } from './lib/mock-cep.mjs';
+import { createServer } from 'node:http';
+
+import { createCepWindow, settle, waitFor } from './lib/mock-cep.mjs';
 import { createHost, writePresetFixture } from './lib/mock-premiere.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -36,6 +38,16 @@ const check = (label, condition, detail = '') => {
 const stage = mkdtempSync(join(tmpdir(), 'fxp-panel-'));
 const presetFixture = writePresetFixture(join(stage, 'presets'));
 const { world, evalInHost } = createHost({ hostScript, documentsRoot: join(stage, 'Documents') });
+
+// Stands in for the GitHub releases API so the settings screen can be driven offline.
+let release = { tag_name: 'v1.0.0', assets: [] };
+const releaseServer = createServer((request, response) => {
+  response.writeHead(200, { 'content-type': 'application/json' });
+  response.end(JSON.stringify(release));
+});
+await new Promise((ready) => releaseServer.listen(0, '127.0.0.1', ready));
+process.env.FXP_UPDATE_ENDPOINT = `http://127.0.0.1:${releaseServer.address().port}/releases/latest`;
+writeFileSync(join(stage, 'version.json'), JSON.stringify({ version: '1.0.0' }), 'utf8');
 
 const cep = createCepWindow({ html: panelHtml, home: stage, evalScript: evalInHost });
 const { window, calls: cepCalls } = cep;
@@ -257,6 +269,11 @@ check(
 console.log('\nSettings screen');
 await press(',', { metaKey: true, code: 'Comma' });
 check('Cmd+, opens settings', Boolean(window.document.querySelector('.sheet')));
+const sheetText = () => window.document.querySelector('.sheet')?.textContent ?? '';
+check('the installed version is shown', /FX Premiere 1\.0\.0/.test(sheetText()), sheetText().slice(0, 90));
+const upToDate = await waitFor(() => /latest release/.test(sheetText()), { label: 'the update check to finish' });
+check('settings has an update section that checks on open', upToDate, sheetText().slice(0, 200));
+check('no update flag is shown when current', !window.document.querySelector('.icon-button--flag'));
 check(
   'the helper status is surfaced',
   /Listener active for/.test(window.document.querySelector('.sheet')?.textContent ?? ''),
@@ -293,7 +310,36 @@ check(
 );
 await press('Escape');
 check('Escape cancels recording', !window.document.querySelector('.button--recording'));
-await press('Escape');
+
+console.log('\nA newer release is offered');
+const versionButton = () => {
+  const field = [...window.document.querySelectorAll('.sheet .field')].find(
+    (row) => row.querySelector('.field__label')?.textContent === 'Version',
+  );
+  return field?.querySelector('.button');
+};
+check('the version row carries a check button', versionButton()?.textContent === 'Check for updates', versionButton()?.textContent ?? '');
+release = {
+  tag_name: 'v9.9.9',
+  body: 'Arregla el zoom\nmas detalles',
+  assets: [{ name: 'FX-Premiere-9.9.9.zxp', browser_download_url: 'http://127.0.0.1:1/never-downloaded' }],
+};
+versionButton().dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+const offered = await waitFor(() => versionButton()?.textContent === 'Update to 9.9.9', { label: 'the update offer' });
+check('a newer release turns the button into an update action', offered, versionButton()?.textContent ?? '');
+check('the update is announced with both versions', /1\.0\.0 → 9\.9\.9 available/.test(sheetText()), sheetText().slice(0, 220));
+check('only the first line of the release notes is shown', /Arregla el zoom/.test(sheetText()) && !/mas detalles/.test(sheetText()));
+check('the gear is flagged so the update is visible from the palette', Boolean(window.document.querySelector('.icon-button--flag')));
+
+// The download endpoint is unreachable on purpose: a failed install must not break the panel.
+versionButton().dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+check('the button reports the install in progress', versionButton()?.textContent === 'Installing\u2026', versionButton()?.textContent ?? '');
+const failedInstall = await waitFor(() => /Update failed/.test(window.document.querySelector('.toast')?.textContent ?? ''), {
+  label: 'the failed install to be reported',
+});
+check('a failed install is explained instead of silently dying', failedInstall, window.document.querySelector('.toast')?.textContent ?? '');
+check('the update offer comes back so it can be retried', versionButton()?.textContent === 'Update to 9.9.9', versionButton()?.textContent ?? '');
+
 await press('Escape');
 check('Escape leaves settings without closing the panel', Boolean(window.document.querySelector('.results')));
 
@@ -327,6 +373,7 @@ await type('zzzzqqq');
 check('an empty result set shows guidance', Boolean(window.document.querySelector('.empty')), '');
 
 cep.close();
+releaseServer.close();
 rmSync(stage, { recursive: true, force: true });
 console.log(`\n${failures === 0 ? 'All panel tests passed' : `${failures} failing check(s)`}`);
 process.exit(failures === 0 ? 0 : 1);

@@ -8,7 +8,7 @@
     "build": "node scripts/build.mjs",
     "watch": "node scripts/build.mjs --watch",
     "typecheck": "tsc --noEmit",
-    "test": "node scripts/test-search.mjs && node scripts/test-preset-parser.mjs && node scripts/test-host.mjs && node scripts/test-panel.mjs && node scripts/test-service.mjs",
+    "test": "node scripts/test-search.mjs && node scripts/test-preset-parser.mjs && node scripts/test-host.mjs && node scripts/test-panel.mjs && node scripts/test-service.mjs && node scripts/test-updater.mjs",
     "icons": "node scripts/make-icons.mjs",
     "install-dev": "node scripts/build.mjs && bash scripts/dev-install.sh",
     "package:zxp": "node scripts/build.mjs && bash scripts/sign.sh",

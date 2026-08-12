@@ -52,9 +52,20 @@ const bundleOptions = (entry, outfile, label) => ({
   logLevel: 'silent',
 });
 
-const copyStatic = () => {
+const version = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).version;
+
+/** package.json is the single source of truth; the manifest and version.json follow it. */
+const writeVersionedManifest = () => {
+  const manifest = readFileSync(join(root, 'CSXS', 'manifest.xml'), 'utf8')
+    .replace(/ExtensionBundleVersion="[^"]*"/, `ExtensionBundleVersion="${version}"`)
+    .replace(/(<Extension Id="[^"]*" Version=")[^"]*(")/g, `$1${version}$2`);
   ensure(join(dist, 'CSXS'));
-  copyFileSync(join(root, 'CSXS', 'manifest.xml'), join(dist, 'CSXS', 'manifest.xml'));
+  writeFileSync(join(dist, 'CSXS', 'manifest.xml'), manifest, 'utf8');
+  writeFileSync(join(dist, 'version.json'), `${JSON.stringify({ version }, null, 2)}\n`, 'utf8');
+};
+
+const copyStatic = () => {
+  writeVersionedManifest();
   ensure(join(dist, 'panel'));
   copyFileSync(join(root, 'panel', 'index.html'), join(dist, 'panel', 'index.html'));
   copyFileSync(join(root, 'panel', 'panel.css'), join(dist, 'panel', 'panel.css'));
@@ -170,7 +181,7 @@ const run = async () => {
 
   await Promise.all([esbuild.build(panel), esbuild.build(service)]);
   const notes = [buildMacHelper(), buildWindowsHelper()];
-  console.log(`FX Premiere built into dist/`);
+  console.log(`FX Premiere ${version} built into dist/`);
   console.log(`  host script: ${hostFiles} jsx files concatenated`);
   for (const note of notes) {
     console.log(`  ${note}`);

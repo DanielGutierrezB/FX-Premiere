@@ -9,6 +9,7 @@ import {
 } from '@shared/cep';
 import { formatHotkey, hotkeyFromEvent, isHotkeyUsable } from '@shared/hotkey';
 import { defaultSettings, loadSettings, readHelperStatus, saveSettings } from '@shared/settings';
+import { applyUpdate, checkForUpdate, isDevInstall, localVersion, type UpdateCheck } from '@shared/updater';
 import {
   TransitionAlignment,
   type ApplyOutcome,
@@ -91,6 +92,12 @@ export class PaletteApp {
 
   private toastTimer = 0;
 
+  private readonly gearButton = el('button', { class: 'icon-button', title: 'Settings', text: '\u2699' });
+
+  private update: UpdateCheck | null = null;
+
+  private updateState: 'idle' | 'checking' | 'installing' = 'idle';
+
   constructor(root: HTMLElement) {
     this.root = root;
   }
@@ -137,15 +144,7 @@ export class PaletteApp {
     const header = el('header', { class: 'search' }, [
       el('span', { class: 'search__prompt', text: '\u203a' }),
       this.input,
-      el('div', { class: 'search__meta' }, [
-        this.selectionPill,
-        el('button', {
-          class: 'icon-button',
-          title: 'Settings',
-          text: '\u2699',
-          onclick: () => this.openSettings(),
-        }),
-      ]),
+      el('div', { class: 'search__meta' }, [this.selectionPill, this.gearButton]),
     ]);
     const footer = el('footer', { class: 'hints' }, [this.hintKeys, this.statusNode]);
     this.root.appendChild(header);
@@ -157,6 +156,7 @@ export class PaletteApp {
   }
 
   private bindEvents(): void {
+    this.gearButton.addEventListener('click', () => this.openSettings());
     this.input.addEventListener('input', () => {
       this.active = 0;
       this.updateResults();
@@ -820,6 +820,90 @@ export class PaletteApp {
     this.view = 'settings';
     this.renderSettings();
     this.renderHints();
+    if (this.update === null && this.updateState === 'idle' && !isDevInstall()) {
+      void this.runUpdateCheck();
+    }
+  }
+
+  private async runUpdateCheck(): Promise<void> {
+    this.updateState = 'checking';
+    this.renderSettingsIfOpen();
+    this.update = await checkForUpdate();
+    this.updateState = 'idle';
+    this.gearButton.classList.toggle('icon-button--flag', this.update.available);
+    this.gearButton.title = this.update.available ? `FX Premiere ${this.update.remote} is available` : 'Settings';
+    this.renderSettingsIfOpen();
+  }
+
+  private async installUpdate(): Promise<void> {
+    if (!this.update?.available || this.updateState !== 'idle') {
+      return;
+    }
+    const target = this.update.remote;
+    this.updateState = 'installing';
+    this.renderSettingsIfOpen();
+    try {
+      await applyUpdate(this.update.downloadUrl);
+    } catch (error) {
+      this.updateState = 'idle';
+      this.toast(`Update failed: ${error instanceof Error ? error.message : String(error)}`, 'error');
+      this.renderSettingsIfOpen();
+      return;
+    }
+    // Stays in the installing state until the reload, so the row cannot claim to be up to
+    // date while the panel is still running the previous build.
+    this.toast(`FX Premiere ${target} installed. Reloading\u2026`);
+    window.setTimeout(() => {
+      try {
+        window.location.reload();
+      } catch {
+        /* the panel picks up the new build the next time Premiere opens it */
+      }
+    }, 900);
+  }
+
+  private renderSettingsIfOpen(): void {
+    if (this.view === 'settings') {
+      this.renderSettings();
+    }
+  }
+
+  private updateRow(): HTMLElement {
+    const current = localVersion();
+    if (isDevInstall()) {
+      return this.fieldRow(
+        'Version',
+        `${current} \u00b7 development install: run npm run install-dev to update.`,
+        el('button', { class: 'button', text: 'Dev build', disabled: true }),
+      );
+    }
+    if (this.updateState === 'installing') {
+      return this.fieldRow('Version', `Installing ${this.update?.remote ?? ''}\u2026`, el('button', { class: 'button', text: 'Installing\u2026', disabled: true }));
+    }
+    if (this.updateState === 'checking') {
+      return this.fieldRow('Version', `${current} \u00b7 checking GitHub\u2026`, el('button', { class: 'button', text: 'Checking\u2026', disabled: true }));
+    }
+    if (this.update?.available) {
+      return this.fieldRow(
+        'Version',
+        `${current} \u2192 ${this.update.remote} available.${this.update.notes ? ` ${this.update.notes.split('\n')[0]}` : ''}`,
+        el('button', {
+          class: 'button button--primary',
+          text: `Update to ${this.update.remote}`,
+          onclick: () => void this.installUpdate(),
+        }),
+      );
+    }
+    const hint = this.update
+      ? this.update.error
+        ? `${current} \u00b7 could not reach GitHub: ${this.update.error}`
+        : `${current} \u00b7 this is the latest release.`
+      : `${current} \u00b7 check GitHub for a newer release.`;
+    return this.fieldRow(
+      'Version',
+      hint,
+      el('button', { class: 'button', text: 'Check for updates', onclick: () => void this.runUpdateCheck() }),
+    );
   }
 
   private closeSettings(): void {
@@ -836,9 +920,14 @@ export class PaletteApp {
     this.body.appendChild(
       el('p', {
         class: 'sheet__subtitle',
-        text: `Premiere ${this.hostVersion} \u00b7 ${this.catalog?.items.length ?? 0} indexed items`,
+        text: `FX Premiere ${localVersion()} \u00b7 Premiere ${this.hostVersion} \u00b7 ${
+          this.catalog?.items.length ?? 0
+        } indexed items`,
       }),
     );
+
+    this.body.appendChild(el('div', { class: 'section-title', text: 'Updates' }));
+    this.body.appendChild(this.updateRow());
 
     this.body.appendChild(el('div', { class: 'section-title', text: 'Shortcut' }));
     this.body.appendChild(

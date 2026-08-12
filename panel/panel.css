@@ -128,6 +128,23 @@ body {
   background: rgba(255, 255, 255, 0.06);
 }
 
+/* Marks the gear when a newer release is waiting in Settings. */
+.icon-button--flag {
+  color: var(--accent);
+  position: relative;
+}
+
+.icon-button--flag::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
 .scopes {
   display: flex;
   gap: 6px;
@@ -431,6 +448,15 @@ input[type="color"] {
   border-color: var(--accent);
   color: var(--accent);
   background: var(--accent-dim);
+}
+
+.button[disabled] {
+  opacity: 0.5;
+}
+
+.button[disabled]:hover {
+  border-color: var(--border-strong);
+  color: var(--text);
 }
 
 .switch {
