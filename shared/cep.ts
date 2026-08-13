@@ -170,15 +170,30 @@ export const registerKeyInterest = (): void => {
     8, 9, 13, 27, 32, 33, 34, 35, 36, 37, 38, 39, 40, 46, 186, 187, 188, 189, 190, 191, 192, 219,
     220, 221, 222,
   ];
-  for (let code = 48; code <= 57; code += 1) plain.push(code);
   for (let code = 65; code <= 90; code += 1) plain.push(code);
-  for (let code = 96; code <= 111; code += 1) plain.push(code);
+  // The numpad operators. Its digits are declared below, with the ones on the top row.
+  for (let code = 106; code <= 111; code += 1) plain.push(code);
   for (const keyCode of plain) {
     keys.push({ keyCode });
     keys.push({ keyCode, shiftKey: true });
     keys.push({ keyCode, ctrlKey: true });
     keys.push({ keyCode, altKey: true });
     keys.push({ keyCode, metaKey: true });
+  }
+  // A favourite row can be reached by any combination of held keys, and a combination nobody asked
+  // for never arrives: the digits are declared for all sixteen of them, not one modifier at a time.
+  for (const base of [48, 96]) {
+    for (let digit = 0; digit <= 9; digit += 1) {
+      for (let held = 0; held < 16; held += 1) {
+        keys.push({
+          keyCode: base + digit,
+          ctrlKey: (held & 1) !== 0,
+          altKey: (held & 2) !== 0,
+          shiftKey: (held & 4) !== 0,
+          metaKey: (held & 8) !== 0,
+        });
+      }
+    }
   }
   try {
     cepApi().registerKeyEventsInterest(JSON.stringify(keys));

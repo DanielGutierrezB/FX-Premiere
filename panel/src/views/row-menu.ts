@@ -26,7 +26,7 @@ export const openRowMenu = (
     el('div', { class: 'menu__title', text: item.name }),
     el('button', {
       class: 'menu__item',
-      text: actions.starred ? 'Remove from favorites' : 'Add to favorites',
+      text: actions.starred ? 'Take it off the numbered bar' : 'Put it on a number\u2026',
       onclick: actions.favorite,
     }),
     el('button', { class: 'menu__item', text: 'Apply to the selection', onclick: actions.apply }),

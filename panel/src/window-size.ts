@@ -7,7 +7,9 @@ export type Box = 'list' | 'sheet';
 
 /** Bounds for the window Premiere draws around us, in content pixels. */
 const MIN_HEIGHT = 120;
-const MAX_HEIGHT = 520;
+const MAX_HEIGHT = 640;
+const MIN_WIDTH = 380;
+const MAX_WIDTH = 980;
 
 /** Sheets are given a settled box instead of one that resizes under the cursor. */
 const SHEET_HEIGHT = 460;
@@ -23,6 +25,15 @@ const ROW_HEIGHT = 28;
 const CAPTION_HEIGHT = 26;
 const LIST_PADDING = 12;
 const HAIRLINE = 1;
+
+/** The numbered bar: one line per favourite row, and one chip per slot on it. */
+const SLOT_HEIGHT = 30;
+const SLOT_GAP = 6;
+const SLOTS_PADDING = 8;
+/** Room for the label saying what to hold for a row, at the left of every line. */
+const HELD_WIDTH = 36;
+/** What a slot needs before its name starts being cut short. */
+const SLOT_WIDTH = 116;
 
 /** Room the search view always keeps for results, however short the resting list is. */
 const MIN_ROWS = 7;
@@ -56,7 +67,7 @@ export class WindowSize {
   apply(box: Box): void {
     const settings = this.settings();
     const height = settings.height ?? (box === 'list' ? this.plannedHeight() : SHEET_HEIGHT);
-    const width = settings.width;
+    const width = settings.width ?? this.plannedWidth();
     if (height === this.height && width === this.width) {
       return;
     }
@@ -101,7 +112,26 @@ export class WindowSize {
     const groups = this.groups();
     const rows = groups.reduce((total, group) => total + group.items.length, 0);
     const list = Math.max(px(ROW_HEIGHT) * MIN_ROWS, rows * px(ROW_HEIGHT) + groups.length * px(CAPTION_HEIGHT));
-    const chrome = px(FIELD_HEIGHT) + HAIRLINE + px(FOOT_HEIGHT);
+    const chrome = px(FIELD_HEIGHT) + HAIRLINE + px(FOOT_HEIGHT) + this.barHeight();
     return Math.round(Math.max(MIN_HEIGHT, Math.min(MAX_HEIGHT, chrome + list + LIST_PADDING)));
+  }
+
+  /** A wider window is what makes the slots readable, so the slot count decides it. */
+  private plannedWidth(): number {
+    const settings = this.settings();
+    const px = (value: number): number => value * settings.fontScale;
+    const slots = settings.favoriteSlots;
+    const bar = px(HELD_WIDTH) + slots * px(SLOT_WIDTH) + (slots - 1) * px(SLOT_GAP) + px(SLOTS_PADDING) * 2;
+    return Math.round(Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, bar)));
+  }
+
+  private barHeight(): number {
+    const settings = this.settings();
+    const px = (value: number): number => value * settings.fontScale;
+    const lines = settings.favoriteRows.length;
+    if (lines === 0) {
+      return 0;
+    }
+    return px(SLOTS_PADDING) * 2 + lines * px(SLOT_HEIGHT) + (lines - 1) * px(SLOT_GAP) + HAIRLINE;
   }
 }

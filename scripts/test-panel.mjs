@@ -125,7 +125,9 @@ const savedSettings = () => JSON.parse(readFileSync(join(settingsDir, 'settings.
 const resizes = () => cepCalls.resizes;
 const opening = resizes()[0] ?? [0, 0];
 check('the size is asked for once, on the way up', resizes().length === 1, JSON.stringify(resizes()));
-check('it is a compact box, not the whole window', opening[1] < 320 && opening[1] >= 120, `${opening[1]}px`);
+check('it is a compact box, not the whole window', opening[1] < 400 && opening[1] >= 120, `${opening[1]}px`);
+// Nothing chose a width, so it comes from the numbered bar: four slots have to stay readable.
+check('and wide enough for the slots it is showing', opening[0] > 500, `${opening[0]}px`);
 
 await type('gaussian blur');
 await settle(40);
@@ -201,20 +203,95 @@ check(
   String(cepCalls.closeExtension),
 );
 
-console.log('\nFavourites and usage are remembered');
+console.log('\nThe numbered bar');
+const slotLines = () => [...window.document.querySelectorAll('.slots__row')];
+const slotsIn = (line) => [...(slotLines()[line]?.querySelectorAll('.slot') ?? [])];
+const slotName = (line, slot) => slotsIn(line)[slot]?.querySelector('.slot__name')?.textContent ?? '';
+const savedSlots = (line = 0) => savedSettings().favoriteRows[line].slots;
+const digit = async (number, modifiers = {}) => press(String(number), { code: `Digit${number}`, ...modifiers });
+const hasEffect = (clip, matchName) => world.clips[clip].componentList.some((component) => component.matchName === matchName);
+
+check('the bar offers one numbered slot per digit', slotsIn(0).length === 4, String(slotsIn(0).length));
+check(
+  'each slot says which number reaches it',
+  slotsIn(0).map((slot) => slot.querySelector('.slot__key')?.textContent).join('') === '1234',
+  slotsIn(0).map((slot) => slot.querySelector('.slot__key')?.textContent).join(''),
+);
+check('and they start out visibly empty', slotsIn(0).every((slot) => slot.className.includes('slot--empty')));
+
 await type('ultra');
 await press('d', { metaKey: true });
-check('Cmd+D stars the active row', window.document.querySelector('.row--active .row__star')?.textContent === '\u2605');
-check(
-  'the favourite is written to disk',
-  savedSettings().favorites.some((id) => id.includes('Ultra Key')),
-  JSON.stringify(savedSettings().favorites),
-);
+check('Cmd+D asks which number to put it on', Boolean(window.document.querySelector('.slots--picking')), status());
+await digit(2);
+check('the number that follows fills that slot', slotName(0, 1) === 'Ultra Key', slotName(0, 1));
+check('the choice is on disk', /Ultra Key/.test(String(savedSlots()[1])), JSON.stringify(savedSlots()));
+check('the row shows that it is on the bar', Boolean(window.document.querySelector('.row--active .row__star')));
+check('and the bar stops asking once it has an answer', !window.document.querySelector('.slots--picking'));
+
+// A query is allowed to contain digits, so while there is one the bar keeps its hands off them.
+await type('blur');
+check('the bar says it is out of play while you type', Boolean(window.document.querySelector('.slots--inert')));
+await digit(2);
+check('a digit typed into a query applies nothing', !hasEffect('clipA', 'AE.ADBE Ultra Keyer'));
+
+await type('');
+await digit(2);
+check('at rest that same digit applies what is on it', hasEffect('clipA', 'AE.ADBE Ultra Keyer'));
 check(
   'applying recorded usage for the ranking',
   Object.keys(savedSettings().usage).some((id) => id.includes('Gaussian Blur')),
   JSON.stringify(savedSettings().usage),
 );
+
+// Pressing the same slot again takes the item back off it, which is the way out of the bar.
+await type('ultra');
+await press('d', { metaKey: true });
+await digit(2);
+check('putting it on the number it already has takes it off', slotName(0, 1) === '', slotName(0, 1));
+check('and disk agrees', savedSlots()[1] === null, JSON.stringify(savedSlots()));
+
+console.log('\nA second row of favourites');
+const withSecondRow = savedSettings();
+const blurId = Object.keys(withSecondRow.remembered).find((id) => /Gaussian Blur/.test(id));
+withSecondRow.height = null;
+withSecondRow.favoriteRows = [
+  { modifiers: { ctrl: false, alt: false, shift: false, meta: false }, slots: [null, null, null, null] },
+  { modifiers: { ctrl: true, alt: false, shift: true, meta: false }, slots: [blurId, null, null, null] },
+];
+writeFileSync(join(settingsDir, 'settings.json'), JSON.stringify(withSecondRow), 'utf8');
+const beforeSecondRow = resizes().length;
+cep.emit('com.fxpremiere.event.trigger', { settings: false });
+await settle(30);
+check('the second row is drawn under the first', slotLines().length === 2, String(slotLines().length));
+// Symbols on macOS, words elsewhere, and the tests run wherever CI happens to be.
+check('it says what to hold for it', /Ctrl\+Shift|\u2303\u21e7/.test(slotLines()[1]?.querySelector('.slots__held')?.textContent ?? ''), slotLines()[1]?.querySelector('.slots__held')?.textContent ?? '');
+check('and it holds what was saved on it', slotName(1, 0) === 'Gaussian Blur', slotName(1, 0));
+check('a taller bar asks for a taller window', resizes().length > beforeSecondRow, JSON.stringify(resizes().slice(beforeSecondRow)));
+
+// Holding the keys for a row points at it, so you can see where a number would land.
+window.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Shift', code: 'ShiftLeft', ctrlKey: true, shiftKey: true, bubbles: true }));
+await settle(4);
+check('holding a row\u2019s keys points at that row', slotLines()[1]?.className.includes('slots__row--armed'), slotLines()[1]?.className ?? '');
+check('and not at the one you are not holding', !slotLines()[0]?.className.includes('slots__row--armed'));
+window.dispatchEvent(new window.KeyboardEvent('keyup', { key: 'Shift', code: 'ShiftLeft', bubbles: true }));
+await settle(4);
+check('letting go stops pointing at it', !slotLines()[1]?.className.includes('slots__row--armed'), slotLines()[1]?.className ?? '');
+
+world.clips.clipC.componentList.length = 0;
+world.select('C.mp4');
+await settle(10);
+await digit(1, { ctrlKey: true, shiftKey: true });
+check('the row\u2019s own chord applies from that row', hasEffect('clipC', 'AE.ADBE Gaussian Blur 2'), JSON.stringify(world.clips.clipC.componentList.map((component) => component.matchName)));
+world.select('A.mp4', 'B.mp4', 'A.wav');
+await settle(10);
+
+console.log('\nCancelling the picker');
+const closesBeforeCancel = cepCalls.closeExtension;
+await type('ultra');
+await press('d', { metaKey: true });
+await press('Escape');
+check('Escape leaves the picker', !window.document.querySelector('.slots--picking'));
+check('and does not close the palette', cepCalls.closeExtension === closesBeforeCancel, String(cepCalls.closeExtension));
 
 console.log('\nTransition dialog');
 world.transitionCalls.length = 0;
@@ -428,8 +505,8 @@ const chosen = (selector) => [...window.document.querySelectorAll(selector)].fil
 const marked = (label) => seg(label).filter((node) => node.className.includes('--on')).length;
 check(
   'every one of these settings shows which value is in force',
-  marked('Recents to show') === 1 && marked('Favourites to show') === 1,
-  `${marked('Recents to show')} / ${marked('Favourites to show')}`,
+  marked('Recents to show') === 1 && marked('Slots per row') === 1,
+  `${marked('Recents to show')} / ${marked('Slots per row')}`,
 );
 // The window was dragged to a width of its own earlier, which is none of the three on offer.
 check('a width set by hand lights none of the presets', marked('Window width') === 0, String(marked('Window width')));
@@ -461,14 +538,78 @@ recentsButton.click();
 await settle(6);
 check('choosing how many recents to show saves it', savedSettings().recentCount === 3, String(savedSettings().recentCount));
 
+// The rows of the bar are managed from here: how many numbers each one offers, and what to hold.
+const rowLines = () => [...window.document.querySelectorAll('.sheet .bar-row')];
+const addRowButton = () => [...window.document.querySelectorAll('.sheet .button')].find((node) => node.textContent === 'Add a row');
+const slotsButton = seg('Slots per row').find((node) => node.textContent === '6');
+slotsButton.click();
+await settle(10);
+check('choosing how many slots each row offers saves it', savedSettings().favoriteSlots === 6, String(savedSettings().favoriteSlots));
+check(
+  'and every row is that long, so the numbers line up',
+  savedSettings().favoriteRows.every((row) => row.slots.length === 6),
+  JSON.stringify(savedSettings().favoriteRows.map((row) => row.slots.length)),
+);
+const rowsBefore = rowLines().length;
+addRowButton().click();
+await settle(10);
+check('a row can be added', rowLines().length === rowsBefore + 1, `${rowsBefore} -> ${rowLines().length}`);
+check(
+  'and it is given a combination nobody else answers to',
+  new Set(savedSettings().favoriteRows.map((row) => JSON.stringify(row.modifiers))).size === savedSettings().favoriteRows.length,
+  JSON.stringify(savedSettings().favoriteRows.map((row) => row.modifiers)),
+);
+const changeButton = () => rowLines().at(-1).querySelector('.button');
+changeButton().dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+await settle(4);
+check('its keys can be recorded', Boolean(window.document.querySelector('.button--recording')));
+// Only the held part is kept: which number was pressed to record it is beside the point.
+await press('7', { code: 'Digit7', altKey: true, metaKey: true });
+check(
+  'recording a row keeps the modifiers and throws the digit away',
+  savedSettings().favoriteRows.at(-1).modifiers.alt === true && savedSettings().favoriteRows.at(-1).modifiers.meta === true,
+  JSON.stringify(savedSettings().favoriteRows.at(-1).modifiers),
+);
+const takenCombination = JSON.stringify(savedSettings().favoriteRows[0].modifiers);
+changeButton().dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+await settle(4);
+await press('1', { code: 'Digit1' });
+check(
+  'two rows cannot answer to the same keys',
+  JSON.stringify(savedSettings().favoriteRows.at(-1).modifiers) !== takenCombination,
+  JSON.stringify(savedSettings().favoriteRows.map((row) => row.modifiers)),
+);
+check(
+  'and the refusal says why',
+  /already answers/i.test(window.document.querySelector('.toast')?.textContent ?? ''),
+  window.document.querySelector('.toast')?.textContent ?? '',
+);
+await press('Escape');
+rowLines().at(-1).querySelector('.icon-button').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+await settle(10);
+check('a row can be taken away again', rowLines().length === rowsBefore, `${rowsBefore} -> ${rowLines().length}`);
+const slotsBack = seg('Slots per row').find((node) => node.textContent === '4');
+slotsBack.click();
+await settle(10);
+// Taking away the row that held something has to take the star off its list row too, without
+// waiting for the next summon: the stars and the bar are the same fact.
+rowLines()[1].querySelector('.icon-button').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+await settle(10);
+
 const closesBeforeSettingsEscape = cepCalls.closeExtension;
 await press('Escape');
 check('Escape leaves settings', !window.document.querySelector('.sheet'));
 check('the update found in settings is carried back to the palette line', /update to 9\.9\.9/.test(foot()), foot());
+await type('gaussian blur');
+check(
+  'an item whose row was removed stops being starred right away',
+  !window.document.querySelector('.row__star'),
+  JSON.stringify(rowNames().slice(0, 3)),
+);
 await type('');
 check(
   'the resting list honours the chosen number of recents',
-  rows().length <= 3 + savedSettings().favoriteCount,
+  rows().length <= 3,
   `${rows().length} rows`,
 );
 check(
@@ -478,7 +619,7 @@ check(
 );
 
 console.log('\nThe resting bar reapplies the last thing used');
-world.select('A.mp4', 'B.mp4', 'audio.wav');
+world.select('A.mp4', 'B.mp4', 'A.wav');
 await settle(10);
 cep.emit('com.fxpremiere.event.trigger', { settings: false });
 await settle(20);
@@ -588,24 +729,34 @@ menuOn(rows()[0]);
 await settle(4);
 const menu = () => window.document.querySelector('.menu');
 check('right clicking a row opens a menu', Boolean(menu()), '');
-const favoriteItem = () => [...window.document.querySelectorAll('.menu__item')].find((node) => /favorites/i.test(node.textContent));
-check('the menu offers to favourite it', Boolean(favoriteItem()), menu()?.textContent ?? '');
+const favoriteItem = () => [...window.document.querySelectorAll('.menu__item')].find((node) => /number|numbered bar/i.test(node.textContent));
+check('the menu offers to put it on a number', /Put it on a number/.test(menu()?.textContent ?? ''), menu()?.textContent ?? '');
 favoriteItem().click();
 await settle(10);
-check('the row is starred afterwards', Boolean(window.document.querySelector('.row__star')), rowNames()[0] ?? '');
-check('the choice is saved', savedSettings().favorites.some((id) => /Gaussian Blur/i.test(id)), JSON.stringify(savedSettings().favorites));
+// The menu is for the mouse, and it still ends in a number: that is where the item goes.
+check('the menu hands over to the picker', Boolean(window.document.querySelector('.slots--picking')), status());
+await digit(3);
+check('the row is starred afterwards', Boolean(window.document.querySelector('.row--active .row__star')), rowNames()[0] ?? '');
+check('the choice is saved', /Gaussian Blur/i.test(String(savedSlots()[2])), JSON.stringify(savedSlots()));
 check('the menu closes once used', !menu());
 
 await type('');
-check('favourites are listed under the recents', /Favorites/.test(window.document.body.textContent ?? ''), '');
-const starredRow = () => rows().find((row) => row.querySelector('.row__star'));
-menuOn(starredRow());
+check('and the bar shows it on that number', slotName(0, 2) === 'Gaussian Blur', slotName(0, 2));
+check('the resting list no longer repeats the favourites below', !/Favorites/.test(window.document.body.textContent ?? ''), '');
+
+await type('gaussian blur');
+menuOn(rows()[0]);
 await settle(4);
 check(
-  'right clicking a favourite offers to remove it',
-  /Remove from favorites/.test(menu()?.textContent ?? ''),
+  'right clicking something already on the bar offers to take it off',
+  /Take it off/.test(menu()?.textContent ?? ''),
   menu()?.textContent ?? '',
 );
+favoriteItem().click();
+await settle(10);
+check('and it comes off without asking for a number', savedSlots()[2] === null, JSON.stringify(savedSlots()));
+menuOn(rows()[0]);
+await settle(4);
 window.document.body.dispatchEvent(new window.MouseEvent('mousedown', { bubbles: true }));
 await settle(4);
 check('clicking away closes the menu', !menu());
@@ -725,5 +876,38 @@ await settle(60);
 const foundLater = await search(nextOpen, 'gaussian');
 check('so the next open finds the effects instead of an empty palette', foundLater > 0, `${foundLater} rows`);
 nextOpen.close();
+
+// Favourites used to be an unordered set with a count of how many to list. They become the first
+// row of the bar, in the order they were saved: the same items, reachable by number.
+console.log('\nA profile from before the numbered bar');
+const oldStage = mkdtempSync(join(tmpdir(), 'fxp-legacy-'));
+const oldSettingsDir = join(oldStage, 'Library', 'Application Support', 'FX Premiere');
+mkdirSync(oldSettingsDir, { recursive: true });
+writeFileSync(
+  join(oldSettingsDir, 'settings.json'),
+  JSON.stringify({
+    favorites: ['videoEffect:Gaussian Blur', 'videoEffect:Ultra Key'],
+    favoriteCount: 3,
+    width: 440,
+    remembered: {
+      'videoEffect:Gaussian Blur': { id: 'videoEffect:Gaussian Blur', kind: 'videoEffect', name: 'Gaussian Blur', mediaType: 'video' },
+      'videoEffect:Ultra Key': { id: 'videoEffect:Ultra Key', kind: 'videoEffect', name: 'Ultra Key', mediaType: 'video' },
+    },
+  }),
+  'utf8',
+);
+const legacyHost = createHost({ hostScript, documentsRoot: join(oldStage, 'Documents') });
+const legacy = createCepWindow({ html: panelHtml, home: oldStage, evalScript: legacyHost.evalInHost, storage: {} });
+legacy.run(panelBundle);
+await settle(60);
+const legacySlots = [...legacy.window.document.querySelectorAll('.slots__row')];
+const legacyNames = [...legacySlots[0].querySelectorAll('.slot__name')].map((node) => node.textContent);
+check('the old favourites become one row', legacySlots.length === 1, String(legacySlots.length));
+check('in the order they were saved in', legacyNames.slice(0, 2).join('|') === 'Gaussian Blur|Ultra Key', legacyNames.join('|'));
+check('with as many numbers as favourites were being listed', legacyNames.length === 3, String(legacyNames.length));
+// 440 was the one width every profile carried, so it means "no width of my own" rather than a choice.
+check('and the width goes back to following the bar', legacy.window.innerWidth !== 440, String(legacy.window.innerWidth));
+legacy.close();
+rmSync(oldStage, { recursive: true, force: true });
 
 finish('panel');

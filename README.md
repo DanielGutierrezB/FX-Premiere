@@ -27,18 +27,26 @@ Ctrl + Space  →  gsblr  →  Enter  →  Gaussian Blur en los 8 clips seleccio
   `rot 45`, `anchor 100 200`. Acepta valores relativos (`scale +10`) y porcentajes
   (`pos 50% 50%`), sin abrir Controles de efectos.
 - **Comandos de edición**: Scale to Frame Size, Reset Motion & Opacity, Toggle Clip Enable.
-- **Lista de recientes y favoritos**: al abrir la paleta, sin escribir nada, ves lo último que
-  aplicaste con el primer elemento ya seleccionado. Enter lo repite. Nada más se dibuja hasta
-  que escribes, que es lo que hace que abra rápido.
+- **Lista de recientes**: al abrir la paleta, sin escribir nada, ves lo último que aplicaste con el
+  primer elemento ya seleccionado. Enter lo repite. Nada más se dibuja hasta que escribes, que es lo
+  que hace que abra rápido.
+- **Barra de favoritos numerada**: encima de la lista hay una barra de ranuras con número. Con el
+  buscador vacío, `1`..`9` aplica lo que tenga esa ranura, así que `Ctrl + Space` y `1` es todo lo
+  que hace falta. Puedes tener varias filas, cada una con su combinación (`Ctrl + Shift + 1` llega a
+  la primera ranura de la segunda fila), y mientras sostienes esas teclas la fila correspondiente se
+  ilumina para que veas dónde va a caer el número. Con algo escrito los dígitos se escriben normal:
+  *Blur 1* y *Lumetri 2* se buscan como cualquier otra cosa.
 - **Crear un preset a partir de un clip**: `Cmd/Ctrl + I`, o buscando *Create Preset from Clip*,
   lista lo que el clip seleccionado tiene puesto (con cuántos parámetros y cuántos tienen
   keyframes), le pones nombre y queda como preset propio, buscable al instante y reaplicable con
   los mismos valores y keyframes. Puedes incluir o excluir Motion y Opacidad.
 - Los comandos propios de la paleta se encuentran por varios nombres, en inglés y en español:
   *guardar preset*, *deshacer*, *ajustes* llegan al mismo sitio que sus nombres en inglés.
-- **Favoritos con clic derecho**: el menú de cualquier fila permite marcarla o desmarcarla, y los
-  favoritos se listan siempre debajo de los recientes. En los ajustes eliges cuántos de cada uno
-  quieres ver, incluido ninguno.
+- **Asignar una ranura**: con el elemento seleccionado, `Cmd/Ctrl + D` y después el número que
+  quieras (con los modificadores de la fila si es otra fila). Pulsar la ranura que ya lo tiene lo
+  quita, y `Esc` sale sin asignar nada. El clic derecho de cualquier fila hace lo mismo, y si el
+  elemento ya está en la barra ofrece quitarlo de una vez. En los ajustes eliges cuántas ranuras
+  tiene cada fila, añades o quitas filas y grabas la combinación de cada una.
 - **Interfaz desnuda a propósito**: el campo y la lista, nada más. La fila seleccionada se marca
   con una barra celeste, sin rellenos, y la línea de abajo solo aparece cuando tiene algo que
   decir: los atajos y a cuántos clips va Enter mientras no escribes, o cómo salió lo último que
@@ -48,8 +56,8 @@ Ctrl + Space  →  gsblr  →  Enter  →  Gaussian Blur en los 8 clips seleccio
   `panel.css` (campo, pie, fila, título de grupo) en vez de medir el DOM, así que se pide antes del
   primer pintado y no hay ese salto de abrir grande y encogerse. Escribir tampoco la mueve: la lista
   hace scroll dentro de la misma caja, porque una ventana que cambia de tamaño con cada tecla es
-  imposible de apuntar. El ancho lo eliges en los ajustes (380, 440 o 520), y cuántos recientes y
-  favoritos quieres ver decide la altura. **Y si prefieres otro tamaño, arrastra la ventana**: eso
+  imposible de apuntar. El ancho sale de las ranuras de la barra (o lo eliges en los ajustes), y
+  cuántos recientes y cuántas filas de favoritos quieres ver deciden la altura. **Y si prefieres otro tamaño, arrastra la ventana**: eso
   manda sobre todo lo anterior y se recuerda; en los ajustes aparece un botón para devolverle la
   altura a la lista.
 - **Abre igual de rápido la primera vez que la número cien**: cerrar la paleta descarga la página,
@@ -60,7 +68,7 @@ Ctrl + Space  →  gsblr  →  Enter  →  Gaussian Blur en los 8 clips seleccio
   guardados por detrás del primer pintado y el CSS viaja dentro del propio HTML. Si guardas un
   preset nuevo en Premiere, el sello cambia y aparece en la siguiente apertura, sin reindexar.
 - **Deshacer** desde la paleta con `Cmd/Ctrl + Z`.
-- **Favoritos, recientes y ranking por uso**: lo que más usas sube solo.
+- **Ranking por uso**: lo que más usas sube solo, y lo que está en la barra sube antes que nada.
 - **Atajo configurable** desde los ajustes del panel (por defecto `Ctrl + Space`).
 - **Actualización desde el propio panel**: los ajustes traen la sección *Updates* con la versión
   instalada y un botón que consulta los releases de GitHub, baja el `.zxp` y lo instala encima
@@ -108,7 +116,9 @@ iscc /DAppVersion=$(node -p "require('./package.json').version") scripts\install
 | `Shift + Enter` | invertir el diálogo de transición (mostrarlo u omitirlo) |
 | `Cmd/Ctrl + Enter` | aplicar sin cerrar la paleta |
 | `Tab` / `Shift + Tab` | cambiar de ámbito (Todo, Efectos, Transiciones, Presets, Comandos, Favoritos) |
-| `Cmd/Ctrl + D` | marcar o desmarcar favorito (también con clic derecho en la fila) |
+| `1`..`9` | aplicar la ranura de la barra de favoritos (con el buscador vacío) |
+| `Ctrl + Shift + 1`… | la misma ranura de otra fila, según la combinación que le pongas |
+| `Cmd/Ctrl + D` y un número | poner lo seleccionado en esa ranura, o quitarlo si ya está ahí |
 | `Cmd/Ctrl + I` | crear un preset con lo que tenga el clip seleccionado |
 | `Cmd/Ctrl + Z` | deshacer el último cambio |
 | `Cmd/Ctrl + R` | reindexar efectos |
@@ -200,7 +210,7 @@ Los logs de la extensión invisible y del helper se escriben en:
 - macOS: `~/Library/Application Support/FX Premiere/fx-premiere.log`
 - Windows: `%APPDATA%\FX Premiere\fx-premiere.log`
 
-Los ajustes (atajo, favoritos, uso, carpetas de presets) viven junto al log en
+Los ajustes (atajo, filas de favoritos, uso, carpetas de presets) viven junto al log en
 `settings.json`, y los presets que captures de un clip en `captured/*.fxpreset.json`.
 
 ### Pruebas

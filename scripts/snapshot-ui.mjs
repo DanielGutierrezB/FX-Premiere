@@ -47,7 +47,10 @@ writeFileSync(
   JSON.stringify({
     presetSources: [presetFixture],
     recents: seeded.map((entry) => entry.id),
-    favorites: [seeded[1].id],
+    favoriteRows: [
+      { modifiers: { ctrl: false, alt: false, shift: false, meta: false }, slots: [seeded[1].id, seeded[4].id, null, null] },
+      { modifiers: { ctrl: true, alt: false, shift: true, meta: false }, slots: [seeded[3].id, null, null, null] },
+    ],
     remembered,
   }),
   'utf8',
@@ -111,7 +114,7 @@ const page = `<!doctype html>
   figcaption { color: #8b8d96; font: 11px/1.4 -apple-system, sans-serif; margin-bottom: 8px; }
   /* The width is the default the panel asks for; the height is whatever the content comes to,
      which is the point of the window fitting itself. */
-  .frame { width: 440px; display: flex; position: relative; overflow: hidden;
+  .frame { width: 534px; display: flex; position: relative; overflow: hidden;
            border: 1px solid #2a2b30; border-radius: 6px; }
   .frame .app { width: 100%; height: auto; }
   .frame .results { max-height: none; }

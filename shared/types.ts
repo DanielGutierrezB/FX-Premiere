@@ -174,6 +174,25 @@ export interface HotkeySpec {
   meta: boolean;
 }
 
+/** The keys held alongside something else. A row of favourites is reached by holding these. */
+export interface Modifiers {
+  ctrl: boolean;
+  alt: boolean;
+  shift: boolean;
+  meta: boolean;
+}
+
+/**
+ * A row of numbered favourite slots. Holding the row's modifiers and pressing a slot's digit
+ * applies what is in it, so the whole row is one chord away with no list to walk.
+ */
+export interface FavoriteRow {
+  /** Held together with the digit. All false is the digit on its own, which is the first row. */
+  modifiers: Modifiers;
+  /** One id per slot, null where the slot is free. Normalised to `favoriteSlots` on load. */
+  slots: Array<string | null>;
+}
+
 export interface Settings {
   hotkey: HotkeySpec;
   settingsHotkey: HotkeySpec | null;
@@ -181,7 +200,8 @@ export interface Settings {
   transitionPromptEnabled: boolean;
   lastTransition: TransitionOptions;
   presetSources: string[];
-  favorites: string[];
+  /** The numbered bar, in the order it is drawn and fired. */
+  favoriteRows: FavoriteRow[];
   recents: string[];
   /**
    * The favourite and recent items themselves, so the resting palette can render and apply
@@ -193,10 +213,14 @@ export interface Settings {
   fontScale: number;
   accent: string;
   hotkeyEnabled: boolean;
-  /** How many rows the resting palette offers, per group. Zero hides the group. */
+  /** How many recents the resting palette offers. Zero hides them. */
   recentCount: number;
-  favoriteCount: number;
-  /** Content size asked of the host. A null height follows the resting list instead. */
-  width: number;
+  /** Slots in every favourite row, which is also the highest digit that fires one. */
+  favoriteSlots: number;
+  /**
+   * Content size asked of the host. Null means it follows what is being shown: the width follows
+   * the favourite slots, the height follows the resting list.
+   */
+  width: number | null;
   height: number | null;
 }

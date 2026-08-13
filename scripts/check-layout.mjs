@@ -90,12 +90,20 @@ for (let index = 0; index < 12; index += 1) {
   remembered[id] = { id, kind: 'videoEffect', name: `Effect ${index}`, group: 'Blur & Sharpen' };
 }
 
+/** Rows of the numbered bar, each reached by holding something different. */
+const barRows = (count) =>
+  Array.from({ length: count }, (_unused, index) => ({
+    modifiers: { ctrl: index === 1, alt: index === 2, shift: index === 1, meta: false },
+    slots: recents.slice(index * 4, index * 4 + 4),
+  }));
+
 for (const [label, settings] of [
-  ['six recents, three favourites', { recents, favorites: recents.slice(6), remembered }],
-  ['twelve recents, no favourites', { recents, favorites: [], remembered, recentCount: 12, favoriteCount: 0 }],
-  ['small text', { recents, favorites: [], remembered, fontScale: 0.8 }],
-  ['larger text', { recents, favorites: [], remembered, fontScale: 1.3 }],
-  ['largest text', { recents, favorites: [], remembered, fontScale: 1.4 }],
+  ['six recents, one row of slots', { recents, remembered, favoriteRows: barRows(1) }],
+  ['twelve recents, three rows of slots', { recents, remembered, recentCount: 12, favoriteRows: barRows(3) }],
+  ['nine slots per row', { recents, remembered, favoriteSlots: 9, favoriteRows: barRows(2) }],
+  ['small text', { recents, remembered, fontScale: 0.8, favoriteRows: barRows(2) }],
+  ['larger text', { recents, remembered, fontScale: 1.3, favoriteRows: barRows(2) }],
+  ['largest text', { recents, remembered, fontScale: 1.4, favoriteRows: barRows(3) }],
 ]) {
   const { markup, asked } = await boot(settings);
   const laid = measure(markup, asked, settings.fontScale ?? 1);
@@ -110,7 +118,7 @@ for (const [label, settings] of [
 
 // With nothing to offer yet the plan is deliberately larger than the content: the palette keeps room
 // for the results you are about to type, instead of a box that only fits its own empty message.
-const { markup: bare, asked: bareAsked } = await boot({ recents: [], favorites: [], remembered: {} });
+const { markup: bare, asked: bareAsked } = await boot({ recents: [], remembered: {} });
 const bareLaid = measure(bare, bareAsked, 1);
 check(
   'an empty palette keeps room for results rather than shrinking onto its message',

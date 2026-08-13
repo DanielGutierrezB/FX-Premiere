@@ -40,6 +40,7 @@ import { SCOPES, badgeFor, rank, type RankedItem, type Scope } from './search';
 import { WindowSize } from './window-size';
 import { InspectView } from './views/inspect';
 import { openRowMenu } from './views/row-menu';
+import { FavoriteBar } from './views/slots';
 import { SettingsSheet } from './views/settings';
 import { TransitionDialog } from './views/transition';
 
@@ -107,6 +108,14 @@ export class PaletteApp {
 
   private rowMenu: HTMLElement | null = null;
 
+  private readonly bar = new FavoriteBar({
+    settings: () => this.settings,
+    query: () => this.input.value.trim(),
+    apply: (item) => void this.applyItem(item, 'default'),
+    status: (text, kind) => this.setStatus(text, kind),
+    changed: () => this.updateResults(),
+  });
+
   private readonly size = new WindowSize(
     () => this.settings,
     () => this.quickGroups(),
@@ -158,6 +167,7 @@ export class PaletteApp {
    */
   async boot(): Promise<void> {
     this.settings = loadSettings();
+    this.bar.reload();
     this.applyTheme();
     // Before the first paint, so the palette looks like it opened right rather than settling in.
     this.size.apply('list');
@@ -201,7 +211,7 @@ export class PaletteApp {
    */
   private backfillRemembered(): void {
     const wanted = new Set(
-      [...this.settings.recents, ...this.settings.favorites].filter((id) => !this.settings.remembered[id]),
+      [...this.settings.recents, ...this.bar.list()].filter((id) => !this.settings.remembered[id]),
     );
     if (wanted.size === 0 || !this.catalog) {
       return;
@@ -233,6 +243,7 @@ export class PaletteApp {
     this.footNode.appendChild(this.hintNode);
     this.searchNode.appendChild(this.input);
     this.root.appendChild(this.searchNode);
+    this.root.appendChild(this.bar.element());
     this.root.appendChild(this.body);
     this.root.appendChild(this.footNode);
     this.renderHints();
@@ -243,8 +254,13 @@ export class PaletteApp {
       this.active = 0;
       this.updateResults();
       this.renderHints();
+      this.bar.noteTyping();
     });
     window.addEventListener('keydown', (event) => this.onKeyDown(event), true);
+    // Releasing a modifier is the other half of pointing at a row, and a window that loses focus
+    // never sees the release at all.
+    window.addEventListener('keyup', (event) => this.bar.noteModifiers(event), true);
+    window.addEventListener('blur', () => this.bar.noteModifiers(null));
     window.addEventListener('focus', () => this.focusInput());
     window.addEventListener('resize', () => this.size.noteHostResize());
     // Closed by the window's own button rather than by us: the marker has to go down anyway, or
@@ -277,6 +293,7 @@ export class PaletteApp {
   /** The view and the size of the window are the same decision, so they are made together. */
   private setView(view: View): void {
     this.view = view;
+    this.bar.show(view === 'search');
     this.size.apply(view === 'search' ? 'list' : 'sheet');
   }
 
@@ -292,7 +309,8 @@ export class PaletteApp {
     this.setStatus('');
     this.settings = loadSettings();
     this.applyTheme();
-    // What was applied since the last summon changes the resting list, and so its size.
+    // What was applied since the last summon changes the resting list, and so its size. Entering the
+    // search view is also what reads the bar back out of the settings that were just loaded.
     this.setView('search');
     this.updateResults();
     this.renderHints();
@@ -412,6 +430,7 @@ export class PaletteApp {
         }
         hints.push(
           { key: '\u21b5', label: this.targetLabel(), run: () => void this.applyActive('default') },
+          { key: '\u2318D', label: 'put on a number', run: () => this.pickActive() },
           { key: '\u2318I', label: 'create preset', run: () => void this.openInspector() },
           { key: '\u2318Z', label: 'undo', run: () => void this.undoLast() },
           {
@@ -458,10 +477,9 @@ export class PaletteApp {
       }
       return out;
     };
-    return [
-      { label: 'Recent', items: take(this.settings.recents, this.settings.recentCount) },
-      { label: 'Favorites', items: take(this.settings.favorites, this.settings.favoriteCount) },
-    ].filter((group) => group.items.length > 0);
+    return [{ label: 'Recent', items: take(this.settings.recents, this.settings.recentCount) }].filter(
+      (group) => group.items.length > 0,
+    );
   }
 
   private updateResults(): void {
@@ -477,7 +495,11 @@ export class PaletteApp {
       // A typed motion command is not a search result: it is what you just wrote, so it goes
       // straight to the top instead of through the ranking and back out of it.
       const dynamic = parseMotionQuery(query);
-      const ranked = rank(this.allItems(), this.catalog?.haystacks ?? new Map(), query, this.scope, this.settings);
+      const ranked = rank(this.allItems(), this.catalog?.haystacks ?? new Map(), query, this.scope, {
+        favorites: this.bar.list(),
+        recents: this.settings.recents,
+        usage: this.settings.usage,
+      });
       this.results = dynamic ? [{ item: dynamic, score: Number.POSITIVE_INFINITY, indices: [] }, ...ranked] : ranked;
     }
     if (this.active >= this.results.length) {
@@ -534,7 +556,7 @@ export class PaletteApp {
       },
       [
         this.settings.showTypeBadges ? el('span', { class: 'row__badge', text: badgeFor(entry.item.kind) }) : null,
-        this.settings.favorites.includes(entry.item.id) ? el('span', { class: 'row__star', text: '\u2605' }) : null,
+        this.bar.has(entry.item.id) ? el('span', { class: 'row__star', text: '\u2605' }) : null,
         name,
         el('span', { class: 'row__group', text: entry.item.group ?? '' }),
       ],
@@ -584,6 +606,7 @@ export class PaletteApp {
   }
 
   private onKeyDown(event: KeyboardEvent): void {
+    this.bar.noteModifiers(event);
     if (this.view === 'transition') {
       this.transitionDialog.handleKey(event);
       return;
@@ -594,6 +617,11 @@ export class PaletteApp {
     }
     if (this.view === 'inspect') {
       this.inspectView.handleKey(event);
+      return;
+    }
+
+    if (this.bar.handleKey(event)) {
+      event.preventDefault();
       return;
     }
 
@@ -634,7 +662,7 @@ export class PaletteApp {
     }
     if (accel && (event.key === 'd' || event.key === 'D')) {
       event.preventDefault();
-      this.toggleFavorite();
+      this.pickActive();
       return;
     }
     if (accel && (event.key === 'r' || event.key === 'R')) {
@@ -667,23 +695,12 @@ export class PaletteApp {
     this.updateResults();
   }
 
-  private toggleFavorite(index = this.active): void {
-    const entry = this.results[index];
-    if (!entry) {
-      return;
+  /** Hands the selected row to the bar, which then asks which number it should answer to. */
+  private pickActive(): void {
+    const entry = this.results[this.active];
+    if (entry) {
+      this.bar.pick(entry.item);
     }
-    const favorites = new Set(this.settings.favorites);
-    const had = favorites.has(entry.item.id);
-    if (had) {
-      favorites.delete(entry.item.id);
-    } else {
-      favorites.add(entry.item.id);
-    }
-    this.settings.favorites = [...favorites];
-    rememberItem(this.settings, entry.item);
-    saveSettings(this.settings);
-    this.setStatus(`${had ? 'Removed from' : 'Added to'} favorites: ${entry.item.name}`, 'ok');
-    this.updateResults();
   }
 
   private openRowMenu(index: number, x: number, y: number): void {
@@ -695,10 +712,10 @@ export class PaletteApp {
     this.active = index;
     this.paintResults();
     this.rowMenu = openRowMenu(this.root, entry.item, { x, y }, {
-      starred: this.settings.favorites.includes(entry.item.id),
+      starred: this.bar.has(entry.item.id),
       favorite: () => {
         this.closeRowMenu();
-        this.toggleFavorite(index);
+        this.bar.toggle(entry.item);
       },
       apply: () => {
         this.closeRowMenu();
@@ -943,9 +960,9 @@ export class PaletteApp {
   private forgetCaptured(item: CatalogItem): void {
     deleteCaptured(item.name);
     this.captured = capturedItems(listCaptured());
-    // It cannot stay in the recents or favourites bar once the file behind it is gone.
+    // It cannot stay in the recents or on a number once the file behind it is gone.
     this.settings.recents = this.settings.recents.filter((id) => id !== item.id);
-    this.settings.favorites = this.settings.favorites.filter((id) => id !== item.id);
+    this.bar.forget(item.id);
     delete this.settings.remembered[item.id];
     saveSettings(this.settings);
     this.updateResults();

@@ -1,11 +1,28 @@
-import { formatHotkey, hotkeyFromEvent, isHotkeyUsable } from '@shared/hotkey';
-import { ACCENTS, LIST_COUNTS, WIDTHS, defaultSettings, readHelperStatus } from '@shared/settings';
-import type { Settings } from '@shared/types';
+import { formatHotkey, formatModifiers, hotkeyFromEvent, isHotkeyUsable, modifiersOf } from '@shared/hotkey';
+import {
+  ACCENTS,
+  LIST_COUNTS,
+  NO_MODIFIERS,
+  SLOT_COUNTS,
+  WIDTHS,
+  defaultSettings,
+  nextRowModifiers,
+  readHelperStatus,
+  sameModifiers,
+} from '@shared/settings';
+import type { Modifiers, Settings } from '@shared/types';
 import { applyUpdate, checkForUpdate, isDevInstall, localVersion, type UpdateCheck } from '@shared/updater';
 import { clear, el } from '../dom';
 import { buttonRow, fieldRow, segmented, swatches, switchNode } from '../widgets';
 
 const RELOAD_DELAY_MS = 900;
+
+/** Rows are always exactly as long as the slot count, so every row offers the same numbers. */
+const resizeRows = (settings: Settings): void => {
+  for (const row of settings.favoriteRows) {
+    row.slots = Array.from({ length: settings.favoriteSlots }, (_unused, index) => row.slots[index] ?? null);
+  }
+};
 
 interface SettingsHost {
   /** The live settings object: the sheet edits it in place and then asks for a save. */
@@ -25,7 +42,8 @@ interface SettingsHost {
   close(): void;
 }
 
-type RecordingTarget = 'hotkey' | 'settingsHotkey' | null;
+/** What the recorder is listening for: one of the global shortcuts, or the keys held for a row. */
+type RecordingTarget = 'hotkey' | 'settingsHotkey' | { row: number } | null;
 
 /**
  * The settings sheet: shortcuts, behaviour, preset folders, appearance, index and self-update.
@@ -196,20 +214,24 @@ export class SettingsSheet {
         ),
       ),
     );
+
+    container.appendChild(el('div', { class: 'section-title', text: 'The numbered bar' }));
     container.appendChild(
       fieldRow(
-        'Favourites to show',
-        'Listed under the recents. Right click any row to add or remove one.',
+        'Slots per row',
+        'Every row offers the same numbers, and the window widens to keep their names readable.',
         segmented(
-          LIST_COUNTS.map((count) => ({ value: count, label: String(count) })),
-          settings.favoriteCount,
+          SLOT_COUNTS.map((count) => ({ value: count, label: String(count) })),
+          settings.favoriteSlots,
           (value) => {
-            settings.favoriteCount = value;
+            settings.favoriteSlots = value;
+            resizeRows(settings);
             this.save(false);
           },
         ),
       ),
     );
+    container.appendChild(this.rowsList(settings));
 
     container.appendChild(el('div', { class: 'section-title', text: 'Presets' }));
     const folderInput = el('input', {
@@ -273,33 +295,35 @@ export class SettingsSheet {
         }),
       ),
     );
+    const sizedByHand = settings.width !== null || settings.height !== null;
     container.appendChild(
       fieldRow(
         'Window width',
-        settings.height === null
-          ? 'The height follows the resting list until you drag the window yourself.'
-          : 'Dragging the window sets both, and that is what is in force.',
+        sizedByHand
+          ? 'This is the size in force. Fit it back to let the bar and the list decide again.'
+          : 'The width follows the numbered bar and the height follows the resting list, until you pick or drag one.',
         el('div', { class: 'field__control' }, [
           segmented(
             WIDTHS.map((width) => ({ value: width, label: `${width}` })),
-            // A window dragged to a width of its own matches none of them, and none is shown lit.
+            // A window that decides its own width, or was dragged to one, matches none of these.
             settings.width,
             (value) => {
               settings.width = value;
               this.save(false);
             },
           ),
-          settings.height === null
-            ? null
-            : el('button', {
+          sizedByHand
+            ? el('button', {
                 class: 'button',
                 text: 'Fit the list',
-                title: 'Go back to a height that follows the resting list',
+                title: 'Go back to a size that follows what is being shown',
                 onclick: () => {
+                  settings.width = null;
                   settings.height = null;
                   this.save(false);
                 },
-              }),
+              })
+            : null,
         ]),
       ),
     );
@@ -451,6 +475,66 @@ export class SettingsSheet {
     }, RELOAD_DELAY_MS);
   }
 
+  /** One line per row of the bar: what to hold for it, how to change that, and how to drop it. */
+  private rowsList(settings: Settings): HTMLElement {
+    const list = el('div', { class: 'folder-list' });
+    settings.favoriteRows.forEach((row, index) => {
+      const held = formatModifiers(row.modifiers);
+      const recording = typeof this.recording === 'object' && this.recording !== null && this.recording.row === index;
+      list.appendChild(
+        el('div', { class: 'folder-row bar-row' }, [
+          el('span', {
+            text: held === '' ? `Row ${index + 1} \u00b7 the number on its own` : `Row ${index + 1} \u00b7 hold ${held}`,
+          }),
+          el('div', { class: 'field__control' }, [
+            el('button', {
+              class: `button${recording ? ' button--recording' : ''}`,
+              text: recording ? 'Press the keys with a number\u2026' : 'Change',
+              onclick: () => this.startRecording({ row: index }),
+            }),
+            settings.favoriteRows.length > 1
+              ? el('button', {
+                  class: 'icon-button',
+                  text: '\u2715',
+                  title: 'Remove this row',
+                  onclick: () => {
+                    settings.favoriteRows.splice(index, 1);
+                    this.save(false);
+                  },
+                })
+              : null,
+          ]),
+        ]),
+      );
+    });
+    const free = nextRowModifiers(settings.favoriteRows);
+    return el('div', {}, [
+      list,
+      buttonRow(
+        free === null
+          ? 'Every combination the palette can offer is already a row.'
+          : `A new row would be reached by holding ${formatModifiers(free)}. Change it afterwards if you like.`,
+        [
+          el('button', {
+            class: 'button',
+            text: 'Add a row',
+            disabled: free === null,
+            onclick: () => {
+              if (free === null) {
+                return;
+              }
+              settings.favoriteRows.push({
+                modifiers: free,
+                slots: Array.from({ length: settings.favoriteSlots }, () => null),
+              });
+              this.save(false);
+            },
+          }),
+        ],
+      ),
+    ]);
+  }
+
   private startRecording(target: Exclude<RecordingTarget, null>): void {
     this.recording = target;
     this.rerender();
@@ -465,6 +549,12 @@ export class SettingsSheet {
       return;
     }
     if (['Shift', 'Control', 'Alt', 'Meta'].includes(event.key)) {
+      return;
+    }
+    // A row is only the held part of a chord: the number comes from the slot, so whichever digit
+    // was pressed to record it is thrown away.
+    if (typeof this.recording === 'object' && this.recording !== null) {
+      this.captureRowModifiers(this.recording.row, modifiersOf(event));
       return;
     }
     const spec = hotkeyFromEvent(event);
@@ -485,6 +575,29 @@ export class SettingsSheet {
     this.recording = null;
     this.save(true);
     this.host.toast(`Shortcut set to ${formatHotkey(spec)}`);
+  }
+
+  private captureRowModifiers(index: number, held: Modifiers): void {
+    const settings = this.host.settings();
+    const row = settings.favoriteRows[index];
+    if (!row) {
+      this.recording = null;
+      this.rerender();
+      return;
+    }
+    const taken = settings.favoriteRows.some((other, position) => position !== index && sameModifiers(other.modifiers, held));
+    if (taken) {
+      this.host.toast('Another row already answers to those keys.', 'error');
+      return;
+    }
+    row.modifiers = held;
+    this.recording = null;
+    this.save(false);
+    this.host.toast(
+      sameModifiers(held, NO_MODIFIERS)
+        ? `Row ${index + 1} now answers to the number on its own.`
+        : `Row ${index + 1} now answers to ${formatModifiers(held)} and the number.`,
+    );
   }
 
   private save(restartHelper: boolean): void {

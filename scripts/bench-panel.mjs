@@ -41,7 +41,12 @@ writeFileSync(
   JSON.stringify({
     presetSources: [presetFixture],
     recents: seeded.map((name) => `videoEffect:${name}`),
-    favorites: [`videoEffect:${seeded[0]}`],
+    favoriteRows: [
+      {
+        modifiers: { ctrl: false, alt: false, shift: false, meta: false },
+        slots: [`videoEffect:${seeded[0]}`, null, null, null],
+      },
+    ],
     remembered,
   }),
   'utf8',

@@ -1,4 +1,4 @@
-import type { HotkeySpec } from './types';
+import type { HotkeySpec, Modifiers } from './types';
 
 const CODE_ALIASES: Record<string, string> = {
   Space: 'space',
@@ -116,22 +116,47 @@ export const isHotkeyUsable = (spec: HotkeySpec): boolean => {
   return hasModifier || isFunctionKey || (spec.shift && spec.key.length === 1);
 };
 
-export const formatHotkey = (spec: HotkeySpec, mac = isMac()): string => {
+/** The held part of a chord on its own, for the favourite rows: what to hold, without the digit. */
+export const formatModifiers = (spec: Modifiers, mac = isMac()): string => {
   const parts: string[] = [];
   if (mac) {
     if (spec.ctrl) parts.push('\u2303');
     if (spec.alt) parts.push('\u2325');
     if (spec.shift) parts.push('\u21E7');
     if (spec.meta) parts.push('\u2318');
-  } else {
-    if (spec.ctrl) parts.push('Ctrl');
-    if (spec.alt) parts.push('Alt');
-    if (spec.shift) parts.push('Shift');
-    if (spec.meta) parts.push('Win');
+    return parts.join('');
   }
+  if (spec.ctrl) parts.push('Ctrl');
+  if (spec.alt) parts.push('Alt');
+  if (spec.shift) parts.push('Shift');
+  if (spec.meta) parts.push('Win');
+  return parts.join('+');
+};
+
+export const formatHotkey = (spec: HotkeySpec, mac = isMac()): string => {
+  const held = formatModifiers(spec, mac);
   const label = KEY_LABELS[spec.key] ?? spec.key.toUpperCase();
-  parts.push(label);
-  return mac ? parts.join('') : parts.join('+');
+  if (held === '') {
+    return label;
+  }
+  return mac ? `${held}${label}` : `${held}+${label}`;
+};
+
+/** True when exactly these modifiers are down, so one row cannot answer for another. */
+export const modifiersOf = (event: KeyboardEvent): Modifiers => ({
+  ctrl: event.ctrlKey,
+  alt: event.altKey,
+  shift: event.shiftKey,
+  meta: event.metaKey,
+});
+
+/**
+ * Which slot a key press names, or null if it names none. Read from `code` rather than `key`: with
+ * Shift held a digit arrives as `!` on a US layout, and as something else again elsewhere.
+ */
+export const slotFromEvent = (event: KeyboardEvent): number | null => {
+  const match = /^(?:Digit|Numpad)([1-9])$/.exec(event.code || '');
+  return match ? Number(match[1]) : null;
 };
 
 /** Wire format understood by the native hotkey helpers on both platforms. */

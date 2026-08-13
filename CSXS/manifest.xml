@@ -43,13 +43,15 @@
           <!-- The panel resizes itself to whatever it is showing, so the minimum has to be small
                enough for a two row list. The host clamps anything below it. -->
           <Geometry>
-            <!-- What the palette asks for on a first run, with nothing used yet: the window opens
-                 at it instead of being resized a moment later. Once there are recents to show, or
-                 a size set by dragging the corner, the panel asks for that before its first
-                 paint. Height 285 is 44 + 1 + 32 + 7 rows of 28 + 12, from panel.css. -->
+            <!-- What the palette asks for on a first run, with four slots and nothing used yet: the
+                 window opens at it instead of being resized a moment later. Once there are recents
+                 to show, more favourite rows, or a size set by dragging the corner, the panel asks
+                 for that before its first paint. From the numbers in panel.css: 36 + 4 slots of 116
+                 + 3 gaps of 6 + 16 across, and 44 + 1 + 32 + a 47 tall bar + 7 rows of 28 + 12
+                 down. -->
             <Size>
-              <Width>440</Width>
-              <Height>285</Height>
+              <Width>534</Width>
+              <Height>332</Height>
             </Size>
             <MinSize>
               <Width>380</Width>
