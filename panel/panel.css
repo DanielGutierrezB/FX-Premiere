@@ -78,7 +78,10 @@ body {
 
 /* The only label in the list: which handful of items is being offered before anything is typed. */
 .cap {
-  padding: 13px 15px 5px;
+  display: flex;
+  align-items: flex-end;
+  height: calc(26px * var(--font-scale));
+  padding: 0 15px 5px;
   color: var(--text-faint);
   font-size: calc(9.5px * var(--font-scale));
   letter-spacing: 0.09em;
@@ -216,13 +219,16 @@ body {
 
 /* One quiet line, and only when it has something to say: what a key does while you are at rest,
    or how the last thing you pressed went. Never both, never while you are typing. */
+/* Fixed height, like the search field and the captions: the window is planned from these numbers
+   rather than measured, so a padding-driven height here would make the plan wrong. */
 .foot {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: space-between;
   gap: 12px;
   flex-shrink: 0;
-  padding: 11px 15px 12px;
+  height: calc(32px * var(--font-scale));
+  padding: 0 15px;
   color: var(--text-faint);
   font-size: calc(10.5px * var(--font-scale));
 }

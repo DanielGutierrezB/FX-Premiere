@@ -114,18 +114,19 @@ check('the whole index is searched even though it is not drawn', rows().length +
 check('the footer stays out of the way while typing', foot() === '', foot());
 
 // The title bar is Premiere's, but the box under it is ours to size: a modeless extension may
-// state its content height, so the window follows the list instead of sitting half empty.
-// The fit is measured on an animation frame, which is slower than a promise turn.
-const lastResize = async () => {
-  await settle(40);
-  return cepCalls.resizes[cepCalls.resizes.length - 1] ?? [0, 0];
-};
-const fullList = (await lastResize())[1];
-check('a full list asks for a taller window', fullList > 300, `${fullList}px`);
+// state its content height. It is planned from the settings rather than measured from the rows, so
+// it can be asked for before the first paint and never moves while you type.
+const resizes = () => cepCalls.resizes;
+const opening = resizes()[0] ?? [0, 0];
+check('the size is asked for once, on the way up', resizes().length === 1, JSON.stringify(resizes()));
+check('it is a compact box, not the whole window', opening[1] < 320 && opening[1] >= 120, `${opening[1]}px`);
+
 await type('gaussian blur');
-const shortList = (await lastResize())[1];
-check('a short list shrinks the window to fit it', shortList < fullList, `${fullList}px -> ${shortList}px`);
-check('the window never collapses below a usable height', shortList >= 120, `${shortList}px`);
+await settle(40);
+check('a short result list does not move the window', resizes().length === 1, JSON.stringify(resizes()));
+await type('blur');
+await settle(40);
+check('nor does a long one: the list scrolls instead', resizes().length === 1, JSON.stringify(resizes()));
 await type('');
 
 console.log('\nFuzzy search and keyboard navigation');

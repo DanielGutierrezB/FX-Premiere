@@ -44,9 +44,12 @@ Ctrl + Space  →  gsblr  →  Enter  →  Gaussian Blur en los 8 clips seleccio
   decir: los atajos y a cuántos clips va Enter mientras no escribes, o cómo salió lo último que
   aplicaste. Mientras escribes, desaparece. Cada atajo de esa línea es además un botón: hace lo
   mismo que su tecla.
-- **La ventana se ajusta a lo que muestra**: la paleta le pide a Premiere la altura de su propia
-  lista, así que no queda una caja medio vacía debajo de la barra de título. El ancho lo eliges en
-  los ajustes (380, 440 o 520) porque es lo único que no se deduce del contenido.
+- **La ventana abre del tamaño en el que se queda**: la altura se calcula con los números de
+  `panel.css` (campo, pie, fila, título de grupo) en vez de medir el DOM, así que se pide antes del
+  primer pintado y no hay ese salto de abrir grande y encogerse. Escribir tampoco la mueve: la lista
+  hace scroll dentro de la misma caja, porque una ventana que cambia de tamaño con cada tecla es
+  imposible de apuntar. El ancho lo eliges en los ajustes (380, 440 o 520), y cuántos recientes y
+  favoritos quieres ver decide la altura.
 - **Deshacer** desde la paleta con `Cmd/Ctrl + Z`.
 - **Favoritos, recientes y ranking por uso**: lo que más usas sube solo.
 - **Atajo configurable** desde los ajustes del panel (por defecto `Ctrl + Space`).
@@ -222,9 +225,12 @@ Dos herramientas que no son pruebas y por eso no están en `npm test`:
   tecla. En jsdom (más lento que Premiere) el primer pintado va sobre 9 ms, invocarla sobre
   8 ms y una consulta amplia 16 ms dibujando como máximo 50 filas, sin importar el tamaño del
   índice.
-- `node scripts/snapshot-ui.mjs` escribe un HTML con el panel real en sus tres estados (en
-  reposo, escribiendo y el inspector de efectos) y la hoja de estilos de verdad, para revisar el
-  diseño en un navegador sin instalar nada en Premiere.
+- `node scripts/snapshot-ui.mjs` escribe un HTML con el panel real en sus estados principales (en
+  reposo, escribiendo, el menú de clic derecho, el inspector de efectos y los ajustes) y la hoja de
+  estilos de verdad, para revisar el diseño en un navegador sin instalar nada en Premiere.
+- `node scripts/check-layout.mjs` comprueba en Chrome de verdad que el tamaño que la paleta le pide
+  a Premiere es el que la hoja de estilos termina ocupando, con varios tamaños de texto. Hace falta
+  cuando toques las alturas de `panel.css` o las constantes del plan en `panel/src/app.ts`.
 
 ## Límites conocidos
 
@@ -254,7 +260,9 @@ Dos herramientas que no son pruebas y por eso no están en `npm test`:
   ventana mida lo que mide el contenido, que es lo que hace la paleta.
 - La paleta tampoco puede elegir *dónde* aparece. CEP expone el título y el tamaño de la ventana, y
   nada más: no hay forma de posicionarla, así que abrirla junto al mouse tendría que hacerla mover
-  el helper nativo desde fuera, y en macOS eso pide permiso de Accesibilidad al sistema.
+  el helper nativo desde fuera, y en macOS eso pide permiso de Accesibilidad al sistema. Premiere
+  tampoco guarda la posición en disco (el id de la extensión no aparece ni en el perfil, ni en los
+  layouts, ni en el plist), así que la ventana sale donde el host decida.
 - Adobe declaró CEP superado por UXP a partir de Premiere 25.6 y planea retirarlo. FX Premiere es
   CEP, así que funciona hoy en todas las versiones soportadas, pero el puerto a UXP es la tarea
   pendiente grande. A cambio traería transacciones reales: un solo paso de deshacer por preset.

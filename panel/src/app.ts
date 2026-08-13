@@ -59,7 +59,19 @@ const MAX_HEIGHT = 520;
 /** Sheets are given a settled box instead of one that resizes under the cursor. */
 const SHEET_HEIGHT = 460;
 
-const padding = (value: string): number => Number.parseFloat(value) || 0;
+/**
+ * The furniture the window is built from, in CSS pixels at font scale 1. These are the numbers in
+ * panel.css: the window is planned from them rather than measured, so keep the two in step.
+ */
+const FIELD_HEIGHT = 44;
+const FOOT_HEIGHT = 32;
+const ROW_HEIGHT = 28;
+const CAPTION_HEIGHT = 26;
+const LIST_PADDING = 12;
+const HAIRLINE = 1;
+
+/** Room the search view always keeps for results, however short the resting list is. */
+const MIN_ROWS = 7;
 
 /** A labelled block of the resting list. Indices stay global so navigation ignores the grouping. */
 interface QuickGroup {
@@ -123,12 +135,14 @@ export class PaletteApp {
 
   private rowMenu: HTMLElement | null = null;
 
+  /** The height the search view keeps for as long as it is up, decided on each summon. */
+  private searchHeight = MIN_HEIGHT;
+
   /** Last size asked of the host, so an unchanged layout costs nothing. */
   private height = 0;
 
   private width = 0;
 
-  private fitPending = false;
 
   private readonly transitionDialog = new TransitionDialog(
     {
@@ -158,7 +172,7 @@ export class PaletteApp {
     hostVersion: () => this.hostVersion,
     indexedItems: () => this.catalog?.items.length ?? 0,
     applyTheme: () => this.applyTheme(),
-    refit: () => this.scheduleFit(),
+    refit: () => this.planSize(),
     toast: (message, kind) => this.toast(message, kind),
     reindex: () => this.ensureCatalog(true),
     refreshPresets: () => this.refreshPresetsOnly(),
@@ -177,14 +191,18 @@ export class PaletteApp {
   async boot(): Promise<void> {
     this.settings = loadSettings();
     this.applyTheme();
-    // Announced before anything else, so the very next press of the shortcut knows to put it away.
-    markPanelOpen(true);
+    // Before the first paint: the host opened the window at whatever size it remembered, and the
+    // palette should look like it opened at the right one rather than settle into it.
+    this.planSize();
     this.buildChrome();
     registerKeyInterest();
     this.bindEvents();
     this.captured = capturedItems(listCaptured());
     this.updateResults();
     this.focusInput();
+    // Off the opening path: writing a file is not something to do before the first keystroke can
+    // land. The shortcut only needs the marker by the time it can be pressed again.
+    window.setTimeout(() => markPanelOpen(true), 0);
     await this.warmUp();
   }
 
@@ -297,6 +315,8 @@ export class PaletteApp {
     this.setStatus('');
     this.settings = loadSettings();
     this.applyTheme();
+    // What was applied since the last summon changes the resting list, and so its size.
+    this.planSize();
     this.updateResults();
     this.renderHints();
     void this.refreshSequence();
@@ -337,38 +357,30 @@ export class PaletteApp {
   private syncFoot(): void {
     const empty = this.statusNode.textContent === '' && this.hintNode.childElementCount === 0;
     this.footNode.className = `foot${empty ? ' foot--hidden' : ''}`;
-    this.scheduleFit();
-  }
-
-  /** Measured after the browser has laid the new rows out, never in the middle of building them. */
-  private scheduleFit(): void {
-    if (this.fitPending) {
-      return;
-    }
-    this.fitPending = true;
-    const run = (): void => {
-      this.fitPending = false;
-      this.fitWindow();
-    };
-    if (typeof window.requestAnimationFrame === 'function') {
-      window.requestAnimationFrame(run);
-    } else {
-      run();
-    }
   }
 
   /**
-   * The title bar belongs to Premiere and cannot be taken away, but the box under it does not have
-   * to be mostly empty: a modeless extension is allowed to state how big its content is, so the
-   * window ends up the size of whatever is on screen.
+   * Decides how big the window should be, from the settings alone. Nothing is measured, so the size
+   * can be asked for before the first paint instead of after it: a window that opens at one size and
+   * then shrinks is worse than one that opens right, and the palette is meant to feel instant.
+   *
+   * The search view keeps that one size for as long as it is up. Typing scrolls the list, it does
+   * not move the window: a box that resizes under every keystroke is unusable to aim at.
    */
-  private fitWindow(): void {
-    const content = this.contentHeight();
-    if (content === 0) {
-      return;
-    }
-    const chrome = this.searchNode.offsetHeight + this.footNode.offsetHeight;
-    const height = Math.max(MIN_HEIGHT, Math.min(MAX_HEIGHT, chrome + content + 2));
+  private planSize(): void {
+    const scale = this.settings.fontScale;
+    const px = (value: number): number => value * scale;
+    const groups = this.quickGroups();
+    const rows = groups.reduce((total, group) => total + group.items.length, 0);
+    const list = Math.max(px(ROW_HEIGHT) * MIN_ROWS, rows * px(ROW_HEIGHT) + groups.length * px(CAPTION_HEIGHT));
+    const chrome = px(FIELD_HEIGHT) + HAIRLINE + px(FOOT_HEIGHT);
+    this.searchHeight = Math.round(Math.max(MIN_HEIGHT, Math.min(MAX_HEIGHT, chrome + list + LIST_PADDING)));
+    this.applySize();
+  }
+
+  /** Asks the host for the planned size, and only when it is not the size already in force. */
+  private applySize(): void {
+    const height = this.view === 'search' ? this.searchHeight : SHEET_HEIGHT;
     const width = this.settings.width;
     if (height === this.height && width === this.width) {
       return;
@@ -376,32 +388,6 @@ export class PaletteApp {
     this.height = height;
     this.width = width;
     resizeSelf(width, height);
-  }
-
-  /**
-   * Measured row by row rather than by asking the list how tall it is. A scroller sized to fill its
-   * parent reports the space it was given, not the rows in it, so asking it would only ever confirm
-   * the height the window already has.
-   */
-  private contentHeight(): number {
-    // A sheet grows and shrinks as you toggle things inside it; a settled box beats a jumping one.
-    if (this.view !== 'search') {
-      return SHEET_HEIGHT;
-    }
-    let total = 0;
-    for (const child of [...this.body.children]) {
-      const node = child as HTMLElement;
-      if (!node.classList.contains('results')) {
-        total += node.offsetHeight;
-        continue;
-      }
-      const style = window.getComputedStyle(node);
-      total += padding(style.paddingTop) + padding(style.paddingBottom);
-      for (const row of [...node.children]) {
-        total += (row as HTMLElement).offsetHeight;
-      }
-    }
-    return total;
   }
 
   private toast(message: string, kind: 'info' | 'error' = 'info'): void {
@@ -551,15 +537,11 @@ export class PaletteApp {
     if (this.active >= this.results.length) {
       this.active = Math.max(0, this.results.length - 1);
     }
-    this.renderResults();
-  }
-
-  private renderResults(): void {
     this.paintResults();
-    this.scheduleFit();
   }
 
   private paintResults(): void {
+    this.applySize();
     clear(this.body);
     this.body.className = 'results-host';
     if (this.input.value.trim() === '') {
@@ -652,7 +634,7 @@ export class PaletteApp {
       return;
     }
     this.active = Math.min(this.results.length - 1, Math.max(0, this.active + delta));
-    this.renderResults();
+    this.paintResults();
   }
 
   private onKeyDown(event: KeyboardEvent): void {
@@ -769,7 +751,7 @@ export class PaletteApp {
       return;
     }
     this.active = index;
-    this.renderResults();
+    this.paintResults();
     const starred = this.settings.favorites.includes(entry.item.id);
     const menu = el('div', { class: 'menu' }, [
       el('div', { class: 'menu__title', text: entry.item.name }),
@@ -968,6 +950,7 @@ export class PaletteApp {
 
   private openTransition(item: CatalogItem): void {
     this.view = 'transition';
+    this.applySize();
     this.transitionDialog.open(item, this.settings.lastTransition);
     this.transitionDialog.render(this.body);
     this.renderHints();
@@ -994,6 +977,7 @@ export class PaletteApp {
 
   private openSettings(): void {
     this.view = 'settings';
+    this.applySize();
     this.settingsSheet.render(this.body);
     this.settingsSheet.opened();
     this.renderHints();
@@ -1008,6 +992,7 @@ export class PaletteApp {
       return;
     }
     this.view = 'inspect';
+    this.applySize();
     this.inspectView.open(response.data);
     this.inspectView.render(this.body);
     this.renderHints();
