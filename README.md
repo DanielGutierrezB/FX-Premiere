@@ -49,7 +49,9 @@ Ctrl + Space  →  gsblr  →  Enter  →  Gaussian Blur en los 8 clips seleccio
   primer pintado y no hay ese salto de abrir grande y encogerse. Escribir tampoco la mueve: la lista
   hace scroll dentro de la misma caja, porque una ventana que cambia de tamaño con cada tecla es
   imposible de apuntar. El ancho lo eliges en los ajustes (380, 440 o 520), y cuántos recientes y
-  favoritos quieres ver decide la altura.
+  favoritos quieres ver decide la altura. **Y si prefieres otro tamaño, arrastra la ventana**: eso
+  manda sobre todo lo anterior y se recuerda; en los ajustes aparece un botón para devolverle la
+  altura a la lista.
 - **Deshacer** desde la paleta con `Cmd/Ctrl + Z`.
 - **Favoritos, recientes y ranking por uso**: lo que más usas sube solo.
 - **Atajo configurable** desde los ajustes del panel (por defecto `Ctrl + Space`).

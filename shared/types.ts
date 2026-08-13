@@ -182,6 +182,7 @@ export interface Settings {
   /** How many rows the resting palette offers, per group. Zero hides the group. */
   recentCount: number;
   favoriteCount: number;
-  /** Content width asked of the host. The height always follows what is on screen. */
+  /** Content size asked of the host. A height of zero means it follows the resting list. */
   width: number;
+  height: number;
 }

@@ -113,6 +113,8 @@ check(
 check('the whole index is searched even though it is not drawn', rows().length + hiddenMatches() > 120, `${rows().length} + ${hiddenMatches()}`);
 check('the footer stays out of the way while typing', foot() === '', foot());
 
+const savedSettings = () => JSON.parse(readFileSync(join(settingsDir, 'settings.json'), 'utf8'));
+
 // The title bar is Premiere's, but the box under it is ours to size: a modeless extension may
 // state its content height. It is planned from the settings rather than measured from the rows, so
 // it can be asked for before the first paint and never moves while you type.
@@ -127,7 +129,25 @@ check('a short result list does not move the window', resizes().length === 1, JS
 await type('blur');
 await settle(40);
 check('nor does a long one: the list scrolls instead', resizes().length === 1, JSON.stringify(resizes()));
+check('and the palette does not take its own resize for somebody dragging the window', !(savedSettings().height > 0), String(savedSettings().height));
+
+// The window has a grip on its corner. A palette that snapped back to its own idea of the right
+// size would make that grip a lie, so a size set by hand becomes the size.
+cep.dragWindow(620, 500);
+await settle(500);
+check('a window dragged by hand is remembered', savedSettings().height === 500 && savedSettings().width === 620, JSON.stringify([savedSettings().width, savedSettings().height]));
+const afterDrag = resizes().length;
+await type('gaussian');
 await type('');
+await settle(40);
+check('and the palette stops imposing its own size', resizes().length === afterDrag, JSON.stringify(resizes().slice(afterDrag)));
+cep.emit('com.fxpremiere.event.trigger', { settings: false });
+await settle(20);
+check(
+  'and the next summon leaves the window where you left it',
+  window.innerWidth === 620 && window.innerHeight === 500,
+  `${window.innerWidth}x${window.innerHeight}`,
+);
 
 console.log('\nFuzzy search and keyboard navigation');
 await type('gblr');
@@ -166,7 +186,6 @@ console.log('\nFavourites and usage are remembered');
 await type('ultra');
 await press('d', { metaKey: true });
 check('Cmd+D stars the active row', window.document.querySelector('.row--active .row__star')?.textContent === '\u2605');
-const savedSettings = () => JSON.parse(readFileSync(join(settingsDir, 'settings.json'), 'utf8'));
 check(
   'the favourite is written to disk',
   savedSettings().favorites.some((id) => id.includes('Ultra Key')),
@@ -409,6 +428,12 @@ check(
   (cepCalls.resizes.at(-1) ?? [])[0] === 380,
   JSON.stringify(cepCalls.resizes.at(-1)),
 );
+
+const fitButton = [...window.document.querySelectorAll('.sheet .button')].find((node) => node.textContent === 'Fit the list');
+check('a window sized by hand offers a way back to a height that follows the list', Boolean(fitButton), '');
+fitButton.click();
+await settle(20);
+check('taking it puts the height back under the palette', savedSettings().height === 0, String(savedSettings().height));
 
 const recentsButton = seg('Recents to show').find((node) => node.textContent === '3');
 recentsButton.click();

@@ -148,7 +148,12 @@ export const resizeSelf = (width: number, height: number): void => {
   }
   if (!loggedResize) {
     loggedResize = true;
-    appendLog('panel', `asked the window for ${Math.round(width)}x${Math.round(height)}`);
+    // Both sizes, because the gap between them is the flicker when the window opens: closing it
+    // means matching the manifest to what the palette actually asks for.
+    appendLog(
+      'panel',
+      `window arrived ${window.innerWidth}x${window.innerHeight}, asked for ${Math.round(width)}x${Math.round(height)}`,
+    );
   }
   try {
     api.resizeContent(Math.round(width), Math.round(height));

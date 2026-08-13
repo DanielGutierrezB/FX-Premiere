@@ -18,6 +18,7 @@ const nodeRequire = createRequire(import.meta.url);
  */
 export const createCepWindow = ({ html, home, extensionRoot = home, evalScript }) => {
   const calls = { openExtension: 0, closeExtension: 0, keyInterest: 0, evalScripts: [], resizes: [] };
+
   const listeners = new Map();
 
   const dom = new JSDOM(readFileSync(html, 'utf8'), {
@@ -26,6 +27,19 @@ export const createCepWindow = ({ html, home, extensionRoot = home, evalScript }
     runScripts: 'outside-only',
   });
   const { window } = dom;
+
+  // jsdom starts at 1024x768 and never changes; the panel needs a window whose size can move.
+  let size = { width: 1024, height: 768 };
+  for (const [name, key] of [
+    ['innerWidth', 'width'],
+    ['innerHeight', 'height'],
+  ]) {
+    Object.defineProperty(window, name, { configurable: true, get: () => size[key] });
+  }
+  const setSize = (width, height) => {
+    size = { width, height };
+    window.dispatchEvent(new window.Event('resize'));
+  };
 
   // jsdom has no layout, so anything that measures itself reads zero. The panel measures the
   // furniture it drew, row by row, so these are the heights of that furniture.
@@ -101,6 +115,8 @@ export const createCepWindow = ({ html, home, extensionRoot = home, evalScript }
     },
     resizeContent(width, height) {
       calls.resizes.push([width, height]);
+      // Premiere really does resize the window, and the page hears about it like any other resize.
+      setSize(width, height);
     },
   };
 
@@ -108,6 +124,8 @@ export const createCepWindow = ({ html, home, extensionRoot = home, evalScript }
     dom,
     window,
     calls,
+    /** Somebody dragging the window by its corner, which the panel must not mistake for its own. */
+    dragWindow: (width, height) => setSize(width, height),
     run: (bundle) => window.eval(readFileSync(bundle, 'utf8')),
     emit: (type, data) =>
       window.__adobe_cep__.dispatchEvent({

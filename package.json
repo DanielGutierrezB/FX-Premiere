@@ -1,6 +1,6 @@
 {
   "name": "fx-premiere",
-  "version": "1.4.1",
+  "version": "1.4.2",
   "private": true,
   "description": "FX Premiere - keyboard-first effects, transitions and preset palette for Adobe Premiere Pro",
   "type": "module",

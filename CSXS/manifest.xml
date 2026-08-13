@@ -43,9 +43,11 @@
           <!-- The panel resizes itself to whatever it is showing, so the minimum has to be small
                enough for a two row list. The host clamps anything below it. -->
           <Geometry>
+            <!-- The size the palette asks for at rest with the default six recents, so the window
+                 opens at it instead of being resized a moment later. -->
             <Size>
               <Width>440</Width>
-              <Height>300</Height>
+              <Height>285</Height>
             </Size>
             <MinSize>
               <Width>380</Width>

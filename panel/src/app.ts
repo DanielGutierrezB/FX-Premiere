@@ -73,6 +73,10 @@ const HAIRLINE = 1;
 /** Room the search view always keeps for results, however short the resting list is. */
 const MIN_ROWS = 7;
 
+/** A host rounding the window by a pixel or two is not somebody dragging it. */
+const SIZE_SLACK = 3;
+const SIZE_SAVE_DELAY_MS = 400;
+
 /** A labelled block of the resting list. Indices stay global so navigation ignores the grouping. */
 interface QuickGroup {
   label: string;
@@ -138,6 +142,8 @@ export class PaletteApp {
   /** The height the search view keeps for as long as it is up, decided on each summon. */
   private searchHeight = MIN_HEIGHT;
 
+  private sizeSave = 0;
+
   /** Last size asked of the host, so an unchanged layout costs nothing. */
   private height = 0;
 
@@ -191,8 +197,11 @@ export class PaletteApp {
   async boot(): Promise<void> {
     this.settings = loadSettings();
     this.applyTheme();
-    // Before the first paint: the host opened the window at whatever size it remembered, and the
-    // palette should look like it opened at the right one rather than settle into it.
+    // The size the host opened us at. Starting from it means a window that already arrived the
+    // right size is left alone, instead of being asked for the size it is and flickering into it.
+    this.width = window.innerWidth;
+    this.height = window.innerHeight;
+    // Before the first paint, so the palette looks like it opened right rather than settling in.
     this.planSize();
     this.buildChrome();
     registerKeyInterest();
@@ -275,6 +284,7 @@ export class PaletteApp {
     });
     window.addEventListener('keydown', (event) => this.onKeyDown(event), true);
     window.addEventListener('focus', () => this.focusInput());
+    window.addEventListener('resize', () => this.noteHostResize());
     // Closed by the window's own button rather than by us: the marker has to go down anyway, or
     // the next shortcut would think the palette is still up and try to dismiss it.
     window.addEventListener('unload', () => markPanelOpen(false));
@@ -360,9 +370,9 @@ export class PaletteApp {
   }
 
   /**
-   * Decides how big the window should be, from the settings alone. Nothing is measured, so the size
-   * can be asked for before the first paint instead of after it: a window that opens at one size and
-   * then shrinks is worse than one that opens right, and the palette is meant to feel instant.
+   * Decides how big the window should be before anything is drawn. A height you set by dragging the
+   * window wins outright; otherwise it is worked out from the numbers in panel.css, so the size can
+   * be asked for before the first paint instead of the window settling into it afterwards.
    *
    * The search view keeps that one size for as long as it is up. Typing scrolls the list, it does
    * not move the window: a box that resizes under every keystroke is unusable to aim at.
@@ -378,9 +388,10 @@ export class PaletteApp {
     this.applySize();
   }
 
-  /** Asks the host for the planned size, and only when it is not the size already in force. */
+  /** Asks the host for the size in force, and only when it is not the size it already has. */
   private applySize(): void {
-    const height = this.view === 'search' ? this.searchHeight : SHEET_HEIGHT;
+    const chosen = this.settings.height;
+    const height = chosen > 0 ? chosen : this.view === 'search' ? this.searchHeight : SHEET_HEIGHT;
     const width = this.settings.width;
     if (height === this.height && width === this.width) {
       return;
@@ -388,6 +399,31 @@ export class PaletteApp {
     this.height = height;
     this.width = width;
     resizeSelf(width, height);
+  }
+
+  /**
+   * The window has a grip on its corner, and a palette that snapped back to its own idea of the
+   * right size every time it repainted would make that grip a lie. Anything the host reports that
+   * is not the size we asked for was done by hand, and from then on it is the size.
+   */
+  private noteHostResize(): void {
+    const width = window.innerWidth;
+    const height = window.innerHeight;
+    if (width === 0 || height === 0) {
+      return;
+    }
+    if (Math.abs(width - this.width) <= SIZE_SLACK && Math.abs(height - this.height) <= SIZE_SLACK) {
+      return;
+    }
+    this.width = width;
+    this.height = height;
+    window.clearTimeout(this.sizeSave);
+    // Saved once the dragging stops, not on every pixel of it.
+    this.sizeSave = window.setTimeout(() => {
+      this.settings.width = width;
+      this.settings.height = height;
+      saveSettings(this.settings);
+    }, SIZE_SAVE_DELAY_MS);
   }
 
   private toast(message: string, kind: 'info' | 'error' = 'info'): void {

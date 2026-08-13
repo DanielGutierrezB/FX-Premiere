@@ -36,6 +36,7 @@ export const defaultSettings = (): Settings => ({
   recentCount: 6,
   favoriteCount: 3,
   width: 440,
+  height: 0,
 });
 
 /** Choices offered in the settings sheet. Anything else in the file is pulled back into range. */
@@ -76,7 +77,9 @@ const mergeSettings = (raw: Partial<Settings> | null): Settings => {
     accent: raw.accent === LEGACY_ACCENT || !raw.accent ? base.accent : raw.accent,
     recentCount: inRange(raw.recentCount, base.recentCount, 0, 12),
     favoriteCount: inRange(raw.favoriteCount, base.favoriteCount, 0, 12),
-    width: inRange(raw.width, base.width, 320, 900),
+    width: inRange(raw.width, base.width, 320, 1400),
+    // Zero is the state of never having dragged the window, so it is not pulled up into range.
+    height: raw.height === 0 ? 0 : inRange(raw.height, base.height, 120, 1400),
     version: SETTINGS_VERSION,
   };
 };
