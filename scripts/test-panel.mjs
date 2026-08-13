@@ -133,11 +133,26 @@ check('a short result list does not move the window', resizes().length === 1, JS
 await type('blur');
 await settle(40);
 check('nor does a long one: the list scrolls instead', resizes().length === 1, JSON.stringify(resizes()));
-check('and the palette does not take its own resize for somebody dragging the window', !(savedSettings().height > 0), String(savedSettings().height));
+check(
+  'and the palette does not take its own resize for somebody dragging the window',
+  (savedSettings().height ?? null) === null,
+  String(savedSettings().height),
+);
 
 // The window has a grip on its corner. A palette that snapped back to its own idea of the right
 // size would make that grip a lie, so a size set by hand becomes the size.
 cep.dragWindow(620, 500);
+// Typing before the new size has reached the disk must not send the window back to its old one:
+// the size is in force the moment it is dragged, not once it has been written down.
+const afterGrip = resizes().length;
+await type('gauss');
+await settle(20);
+check(
+  'a keystroke mid-drag does not snap the window back',
+  resizes().length === afterGrip && window.innerWidth === 620 && window.innerHeight === 500,
+  `${window.innerWidth}x${window.innerHeight} after ${JSON.stringify(resizes().slice(afterGrip))}`,
+);
+await type('');
 await settle(500);
 check('a window dragged by hand is remembered', savedSettings().height === 500 && savedSettings().width === 620, JSON.stringify([savedSettings().width, savedSettings().height]));
 const afterDrag = resizes().length;
@@ -413,9 +428,11 @@ const chosen = (selector) => [...window.document.querySelectorAll(selector)].fil
 const marked = (label) => seg(label).filter((node) => node.className.includes('--on')).length;
 check(
   'every one of these settings shows which value is in force',
-  marked('Recents to show') === 1 && marked('Favourites to show') === 1 && marked('Window width') === 1,
-  `${marked('Recents to show')} / ${marked('Favourites to show')} / ${marked('Window width')}`,
+  marked('Recents to show') === 1 && marked('Favourites to show') === 1,
+  `${marked('Recents to show')} / ${marked('Favourites to show')}`,
 );
+// The window was dragged to a width of its own earlier, which is none of the three on offer.
+check('a width set by hand lights none of the presets', marked('Window width') === 0, String(marked('Window width')));
 check('the accent is offered as swatches, since no colour picker opens in CEP', window.document.querySelectorAll('.swatch').length > 1);
 check('and the current accent is one of them', chosen('.swatch') === 1, String(chosen('.swatch')));
 const otherSwatch = [...window.document.querySelectorAll('.swatch')].find((node) => !node.className.includes('swatch--on'));
@@ -437,7 +454,7 @@ const fitButton = [...window.document.querySelectorAll('.sheet .button')].find((
 check('a window sized by hand offers a way back to a height that follows the list', Boolean(fitButton), '');
 fitButton.click();
 await settle(20);
-check('taking it puts the height back under the palette', savedSettings().height === 0, String(savedSettings().height));
+check('taking it puts the height back under the palette', savedSettings().height === null, String(savedSettings().height));
 
 const recentsButton = seg('Recents to show').find((node) => node.textContent === '3');
 recentsButton.click();
@@ -680,4 +697,33 @@ again.close();
 
 releaseServer.close();
 rmSync(stage, { recursive: true, force: true });
+// Premiere sometimes comes up without the undocumented DOM the effect lists come from. That is a
+// bad open, not the truth about the machine, and it must not be the answer every later open reads.
+console.log('\nAn index that came back empty is not kept');
+const brokenStage = mkdtempSync(join(tmpdir(), 'fxp-noqe-'));
+const brokenStorage = {};
+const noQE = createHost({ hostScript, documentsRoot: join(brokenStage, 'Documents'), withoutQE: true });
+const search = async (panel, text) => {
+  const input = panel.window.document.querySelector('.search__input');
+  input.value = text;
+  input.dispatchEvent(new panel.window.Event('input', { bubbles: true }));
+  await settle(10);
+  return [...panel.window.document.querySelectorAll('.row')].length;
+};
+
+const badOpen = createCepWindow({ html: panelHtml, home: brokenStage, evalScript: noQE.evalInHost, storage: brokenStorage });
+badOpen.run(panelBundle);
+await settle(60);
+check('a host that cannot list its effects finds nothing', (await search(badOpen, 'gaussian')) === 0, '');
+check('and that empty index is not written to the cache', Object.keys(brokenStorage).length === 0, JSON.stringify(Object.keys(brokenStorage)));
+badOpen.close();
+
+const healthy = createHost({ hostScript, documentsRoot: join(brokenStage, 'Documents') });
+const nextOpen = createCepWindow({ html: panelHtml, home: brokenStage, evalScript: healthy.evalInHost, storage: brokenStorage });
+nextOpen.run(panelBundle);
+await settle(60);
+const foundLater = await search(nextOpen, 'gaussian');
+check('so the next open finds the effects instead of an empty palette', foundLater > 0, `${foundLater} rows`);
+nextOpen.close();
+
 finish('panel');

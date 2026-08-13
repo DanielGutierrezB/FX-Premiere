@@ -58,29 +58,12 @@ export const createCepWindow = ({ html, home, extensionRoot = home, evalScript, 
     window.dispatchEvent(new window.Event('resize'));
   };
 
-  // jsdom has no layout, so anything that measures itself reads zero. The panel measures the
-  // furniture it drew, row by row, so these are the heights of that furniture.
-  const FURNITURE = [
-    ['row', 28],
-    ['cap', 26],
-    ['more', 24],
-    ['empty', 80],
-  ];
+  // jsdom has no layout, so anything that measures itself reads zero. The panel plans its window
+  // instead of measuring it; the one height still read is a row's, to keep the selection in view.
   Object.defineProperty(window.HTMLElement.prototype, 'offsetHeight', {
     configurable: true,
     get() {
-      for (const [name, height] of FURNITURE) {
-        if (this.classList.contains(name)) {
-          return height;
-        }
-      }
-      if (this.tagName === 'HEADER') {
-        return 44;
-      }
-      if (this.tagName === 'FOOTER') {
-        return this.classList.contains('foot--hidden') ? 0 : 34;
-      }
-      return 0;
+      return this.classList.contains('row') ? 28 : 0;
     },
   });
 

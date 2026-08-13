@@ -113,17 +113,17 @@ FXP.groupFromMatchName = function (matchName, mediaType) {
 FXP.buildCatalog = function (presetSources) {
     var items = [];
     var warnings = [];
-    if (!FXP.enableQE()) {
+    var hasQE = FXP.enableQE();
+    if (!hasQE) {
         warnings[warnings.length] = 'QE DOM unavailable: effects and transitions cannot be listed.';
-        return { items: items, hostVersion: FXP.hostVersion(), warnings: warnings };
     }
 
-    var lists = [
+    var lists = hasQE ? [
         { kind: 'videoEffect', mediaType: 'video', getter: 'getVideoEffectList', resolve: true },
         { kind: 'audioEffect', mediaType: 'audio', getter: 'getAudioEffectList', resolve: true },
         { kind: 'videoTransition', mediaType: 'video', getter: 'getVideoTransitionList', resolve: false },
         { kind: 'audioTransition', mediaType: 'audio', getter: 'getAudioTransitionList', resolve: false }
-    ];
+    ] : [];
 
     for (var i = 0; i < lists.length; i++) {
         var spec = lists[i];
@@ -137,17 +137,17 @@ FXP.buildCatalog = function (presetSources) {
         FXP.catalogSection(items, spec.kind, names, spec.mediaType, spec.resolve);
     }
 
-    var files = FXP.expandPresetSources(presetSources);
-    var presets = FXP.presetsFromFiles(files, warnings);
-    for (var p = 0; p < presets.length; p++) {
-        items[items.length] = presets[p];
+    var presets = FXP.presetIndex(presetSources, warnings);
+    for (var p = 0; p < presets.items.length; p++) {
+        items[items.length] = presets.items[p];
     }
 
+    // One way out, so the stamp is never missing: a catalog without it would be cached and then
+    // refreshed against nothing.
     return {
         items: items,
         hostVersion: FXP.hostVersion(),
-        // Handed over with the index so the next open can tell whether the presets moved.
-        presetStamp: FXP.presetStamp(files),
+        presetStamp: presets.stamp,
         warnings: warnings
     };
 };

@@ -48,11 +48,12 @@ const nested = presets.find((item) => item.name === 'Soft Blur');
 check('nested presets keep their folder path', nested?.group === 'Preset \u00b7 My Folder', nested?.group);
 
 console.log('\nPresets are stamped rather than re-read');
-const stamped = call({ op: 'presets', presetSources: [fixtureFile], since: '' });
-check('a first ask reads the files', stamped.data.unchanged === false && stamped.data.items.length === 2, JSON.stringify(stamped.data?.items?.length));
-const again = call({ op: 'presets', presetSources: [fixtureFile], since: stamped.data.stamp });
-check('asking again with the same stamp reads nothing', again.data.unchanged === true && again.data.items.length === 0, JSON.stringify(again.data));
-check('the stamp is short enough to carry on every open', stamped.data.stamp.length < 40, stamped.data.stamp);
+const stamped = call({ op: 'presets', presetSources: [fixtureFile], knownStamp: '' });
+check('a first ask reads the files', stamped.data.items?.length === 2, JSON.stringify(stamped.data?.items?.length));
+const again = call({ op: 'presets', presetSources: [fixtureFile], knownStamp: stamped.data.presetStamp });
+check('asking again with the same stamp reads nothing back', again.data.items === null, JSON.stringify(again.data));
+check('and answers with the same stamp it was given', again.data.presetStamp === stamped.data.presetStamp);
+check('the stamp is short enough to carry on every open', stamped.data.presetStamp.length < 40, stamped.data.presetStamp);
 
 console.log('\nWindows compares paths without caring about case');
 FileStub.fs = 'Windows';

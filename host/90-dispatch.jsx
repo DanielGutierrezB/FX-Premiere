@@ -13,15 +13,19 @@ FXP.route = function (request) {
         case 'catalog':
             return FXP.buildCatalog(request.presetSources || []);
         case 'presets': {
-            var files = FXP.expandPresetSources(request.presetSources || []);
-            var stamp = FXP.presetStamp(files);
+            var survey = FXP.presetSurvey(request.presetSources || []);
             // Nothing has been added, removed or re-saved, so the panel's copy is still the truth.
-            if (request.since && request.since === stamp) {
-                return { unchanged: true, stamp: stamp, items: [], warnings: [] };
+            // The stamp says that by itself; there is no second flag that could disagree with it.
+            if (request.knownStamp && request.knownStamp === survey.stamp) {
+                return { presetStamp: survey.stamp, items: null, warnings: [] };
             }
             // The warnings array has to reach the panel: a corrupt .prfpset is silent otherwise.
             var warnings = [];
-            return { unchanged: false, stamp: stamp, items: FXP.presetsFromFiles(files, warnings), warnings: warnings };
+            return {
+                presetStamp: survey.stamp,
+                items: FXP.presetsFromFiles(survey.files, warnings),
+                warnings: warnings
+            };
         }
         case 'inspect':
             return FXP.inspectSelection();

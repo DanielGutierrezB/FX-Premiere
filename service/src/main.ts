@@ -60,34 +60,24 @@ const stopHelper = (): void => {
   }
 };
 
-/** How long the panel is given to take its own marker down after being asked to close. */
-const DISMISS_GRACE_MS = 300;
-
 /**
- * The shortcut toggles. A closed panel cannot hear anything, so the service opens it; an open one
- * is told to go away and does it itself. If nothing takes the marker down in time, the marker was
- * left behind by a panel that died, so it is cleared and the palette opens as usual.
+ * The shortcut toggles. A closed palette cannot hear anything, so the service opens it; an open one
+ * is told to go away and does it itself. Whether this press opens or closes is decided here and
+ * carried in the event, because the panel cannot tell the press that opened it from a second press
+ * arriving while it was still loading.
+ *
+ * The marker comes down here rather than waiting for the panel to take it down, so there is no
+ * timer betting on how quickly the panel answers. A palette busy applying a preset closes late; a
+ * palette that died without cleaning up costs one press instead of wedging the shortcut for good.
  */
 const summonOrDismiss = (): void => {
-  const wasOpen = isPanelOpen();
-  if (!wasOpen) {
-    openPanel();
-  }
-  // Whether this press opens or closes is decided here and carried in the event: the panel cannot
-  // tell the press that opened it from a second press arriving while it was still loading.
-  trigger({ settings: false, dismiss: wasOpen });
-  if (!wasOpen) {
+  if (isPanelOpen()) {
+    markPanelOpen(false);
+    trigger({ settings: false, dismiss: true });
     return;
   }
-  setTimeout(() => {
-    if (!isPanelOpen()) {
-      return;
-    }
-    log('a panel marker was left behind; opening instead of closing');
-    markPanelOpen(false);
-    openPanel();
-    trigger({ settings: false, dismiss: false });
-  }, DISMISS_GRACE_MS);
+  openPanel();
+  trigger({ settings: false, dismiss: false });
 };
 
 const trigger = (payload: { settings: boolean; dismiss: boolean }): void => {

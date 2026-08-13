@@ -176,13 +176,16 @@ const dismissed = await waitFor(() => triggers.at(-1) === JSON.stringify({ setti
 });
 check('pressing it again asks the open palette to close', dismissed, String(triggers.at(-1)));
 check('and does not ask the host to open a second one', cep.calls.openExtension === 1, String(cep.calls.openExtension));
+// Taken down by the service, so nothing has to wait to find out whether the panel managed to.
+check('the marker comes down with the request to close', !existsSync(marker));
 
-// A palette that died without cleaning up would otherwise wedge the shortcut for good.
-const openedAnyway = await waitFor(() => cep.calls.openExtension === 2, { label: 'the stale marker to be cleared' });
-check('a marker left behind by a dead panel is cleared, and the palette opens', openedAnyway, log().slice(-200));
-check('the leftover marker is gone', !existsSync(marker));
+// A palette that died without cleaning up leaves its marker behind. The next press finds no marker
+// and opens as usual, so the shortcut cannot get stuck on "close".
+fireHelper('FIRE');
+const openedAgain = await waitFor(() => cep.calls.openExtension === 2, { label: 'the palette to open again' });
+check('the press after that opens the palette again', openedAgain, String(cep.calls.openExtension));
 check(
-  'the palette is told this press opens it',
+  'and the palette is told this press opens it',
   triggers.at(-1) === JSON.stringify({ settings: false, dismiss: false }),
   String(triggers.at(-1)),
 );

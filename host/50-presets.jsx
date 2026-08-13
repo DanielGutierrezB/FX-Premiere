@@ -282,6 +282,21 @@ FXP.presetStamp = function (files) {
     return String(hash) + ':' + String(text.length);
 };
 
+/**
+ * Which files there are and what they looked like before anything was opened. Everything that reads
+ * presets starts here, so the order can only be decided once: stamping after a parse would record
+ * a save that landed halfway through it, and the panel would keep stale items believing they match.
+ */
+FXP.presetSurvey = function (sources) {
+    var files = FXP.expandPresetSources(sources);
+    return { files: files, stamp: FXP.presetStamp(files) };
+};
+
+FXP.presetIndex = function (sources, warnings) {
+    var survey = FXP.presetSurvey(sources);
+    return { stamp: survey.stamp, items: FXP.presetsFromFiles(survey.files, warnings) };
+};
+
 FXP.presetsFromFiles = function (files, warnings) {
     var items = [];
     for (var f = 0; f < files.length; f++) {

@@ -6,7 +6,6 @@ import {
   dispatchCepEvent,
   onCepEvent,
   registerKeyInterest,
-  resizeSelf,
 } from '@shared/cep';
 import { capturedItems, deleteCaptured, listCaptured, saveCaptured } from '@shared/captured';
 import { defaultSettings, loadSettings, markPanelOpen, rememberItem, saveSettings } from '@shared/settings';
@@ -16,6 +15,7 @@ import {
   type CatalogItem,
   type ClipInspection,
   type HostResponse,
+  type QuickGroup,
   type SequenceInfo,
   type Settings,
   type TransitionOptions,
@@ -37,7 +37,9 @@ import {
 } from './commands';
 import { clear, el, highlight } from './dom';
 import { SCOPES, badgeFor, rank, type RankedItem, type Scope } from './search';
+import { WindowSize } from './window-size';
 import { InspectView } from './views/inspect';
+import { openRowMenu } from './views/row-menu';
 import { SettingsSheet } from './views/settings';
 import { TransitionDialog } from './views/transition';
 
@@ -48,40 +50,6 @@ type View = 'search' | 'transition' | 'settings' | 'inspect';
  * prompt setting says; `keepOpen` means Cmd/Ctrl was held to apply several things in a row.
  */
 type ApplyIntent = 'default' | 'withOptions' | 'keepOpen';
-
-/** Rows built per render. The window follows the selection, so navigation stays O(1). */
-const MAX_ROWS = 20;
-
-/** Bounds for the window Premiere draws around us, in content pixels. */
-const MIN_HEIGHT = 120;
-const MAX_HEIGHT = 520;
-
-/** Sheets are given a settled box instead of one that resizes under the cursor. */
-const SHEET_HEIGHT = 460;
-
-/**
- * The furniture the window is built from, in CSS pixels at font scale 1. These are the numbers in
- * panel.css: the window is planned from them rather than measured, so keep the two in step.
- */
-const FIELD_HEIGHT = 44;
-const FOOT_HEIGHT = 32;
-const ROW_HEIGHT = 28;
-const CAPTION_HEIGHT = 26;
-const LIST_PADDING = 12;
-const HAIRLINE = 1;
-
-/** Room the search view always keeps for results, however short the resting list is. */
-const MIN_ROWS = 7;
-
-/** A host rounding the window by a pixel or two is not somebody dragging it. */
-const SIZE_SLACK = 3;
-const SIZE_SAVE_DELAY_MS = 400;
-
-/** A labelled block of the resting list. Indices stay global so navigation ignores the grouping. */
-interface QuickGroup {
-  label: string;
-  items: CatalogItem[];
-}
 
 /** One entry of the footer line. Every hint names a key and does what that key does when clicked. */
 interface Hint {
@@ -139,16 +107,10 @@ export class PaletteApp {
 
   private rowMenu: HTMLElement | null = null;
 
-  /** The height the search view keeps for as long as it is up, decided on each summon. */
-  private searchHeight = MIN_HEIGHT;
-
-  private sizeSave = 0;
-
-  /** Last size asked of the host, so an unchanged layout costs nothing. */
-  private height = 0;
-
-  private width = 0;
-
+  private readonly size = new WindowSize(
+    () => this.settings,
+    () => this.quickGroups(),
+  );
 
   private readonly transitionDialog = new TransitionDialog(
     {
@@ -178,7 +140,7 @@ export class PaletteApp {
     hostVersion: () => this.hostVersion,
     indexedItems: () => this.catalog?.items.length ?? 0,
     applyTheme: () => this.applyTheme(),
-    refit: () => this.planSize(),
+    refit: () => this.size.apply(this.view === 'search' ? 'list' : 'sheet'),
     toast: (message, kind) => this.toast(message, kind),
     reindex: () => this.ensureCatalog(true),
     refreshPresets: () => this.refreshPresetsOnly(),
@@ -197,12 +159,8 @@ export class PaletteApp {
   async boot(): Promise<void> {
     this.settings = loadSettings();
     this.applyTheme();
-    // The size the host opened us at. Starting from it means a window that already arrived the
-    // right size is left alone, instead of being asked for the size it is and flickering into it.
-    this.width = window.innerWidth;
-    this.height = window.innerHeight;
     // Before the first paint, so the palette looks like it opened right rather than settling in.
-    this.planSize();
+    this.size.apply('list');
     this.buildChrome();
     registerKeyInterest();
     this.bindEvents();
@@ -288,7 +246,7 @@ export class PaletteApp {
     });
     window.addEventListener('keydown', (event) => this.onKeyDown(event), true);
     window.addEventListener('focus', () => this.focusInput());
-    window.addEventListener('resize', () => this.noteHostResize());
+    window.addEventListener('resize', () => this.size.noteHostResize());
     // Closed by the window's own button rather than by us: the marker has to go down anyway, or
     // the next shortcut would think the palette is still up and try to dismiss it.
     window.addEventListener('unload', () => markPanelOpen(false));
@@ -316,11 +274,16 @@ export class PaletteApp {
     });
   }
 
+  /** The view and the size of the window are the same decision, so they are made together. */
+  private setView(view: View): void {
+    this.view = view;
+    this.size.apply(view === 'search' ? 'list' : 'sheet');
+  }
+
   private onSummon(wantsSettings = false): void {
     // Re-announced rather than only on boot: a host that hides the window instead of unloading it
     // would otherwise leave the palette up with nothing saying so.
     markPanelOpen(true);
-    this.view = 'search';
     this.transitionDialog.clear();
     this.settingsSheet.closed();
     this.input.value = '';
@@ -330,7 +293,7 @@ export class PaletteApp {
     this.settings = loadSettings();
     this.applyTheme();
     // What was applied since the last summon changes the resting list, and so its size.
-    this.planSize();
+    this.setView('search');
     this.updateResults();
     this.renderHints();
     void this.refreshSequence();
@@ -371,63 +334,6 @@ export class PaletteApp {
   private syncFoot(): void {
     const empty = this.statusNode.textContent === '' && this.hintNode.childElementCount === 0;
     this.footNode.className = `foot${empty ? ' foot--hidden' : ''}`;
-  }
-
-  /**
-   * Decides how big the window should be before anything is drawn. A height you set by dragging the
-   * window wins outright; otherwise it is worked out from the numbers in panel.css, so the size can
-   * be asked for before the first paint instead of the window settling into it afterwards.
-   *
-   * The search view keeps that one size for as long as it is up. Typing scrolls the list, it does
-   * not move the window: a box that resizes under every keystroke is unusable to aim at.
-   */
-  private planSize(): void {
-    const scale = this.settings.fontScale;
-    const px = (value: number): number => value * scale;
-    const groups = this.quickGroups();
-    const rows = groups.reduce((total, group) => total + group.items.length, 0);
-    const list = Math.max(px(ROW_HEIGHT) * MIN_ROWS, rows * px(ROW_HEIGHT) + groups.length * px(CAPTION_HEIGHT));
-    const chrome = px(FIELD_HEIGHT) + HAIRLINE + px(FOOT_HEIGHT);
-    this.searchHeight = Math.round(Math.max(MIN_HEIGHT, Math.min(MAX_HEIGHT, chrome + list + LIST_PADDING)));
-    this.applySize();
-  }
-
-  /** Asks the host for the size in force, and only when it is not the size it already has. */
-  private applySize(): void {
-    const chosen = this.settings.height;
-    const height = chosen > 0 ? chosen : this.view === 'search' ? this.searchHeight : SHEET_HEIGHT;
-    const width = this.settings.width;
-    if (height === this.height && width === this.width) {
-      return;
-    }
-    this.height = height;
-    this.width = width;
-    resizeSelf(width, height);
-  }
-
-  /**
-   * The window has a grip on its corner, and a palette that snapped back to its own idea of the
-   * right size every time it repainted would make that grip a lie. Anything the host reports that
-   * is not the size we asked for was done by hand, and from then on it is the size.
-   */
-  private noteHostResize(): void {
-    const width = window.innerWidth;
-    const height = window.innerHeight;
-    if (width === 0 || height === 0) {
-      return;
-    }
-    if (Math.abs(width - this.width) <= SIZE_SLACK && Math.abs(height - this.height) <= SIZE_SLACK) {
-      return;
-    }
-    this.width = width;
-    this.height = height;
-    window.clearTimeout(this.sizeSave);
-    // Saved once the dragging stops, not on every pixel of it.
-    this.sizeSave = window.setTimeout(() => {
-      this.settings.width = width;
-      this.settings.height = height;
-      saveSettings(this.settings);
-    }, SIZE_SAVE_DELAY_MS);
   }
 
   private toast(message: string, kind: 'info' | 'error' = 'info'): void {
@@ -581,7 +487,6 @@ export class PaletteApp {
   }
 
   private paintResults(): void {
-    this.applySize();
     clear(this.body);
     this.body.className = 'results-host';
     if (this.input.value.trim() === '') {
@@ -595,8 +500,9 @@ export class PaletteApp {
       return;
     }
     // Only a window of rows is built, so a 1500 item index costs the same as a 50 item one.
-    const start = Math.max(0, Math.min(this.active - 6, this.results.length - MAX_ROWS));
-    const window = this.results.slice(start, start + MAX_ROWS);
+    const budget = this.size.rowsThatFit();
+    const start = Math.max(0, Math.min(this.active - 6, this.results.length - budget));
+    const window = this.results.slice(start, start + budget);
     const list = el('ul', { class: 'results' });
     window.forEach((entry, offset) => {
       list.appendChild(this.renderRow(entry, start + offset));
@@ -780,10 +686,6 @@ export class PaletteApp {
     this.updateResults();
   }
 
-  /**
-   * Right clicking a row is how most people expect to favourite something, so the menu says what
-   * the keyboard can already do rather than hiding it.
-   */
   private openRowMenu(index: number, x: number, y: number): void {
     this.closeRowMenu();
     const entry = this.results[index];
@@ -792,45 +694,23 @@ export class PaletteApp {
     }
     this.active = index;
     this.paintResults();
-    const starred = this.settings.favorites.includes(entry.item.id);
-    const menu = el('div', { class: 'menu' }, [
-      el('div', { class: 'menu__title', text: entry.item.name }),
-      el('button', {
-        class: 'menu__item',
-        text: starred ? 'Remove from favorites' : 'Add to favorites',
-        onclick: () => {
-          this.closeRowMenu();
-          this.toggleFavorite(index);
-        },
-      }),
-      el('button', {
-        class: 'menu__item',
-        text: 'Apply to the selection',
-        onclick: () => {
-          this.closeRowMenu();
-          void this.applyItem(entry.item, 'default');
-        },
-      }),
-      // Only presets the palette itself saved: it has no business deleting anything Premiere owns.
-      entry.item.captured
-        ? el('button', {
-            class: 'menu__item',
-            text: 'Delete this preset',
-            onclick: () => {
-              this.closeRowMenu();
-              this.forgetCaptured(entry.item);
-            },
-          })
-        : null,
-    ]);
-    this.root.appendChild(menu);
-    // Placed after it is in the document, so its own size is known and it can stay inside the panel.
-    const bounds = menu.getBoundingClientRect();
-    const left = Math.max(4, Math.min(x, window.innerWidth - bounds.width - 4));
-    const top = Math.max(4, Math.min(y, window.innerHeight - bounds.height - 4));
-    menu.style.left = `${left}px`;
-    menu.style.top = `${top}px`;
-    this.rowMenu = menu;
+    this.rowMenu = openRowMenu(this.root, entry.item, { x, y }, {
+      starred: this.settings.favorites.includes(entry.item.id),
+      favorite: () => {
+        this.closeRowMenu();
+        this.toggleFavorite(index);
+      },
+      apply: () => {
+        this.closeRowMenu();
+        void this.applyItem(entry.item, 'default');
+      },
+      remove: entry.item.captured
+        ? () => {
+            this.closeRowMenu();
+            this.forgetCaptured(entry.item);
+          }
+        : undefined,
+    });
   }
 
   private closeRowMenu(): void {
@@ -1000,8 +880,7 @@ export class PaletteApp {
   }
 
   private openTransition(item: CatalogItem): void {
-    this.view = 'transition';
-    this.applySize();
+    this.setView('transition');
     this.transitionDialog.open(item, this.settings.lastTransition);
     this.transitionDialog.render(this.body);
     this.renderHints();
@@ -1014,7 +893,7 @@ export class PaletteApp {
   }
 
   private backToSearch(clearQuery = false): void {
-    this.view = 'search';
+    this.setView('search');
     this.transitionDialog.clear();
     this.settingsSheet.closed();
     if (clearQuery) {
@@ -1027,8 +906,7 @@ export class PaletteApp {
   }
 
   private openSettings(): void {
-    this.view = 'settings';
-    this.applySize();
+    this.setView('settings');
     this.settingsSheet.render(this.body);
     this.settingsSheet.opened();
     this.renderHints();
@@ -1042,8 +920,7 @@ export class PaletteApp {
       this.toast(reason, 'error');
       return;
     }
-    this.view = 'inspect';
-    this.applySize();
+    this.setView('inspect');
     this.inspectView.open(response.data);
     this.inspectView.render(this.body);
     this.renderHints();

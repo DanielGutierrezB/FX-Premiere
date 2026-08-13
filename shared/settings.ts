@@ -3,7 +3,6 @@ import { nodeRequire } from './node';
 import { helperStatusFile, panelOpenFile, settingsDir, settingsFile } from './paths';
 import { TransitionAlignment, type CatalogItem, type HelperStatus, type Settings } from './types';
 
-const SETTINGS_VERSION = 3;
 
 /** A light sky blue that reads well on Premiere's dark chrome. */
 const ACCENT = '#4fc3f7';
@@ -13,7 +12,6 @@ const LEGACY_ACCENT = '#a48cff';
 const REMEMBERED_LIMIT = 60;
 
 export const defaultSettings = (): Settings => ({
-  version: SETTINGS_VERSION,
   hotkey: { ...DEFAULT_HOTKEY },
   settingsHotkey: null,
   closeAfterApply: true,
@@ -36,7 +34,7 @@ export const defaultSettings = (): Settings => ({
   recentCount: 6,
   favoriteCount: 3,
   width: 440,
-  height: 0,
+  height: null,
 });
 
 /** Choices offered in the settings sheet. Anything else in the file is pulled back into range. */
@@ -62,9 +60,12 @@ const mergeSettings = (raw: Partial<Settings> | null): Settings => {
   if (!raw || typeof raw !== 'object') {
     return base;
   }
+  // Earlier releases wrote a version number that nothing ever read: what follows migrates by the
+  // shape of what it finds, which also covers a file somebody edited by hand.
+  const { version, ...carried } = raw as Partial<Settings> & { version?: number };
   return {
     ...base,
-    ...raw,
+    ...carried,
     hotkey: { ...base.hotkey, ...(raw.hotkey ?? {}) },
     settingsHotkey: raw.settingsHotkey ?? null,
     lastTransition: { ...base.lastTransition, ...(raw.lastTransition ?? {}) },
@@ -78,9 +79,8 @@ const mergeSettings = (raw: Partial<Settings> | null): Settings => {
     recentCount: inRange(raw.recentCount, base.recentCount, 0, 12),
     favoriteCount: inRange(raw.favoriteCount, base.favoriteCount, 0, 12),
     width: inRange(raw.width, base.width, 320, 1400),
-    // Zero is the state of never having dragged the window, so it is not pulled up into range.
-    height: raw.height === 0 ? 0 : inRange(raw.height, base.height, 120, 1400),
-    version: SETTINGS_VERSION,
+    // Zero was how an earlier release wrote "follow the resting list"; it reads as null now.
+    height: raw.height ? inRange(raw.height, 400, 120, 1400) : null,
   };
 };
 

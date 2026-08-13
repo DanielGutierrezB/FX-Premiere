@@ -276,32 +276,30 @@ export class SettingsSheet {
     container.appendChild(
       fieldRow(
         'Window width',
-        settings.height > 0
-          ? 'Dragging the window sets both, and that is what is in force.'
-          : 'The height follows the resting list until you drag the window yourself.',
+        settings.height === null
+          ? 'The height follows the resting list until you drag the window yourself.'
+          : 'Dragging the window sets both, and that is what is in force.',
         el('div', { class: 'field__control' }, [
           segmented(
-            // The current width is always offered, so a window sized by hand still shows its value.
-            [...new Set([...WIDTHS, settings.width])]
-              .sort((first, second) => first - second)
-              .map((width) => ({ value: width, label: `${width}` })),
+            WIDTHS.map((width) => ({ value: width, label: `${width}` })),
+            // A window dragged to a width of its own matches none of them, and none is shown lit.
             settings.width,
             (value) => {
               settings.width = value;
               this.save(false);
             },
           ),
-          settings.height > 0
-            ? el('button', {
+          settings.height === null
+            ? null
+            : el('button', {
                 class: 'button',
                 text: 'Fit the list',
                 title: 'Go back to a height that follows the resting list',
                 onclick: () => {
-                  settings.height = 0;
+                  settings.height = null;
                   this.save(false);
                 },
-              })
-            : null,
+              }),
         ]),
       ),
     );

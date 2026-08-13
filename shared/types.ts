@@ -72,11 +72,24 @@ export interface CapturedPreset {
   effects: CapturedEffect[];
 }
 
+/** A labelled block of the resting list. Indices stay global so navigation ignores the grouping. */
+export interface QuickGroup {
+  label: string;
+  items: CatalogItem[];
+}
+
+/** The answer to "have the presets moved?": items are null when the stamp says they have not. */
+export interface PresetRefresh {
+  presetStamp: string;
+  items: CatalogItem[] | null;
+  warnings: string[];
+}
+
 export interface Catalog {
   items: CatalogItem[];
   hostVersion: string;
   /** What the preset files looked like when the index was built. */
-  presetStamp?: string;
+  presetStamp: string;
   warnings: string[];
 }
 
@@ -127,7 +140,7 @@ export type HostRequest =
   | { op: 'hello' }
   | { op: 'sequenceInfo' }
   | { op: 'catalog'; presetSources: string[] }
-  | { op: 'presets'; presetSources: string[]; since: string }
+  | { op: 'presets'; presetSources: string[]; knownStamp: string }
   | { op: 'applyEffect'; name: string; matchName?: string; mediaType: MediaType }
   | { op: 'applyTransition'; name: string; mediaType: MediaType; options: TransitionOptions }
   | { op: 'applyPreset'; preset: PresetRef }
@@ -162,7 +175,6 @@ export interface HotkeySpec {
 }
 
 export interface Settings {
-  version: number;
   hotkey: HotkeySpec;
   settingsHotkey: HotkeySpec | null;
   closeAfterApply: boolean;
@@ -184,7 +196,7 @@ export interface Settings {
   /** How many rows the resting palette offers, per group. Zero hides the group. */
   recentCount: number;
   favoriteCount: number;
-  /** Content size asked of the host. A height of zero means it follows the resting list. */
+  /** Content size asked of the host. A null height follows the resting list instead. */
   width: number;
-  height: number;
+  height: number | null;
 }

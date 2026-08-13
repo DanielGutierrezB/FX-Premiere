@@ -450,7 +450,7 @@ export const writePresetFixture = (directory) => {
  * Loads the built host script into a VM with the mock DOM in scope. The context is reused
  * across calls so the host keeps its state, like it does inside Premiere.
  */
-export const createHost = ({ hostScript, documentsRoot }) => {
+export const createHost = ({ hostScript, documentsRoot, withoutQE = false }) => {
   const world = buildWorld();
   fileReads.length = 0;
   const context = createContext({
@@ -459,7 +459,8 @@ export const createHost = ({ hostScript, documentsRoot }) => {
       project: { activeSequence: world.sequence },
       enableQE: () => {},
     },
-    qe: world.qe,
+    // Premiere without QE: the undocumented DOM the effect lists come from is simply not there.
+    qe: withoutQE ? undefined : world.qe,
     File: FileStub,
     Folder: Object.assign(FolderStub, { myDocuments: new FolderStub(documentsRoot) }),
     $: { writeln: () => {} },

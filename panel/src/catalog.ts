@@ -1,6 +1,6 @@
 import { callHost } from '@shared/cep';
 import { prepare, type HaystackEntry } from '@shared/fuzzy';
-import type { Catalog, CatalogItem } from '@shared/types';
+import type { Catalog, CatalogItem, PresetRefresh } from '@shared/types';
 import { searchText } from './search';
 
 const CACHE_KEY = 'fxp.catalog.v3';
@@ -61,12 +61,7 @@ export const loadCachedCatalog = (hostVersion: string): IndexedCatalog | null =>
   if (!cached || cached.hostVersion !== hostVersion) {
     return null;
   }
-  return {
-    items: cached.items,
-    haystacks: buildHaystacks(cached.items),
-    warnings: [],
-    presetStamp: cached.presetStamp ?? '',
-  };
+  return { items: cached.items, haystacks: buildHaystacks(cached.items), warnings: [], presetStamp: cached.presetStamp };
 };
 
 export const fetchCatalog = async (presetSources: string[]): Promise<IndexedCatalog> => {
@@ -75,14 +70,18 @@ export const fetchCatalog = async (presetSources: string[]): Promise<IndexedCata
     throw new Error(response.error ?? 'The effect index could not be built.');
   }
   const catalog = response.data;
-  const presetStamp = catalog.presetStamp ?? '';
-  writeCache({ hostVersion: catalog.hostVersion, items: catalog.items, presetStamp });
-  return {
+  const indexed = {
     items: catalog.items,
     haystacks: buildHaystacks(catalog.items),
     warnings: catalog.warnings ?? [],
-    presetStamp,
+    presetStamp: catalog.presetStamp,
   };
+  // An index with nothing in it means Premiere could not list its effects this time. Writing that
+  // to the cache would hand every later open an empty palette that never repairs itself.
+  if (catalog.items.length > 0) {
+    writeCache({ hostVersion: catalog.hostVersion, items: catalog.items, presetStamp: catalog.presetStamp });
+  }
+  return indexed;
 };
 
 /**
@@ -95,21 +94,20 @@ export const refreshPresets = async (
   current: IndexedCatalog,
   presetSources: string[],
 ): Promise<IndexedCatalog> => {
-  const response = await callHost<{ items: CatalogItem[]; warnings: string[]; unchanged: boolean; stamp: string }>({
+  const response = await callHost<PresetRefresh>({
     op: 'presets',
     presetSources,
-    since: current.presetStamp,
+    knownStamp: current.presetStamp,
   });
-  if (!response.ok || !response.data || response.data.unchanged) {
+  const refreshed = response.data;
+  if (!response.ok || !refreshed || refreshed.items === null) {
     return current;
   }
-  const withoutPresets = current.items.filter((item) => item.kind !== 'preset');
-  const items = [...withoutPresets, ...response.data.items];
-  const presetStamp = response.data.stamp ?? '';
+  const items = [...current.items.filter((item) => item.kind !== 'preset'), ...refreshed.items];
   const cached = readCache();
   if (cached) {
-    writeCache({ ...cached, items, presetStamp });
+    writeCache({ ...cached, items, presetStamp: refreshed.presetStamp });
   }
   // Preset parse failures only reach the user if they are carried out of here.
-  return { items, haystacks: buildHaystacks(items), warnings: response.data.warnings ?? [], presetStamp };
+  return { items, haystacks: buildHaystacks(items), warnings: refreshed.warnings, presetStamp: refreshed.presetStamp };
 };
