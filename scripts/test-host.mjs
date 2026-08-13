@@ -62,7 +62,9 @@ const doubled = FXP.expandPresetSources([fixtureFile, fixtureFile.toUpperCase()]
 check('the same file added twice is indexed once', doubled.length === 1, JSON.stringify(doubled));
 delete FileStub.fs;
 check('elsewhere the path is left exactly as it is', FXP.pathKey('/Users/You/Presets') === '/Users/You/Presets');
-check('and case still tells two files apart', FXP.expandPresetSources([fixtureFile, fixtureFile.toUpperCase()]).length === 2);
+// Whether an uppercase twin of a file exists is up to the filesystem the test happens to run on;
+// what is being checked here is that the key does not fold case away by itself.
+check('and case still tells two paths apart', FXP.pathKey(fixtureFile) !== FXP.pathKey(fixtureFile.toUpperCase()));
 
 console.log('\nApplying a video effect to the selection');
 const effectResult = call({
