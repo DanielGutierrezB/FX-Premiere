@@ -9,7 +9,7 @@ import {
   resizeSelf,
 } from '@shared/cep';
 import { capturedItems, listCaptured, saveCaptured } from '@shared/captured';
-import { defaultSettings, loadSettings, rememberItem, saveSettings } from '@shared/settings';
+import { defaultSettings, loadSettings, markPanelOpen, rememberItem, saveSettings } from '@shared/settings';
 import {
   type ApplyOutcome,
   type CapturedPreset,
@@ -56,9 +56,10 @@ const MAX_ROWS = 50;
 const MIN_HEIGHT = 120;
 const MAX_HEIGHT = 520;
 
-/** What the resting list offers: the last few things applied, then favourites not among them. */
-const RECENT_LIMIT = 6;
-const FAVORITE_LIMIT = 4;
+/** Sheets are given a settled box instead of one that resizes under the cursor. */
+const SHEET_HEIGHT = 460;
+
+const padding = (value: string): number => Number.parseFloat(value) || 0;
 
 /** A labelled block of the resting list. Indices stay global so navigation ignores the grouping. */
 interface QuickGroup {
@@ -120,8 +121,12 @@ export class PaletteApp {
   /** Set once a check finds a newer release, so the resting line can mention it. */
   private updateNote = '';
 
-  /** Last height asked of the host, so an unchanged layout costs nothing. */
+  private rowMenu: HTMLElement | null = null;
+
+  /** Last size asked of the host, so an unchanged layout costs nothing. */
   private height = 0;
+
+  private width = 0;
 
   private fitPending = false;
 
@@ -153,6 +158,7 @@ export class PaletteApp {
     hostVersion: () => this.hostVersion,
     indexedItems: () => this.catalog?.items.length ?? 0,
     applyTheme: () => this.applyTheme(),
+    refit: () => this.scheduleFit(),
     toast: (message, kind) => this.toast(message, kind),
     reindex: () => this.ensureCatalog(true),
     refreshPresets: () => this.refreshPresetsOnly(),
@@ -171,6 +177,8 @@ export class PaletteApp {
   async boot(): Promise<void> {
     this.settings = loadSettings();
     this.applyTheme();
+    // Announced before anything else, so the very next press of the shortcut knows to put it away.
+    markPanelOpen(true);
     this.buildChrome();
     registerKeyInterest();
     this.bindEvents();
@@ -249,24 +257,37 @@ export class PaletteApp {
     });
     window.addEventListener('keydown', (event) => this.onKeyDown(event), true);
     window.addEventListener('focus', () => this.focusInput());
+    // Closed by the window's own button rather than by us: the marker has to go down anyway, or
+    // the next shortcut would think the palette is still up and try to dismiss it.
+    window.addEventListener('unload', () => markPanelOpen(false));
     document.addEventListener('mousedown', (event) => {
-      const target = event.target as HTMLElement | null;
+      const target = event.target instanceof HTMLElement ? event.target : null;
+      if (!target?.closest('.menu')) {
+        this.closeRowMenu();
+      }
       if (!target || !target.closest('input, select, button')) {
         window.setTimeout(() => this.focusInput(), 0);
       }
     });
     onCepEvent(EVENT_TRIGGER_PALETTE, (data) => {
-      let wantsSettings = false;
+      let payload: { settings?: boolean; dismiss?: boolean } = {};
       try {
-        wantsSettings = data ? Boolean((JSON.parse(data) as { settings?: boolean }).settings) : false;
+        payload = data ? (JSON.parse(data) as typeof payload) : {};
       } catch {
-        wantsSettings = false;
+        payload = {};
       }
-      this.onSummon(wantsSettings);
+      if (payload.dismiss) {
+        this.dismiss();
+        return;
+      }
+      this.onSummon(Boolean(payload.settings));
     });
   }
 
   private onSummon(wantsSettings = false): void {
+    // Re-announced rather than only on boot: a host that hides the window instead of unloading it
+    // would otherwise leave the palette up with nothing saying so.
+    markPanelOpen(true);
     this.view = 'search';
     this.transitionDialog.clear();
     this.settingsSheet.closed();
@@ -284,6 +305,13 @@ export class PaletteApp {
       return;
     }
     this.focusInput();
+  }
+
+  /** Takes the marker down before the window goes, so the next shortcut opens instead of closing. */
+  private dismiss(): void {
+    this.closeRowMenu();
+    markPanelOpen(false);
+    closeSelf();
   }
 
   private focusInput(): void {
@@ -331,24 +359,49 @@ export class PaletteApp {
 
   /**
    * The title bar belongs to Premiere and cannot be taken away, but the box under it does not have
-   * to be mostly empty: a modeless extension is allowed to state how tall its content is, so the
-   * window ends up the height of whatever is on screen.
+   * to be mostly empty: a modeless extension is allowed to state how big its content is, so the
+   * window ends up the size of whatever is on screen.
    */
   private fitWindow(): void {
-    let content = 0;
-    for (const node of [...this.body.children]) {
-      content += (node as HTMLElement).scrollHeight;
-    }
+    const content = this.contentHeight();
     if (content === 0) {
       return;
     }
     const chrome = this.searchNode.offsetHeight + this.footNode.offsetHeight;
-    const target = Math.max(MIN_HEIGHT, Math.min(MAX_HEIGHT, chrome + content + 2));
-    if (target === this.height) {
+    const height = Math.max(MIN_HEIGHT, Math.min(MAX_HEIGHT, chrome + content + 2));
+    const width = this.settings.width;
+    if (height === this.height && width === this.width) {
       return;
     }
-    this.height = target;
-    resizeSelf(window.innerWidth, target);
+    this.height = height;
+    this.width = width;
+    resizeSelf(width, height);
+  }
+
+  /**
+   * Measured row by row rather than by asking the list how tall it is. A scroller sized to fill its
+   * parent reports the space it was given, not the rows in it, so asking it would only ever confirm
+   * the height the window already has.
+   */
+  private contentHeight(): number {
+    // A sheet grows and shrinks as you toggle things inside it; a settled box beats a jumping one.
+    if (this.view !== 'search') {
+      return SHEET_HEIGHT;
+    }
+    let total = 0;
+    for (const child of [...this.body.children]) {
+      const node = child as HTMLElement;
+      if (!node.classList.contains('results')) {
+        total += node.offsetHeight;
+        continue;
+      }
+      const style = window.getComputedStyle(node);
+      total += padding(style.paddingTop) + padding(style.paddingBottom);
+      for (const row of [...node.children]) {
+        total += (row as HTMLElement).offsetHeight;
+      }
+    }
+    return total;
   }
 
   private toast(message: string, kind: 'info' | 'error' = 'info'): void {
@@ -458,6 +511,9 @@ export class PaletteApp {
     const seen = new Set<string>();
     const take = (ids: string[], limit: number): CatalogItem[] => {
       const out: CatalogItem[] = [];
+      if (limit <= 0) {
+        return out;
+      }
       for (const id of ids) {
         const item = this.settings.remembered[id];
         if (item && !seen.has(id)) {
@@ -471,8 +527,8 @@ export class PaletteApp {
       return out;
     };
     return [
-      { label: 'Recent', items: take(this.settings.recents, RECENT_LIMIT) },
-      { label: 'Favorites', items: take(this.settings.favorites, FAVORITE_LIMIT) },
+      { label: 'Recent', items: take(this.settings.recents, this.settings.recentCount) },
+      { label: 'Favorites', items: take(this.settings.favorites, this.settings.favoriteCount) },
     ].filter((group) => group.items.length > 0);
   }
 
@@ -543,6 +599,10 @@ export class PaletteApp {
           this.active = index;
           void this.applyActive('default');
         },
+        oncontextmenu: (event: MouseEvent) => {
+          event.preventDefault();
+          this.openRowMenu(index, event.clientX, event.clientY);
+        },
       },
       [
         this.settings.showTypeBadges ? el('span', { class: 'row__badge', text: badgeFor(entry.item.kind) }) : null,
@@ -611,13 +671,13 @@ export class PaletteApp {
 
     const accel = event.metaKey || event.ctrlKey;
     switch (event.key) {
+      // Left and right are left alone on purpose: the list is vertical, and they belong to the
+      // text caret. They only moved the selection when the resting list was a row of chips.
       case 'ArrowDown':
-      case 'ArrowRight':
         event.preventDefault();
         this.moveActive(1);
         return;
       case 'ArrowUp':
-      case 'ArrowLeft':
         event.preventDefault();
         this.moveActive(-1);
         return;
@@ -635,7 +695,7 @@ export class PaletteApp {
         return;
       case 'Escape':
         event.preventDefault();
-        closeSelf();
+        this.dismiss();
         return;
       case 'Tab':
         event.preventDefault();
@@ -679,13 +739,14 @@ export class PaletteApp {
     this.updateResults();
   }
 
-  private toggleFavorite(): void {
-    const entry = this.results[this.active];
+  private toggleFavorite(index = this.active): void {
+    const entry = this.results[index];
     if (!entry) {
       return;
     }
     const favorites = new Set(this.settings.favorites);
-    if (favorites.has(entry.item.id)) {
+    const had = favorites.has(entry.item.id);
+    if (had) {
       favorites.delete(entry.item.id);
     } else {
       favorites.add(entry.item.id);
@@ -693,7 +754,55 @@ export class PaletteApp {
     this.settings.favorites = [...favorites];
     rememberItem(this.settings, entry.item);
     saveSettings(this.settings);
+    this.setStatus(`${had ? 'Removed from' : 'Added to'} favorites: ${entry.item.name}`, 'ok');
+    this.updateResults();
+  }
+
+  /**
+   * Right clicking a row is how most people expect to favourite something, so the menu says what
+   * the keyboard can already do rather than hiding it.
+   */
+  private openRowMenu(index: number, x: number, y: number): void {
+    this.closeRowMenu();
+    const entry = this.results[index];
+    if (!entry) {
+      return;
+    }
+    this.active = index;
     this.renderResults();
+    const starred = this.settings.favorites.includes(entry.item.id);
+    const menu = el('div', { class: 'menu' }, [
+      el('div', { class: 'menu__title', text: entry.item.name }),
+      el('button', {
+        class: 'menu__item',
+        text: starred ? 'Remove from favorites' : 'Add to favorites',
+        onclick: () => {
+          this.closeRowMenu();
+          this.toggleFavorite(index);
+        },
+      }),
+      el('button', {
+        class: 'menu__item',
+        text: 'Apply to the selection',
+        onclick: () => {
+          this.closeRowMenu();
+          void this.applyItem(entry.item, 'default');
+        },
+      }),
+    ]);
+    this.root.appendChild(menu);
+    // Placed after it is in the document, so its own size is known and it can stay inside the panel.
+    const bounds = menu.getBoundingClientRect();
+    const left = Math.max(4, Math.min(x, window.innerWidth - bounds.width - 4));
+    const top = Math.max(4, Math.min(y, window.innerHeight - bounds.height - 4));
+    menu.style.left = `${left}px`;
+    menu.style.top = `${top}px`;
+    this.rowMenu = menu;
+  }
+
+  private closeRowMenu(): void {
+    this.rowMenu?.remove();
+    this.rowMenu = null;
   }
 
   private async ensureCatalog(force: boolean): Promise<void> {
@@ -807,7 +916,7 @@ export class PaletteApp {
       // reopening it on a stale transition dialog would re-apply that transition on Enter.
       this.backToSearch(closing);
       if (closing) {
-        closeSelf();
+        this.dismiss();
         return;
       }
       this.toast(outcome.messages.length > 0 ? `${summary} \u00b7 ${outcome.messages.join(' \u00b7 ')}` : summary);

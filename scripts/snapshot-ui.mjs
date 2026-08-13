@@ -80,10 +80,24 @@ const type = async (text) => {
 await type('blur');
 shot('Typing');
 
+await type('blur');
+window.document
+  .querySelector('.row')
+  .dispatchEvent(new window.MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 26, clientY: 10 }));
+await settle(4);
+shot('Right click on a row');
+window.document.body.dispatchEvent(new window.MouseEvent('mousedown', { bubbles: true }));
+
 await type('');
 window.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'i', metaKey: true, code: 'KeyI', bubbles: true }));
 await settle(30);
 shot('Effects on this clip');
+
+window.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+await settle(10);
+window.dispatchEvent(new window.KeyboardEvent('keydown', { key: ',', metaKey: true, bubbles: true }));
+await settle(30);
+shot('Settings');
 
 const css = readFileSync(join(root, 'panel', 'panel.css'), 'utf8');
 const page = `<!doctype html>
@@ -93,8 +107,16 @@ const page = `<!doctype html>
   body { background: #1b1c1f; padding: 26px 30px; overflow: auto; }
   figure { margin: 0 0 24px; }
   figcaption { color: #8b8d96; font: 11px/1.4 -apple-system, sans-serif; margin-bottom: 8px; }
-  .frame { width: 520px; height: 300px; display: flex; }
-  .frame .app { width: 100%; }
+  /* The width is the default the panel asks for; the height is whatever the content comes to,
+     which is the point of the window fitting itself. */
+  .frame { width: 440px; display: flex; position: relative; overflow: hidden;
+           border: 1px solid #2a2b30; border-radius: 6px; }
+  .frame .app { width: 100%; height: auto; }
+  .frame .results { max-height: none; }
+  /* The sheet is shown whole here; in Premiere it scrolls inside the window. */
+  .frame .sheet { max-height: none; }
+  .frame .toast { display: none; }
+  .frame .menu { position: absolute; }
 </style>
 </head><body>
 ${frames

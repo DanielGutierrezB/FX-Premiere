@@ -159,12 +159,42 @@ console.log('\nHotkey presses reach the panel');
 fireHelper('FIRE');
 const opened = await waitFor(() => cep.calls.openExtension === 1, { label: 'the panel to be opened' });
 check('a hotkey press opens the panel', opened, String(cep.calls.openExtension));
-check('the panel is told to show the search view', triggers.at(-1) === JSON.stringify({ settings: false }), String(triggers.at(-1)));
+check(
+  'the panel is told to show the search view, and that this press opens it',
+  triggers.at(-1) === JSON.stringify({ settings: false, dismiss: false }),
+  String(triggers.at(-1)),
+);
+
+// The palette leaves a marker on disk while it is up. Only the service sees both sides, so it is
+// the service that decides whether a press means open or close.
+console.log('\nThe shortcut toggles');
+const marker = join(settingsDir, 'panel-open');
+writeFileSync(marker, String(Date.now()), 'utf8');
+fireHelper('FIRE');
+const dismissed = await waitFor(() => triggers.at(-1) === JSON.stringify({ settings: false, dismiss: true }), {
+  label: 'the dismiss trigger',
+});
+check('pressing it again asks the open palette to close', dismissed, String(triggers.at(-1)));
+check('and does not ask the host to open a second one', cep.calls.openExtension === 1, String(cep.calls.openExtension));
+
+// A palette that died without cleaning up would otherwise wedge the shortcut for good.
+const openedAnyway = await waitFor(() => cep.calls.openExtension === 2, { label: 'the stale marker to be cleared' });
+check('a marker left behind by a dead panel is cleared, and the palette opens', openedAnyway, log().slice(-200));
+check('the leftover marker is gone', !existsSync(marker));
+check(
+  'the palette is told this press opens it',
+  triggers.at(-1) === JSON.stringify({ settings: false, dismiss: false }),
+  String(triggers.at(-1)),
+);
 
 fireHelper('FIRE_SETTINGS');
-const openedSettings = await waitFor(() => triggers.length === 2, { label: 'the settings trigger' });
-check('the settings shortcut asks for the settings view', openedSettings && triggers.at(-1) === JSON.stringify({ settings: true }), String(triggers.at(-1)));
-check('it reuses the same panel request path', cep.calls.openExtension === 2, String(cep.calls.openExtension));
+const openedSettings = await waitFor(() => /settings":true/.test(String(triggers.at(-1))), { label: 'the settings trigger' });
+check(
+  'the settings shortcut asks for the settings view and never toggles',
+  openedSettings && triggers.at(-1) === JSON.stringify({ settings: true, dismiss: false }),
+  String(triggers.at(-1)),
+);
+check('it reuses the same panel request path', cep.calls.openExtension === 3, String(cep.calls.openExtension));
 
 console.log('\nLive shortcut change');
 writeSettings({ hotkey: { key: 'j', ctrl: false, alt: true, shift: true, meta: false } });

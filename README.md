@@ -36,13 +36,17 @@ Ctrl + Space  →  gsblr  →  Enter  →  Gaussian Blur en los 8 clips seleccio
   los mismos valores y keyframes. Puedes incluir o excluir Motion y Opacidad.
 - Los comandos propios de la paleta se encuentran por varios nombres, en inglés y en español:
   *guardar preset*, *deshacer*, *ajustes* llegan al mismo sitio que sus nombres en inglés.
+- **Favoritos con clic derecho**: el menú de cualquier fila permite marcarla o desmarcarla, y los
+  favoritos se listan siempre debajo de los recientes. En los ajustes eliges cuántos de cada uno
+  quieres ver, incluido ninguno.
 - **Interfaz desnuda a propósito**: el campo y la lista, nada más. La fila seleccionada se marca
   con una barra celeste, sin rellenos, y la línea de abajo solo aparece cuando tiene algo que
   decir: los atajos y a cuántos clips va Enter mientras no escribes, o cómo salió lo último que
   aplicaste. Mientras escribes, desaparece. Cada atajo de esa línea es además un botón: hace lo
   mismo que su tecla.
 - **La ventana se ajusta a lo que muestra**: la paleta le pide a Premiere la altura de su propia
-  lista, así que no queda una caja medio vacía debajo de la barra de título.
+  lista, así que no queda una caja medio vacía debajo de la barra de título. El ancho lo eliges en
+  los ajustes (380, 440 o 520) porque es lo único que no se deduce del contenido.
 - **Deshacer** desde la paleta con `Cmd/Ctrl + Z`.
 - **Favoritos, recientes y ranking por uso**: lo que más usas sube solo.
 - **Atajo configurable** desde los ajustes del panel (por defecto `Ctrl + Space`).
@@ -85,15 +89,14 @@ iscc /DAppVersion=$(node -p "require('./package.json').version") scripts\install
 
 | Tecla | Acción |
 | --- | --- |
-| `Ctrl + Space` | abrir la paleta (configurable) |
+| `Ctrl + Space` | abrir la paleta, y cerrarla si ya está abierta (configurable) |
 | escribir | filtrar |
 | `↑` `↓` `PgUp` `PgDn` | navegar |
 | `Enter` | aplicar a la selección |
 | `Shift + Enter` | invertir el diálogo de transición (mostrarlo u omitirlo) |
 | `Cmd/Ctrl + Enter` | aplicar sin cerrar la paleta |
 | `Tab` / `Shift + Tab` | cambiar de ámbito (Todo, Efectos, Transiciones, Presets, Comandos, Favoritos) |
-| `←` `→` | moverse por la lista de recientes cuando no has escrito nada |
-| `Cmd/Ctrl + D` | marcar o desmarcar favorito |
+| `Cmd/Ctrl + D` | marcar o desmarcar favorito (también con clic derecho en la fila) |
 | `Cmd/Ctrl + I` | crear un preset con lo que tenga el clip seleccionado |
 | `Cmd/Ctrl + Z` | deshacer el último cambio |
 | `Cmd/Ctrl + R` | reindexar efectos |
@@ -249,6 +252,9 @@ Dos herramientas que no son pruebas y por eso no están en `npm test`:
 - La barra de título es de Premiere. CEP no permite ventanas sin marco: el host dibuja el contorno
   de toda extensión visible, y UXP tampoco lo cambia. Lo único que está en nuestra mano es que la
   ventana mida lo que mide el contenido, que es lo que hace la paleta.
+- La paleta tampoco puede elegir *dónde* aparece. CEP expone el título y el tamaño de la ventana, y
+  nada más: no hay forma de posicionarla, así que abrirla junto al mouse tendría que hacerla mover
+  el helper nativo desde fuera, y en macOS eso pide permiso de Accesibilidad al sistema.
 - Adobe declaró CEP superado por UXP a partir de Premiere 25.6 y planea retirarlo. FX Premiere es
   CEP, así que funciona hoy en todas las versiones soportadas, pero el puerto a UXP es la tarea
   pendiente grande. A cambio traería transacciones reales: un solo paso de deshacer por preset.

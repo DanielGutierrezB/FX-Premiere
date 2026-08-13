@@ -44,8 +44,8 @@
                enough for a two row list. The host clamps anything below it. -->
           <Geometry>
             <Size>
-              <Width>560</Width>
-              <Height>360</Height>
+              <Width>440</Width>
+              <Height>300</Height>
             </Size>
             <MinSize>
               <Width>380</Width>

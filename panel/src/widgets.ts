@@ -18,3 +18,36 @@ export const buttonRow = (hint: string, buttons: HTMLElement[]): HTMLElement =>
     el('span', { class: 'field__hint', text: hint }),
     el('div', { class: 'field__control' }, buttons),
   ]);
+
+/** A few fixed choices side by side, for the settings that are a number with sensible values. */
+export const segmented = <T>(
+  options: Array<{ value: T; label: string }>,
+  current: T,
+  onPick: (value: T) => void,
+): HTMLElement =>
+  el(
+    'div',
+    { class: 'seg' },
+    options.map((option) =>
+      el('button', {
+        class: `seg__item${option.value === current ? ' seg__item--on' : ''}`,
+        text: option.label,
+        onclick: () => onPick(option.value),
+      }),
+    ),
+  );
+
+/** Colours as colours. CEP never opens the operating system picker, so a swatch is the honest UI. */
+export const swatches = (colours: string[], current: string, onPick: (colour: string) => void): HTMLElement =>
+  el(
+    'div',
+    { class: 'swatches' },
+    colours.map((colour) =>
+      el('button', {
+        class: `swatch${colour.toLowerCase() === current.toLowerCase() ? ' swatch--on' : ''}`,
+        style: `background:${colour}`,
+        title: colour,
+        onclick: () => onPick(colour),
+      }),
+    ),
+  );

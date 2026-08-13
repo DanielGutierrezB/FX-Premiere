@@ -137,10 +137,18 @@ export const closeSelf = (): void => cepApi().closeExtension();
  * palette is. It is how the window ends up the height of its own list instead of a fixed box with
  * dead space under it. Older hosts may not expose it at all, hence the guard.
  */
+/** Whether the size asked for has been recorded once, for diagnosing a host that ignores it. */
+let loggedResize = false;
+
 export const resizeSelf = (width: number, height: number): void => {
   const api = cepApi() as unknown as { resizeContent?: (w: number, h: number) => void };
   if (typeof api.resizeContent !== 'function') {
+    appendLog('panel', 'this host has no resizeContent, so the window keeps whatever size it had');
     return;
+  }
+  if (!loggedResize) {
+    loggedResize = true;
+    appendLog('panel', `asked the window for ${Math.round(width)}x${Math.round(height)}`);
   }
   try {
     api.resizeContent(Math.round(width), Math.round(height));

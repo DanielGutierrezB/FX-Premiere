@@ -27,23 +27,31 @@ export const createCepWindow = ({ html, home, extensionRoot = home, evalScript }
   });
   const { window } = dom;
 
-  // jsdom has no layout, so anything that measures itself reads zero. These stand-ins give the
-  // palette believable furniture heights: a row is a row, the field and the footer are fixed.
-  const measured = (name, height) =>
-    Object.defineProperty(window.HTMLElement.prototype, name, {
-      configurable: true,
-      get() {
-        if (this.classList.contains('results')) {
-          return this.childElementCount * 28;
+  // jsdom has no layout, so anything that measures itself reads zero. The panel measures the
+  // furniture it drew, row by row, so these are the heights of that furniture.
+  const FURNITURE = [
+    ['row', 28],
+    ['cap', 26],
+    ['more', 24],
+    ['empty', 80],
+  ];
+  Object.defineProperty(window.HTMLElement.prototype, 'offsetHeight', {
+    configurable: true,
+    get() {
+      for (const [name, height] of FURNITURE) {
+        if (this.classList.contains(name)) {
+          return height;
         }
-        if (this.classList.contains('sheet')) {
-          return 600;
-        }
-        return height(this);
-      },
-    });
-  measured('scrollHeight', () => 0);
-  measured('offsetHeight', (node) => (node.tagName === 'HEADER' ? 44 : node.tagName === 'FOOTER' && !node.classList.contains('foot--hidden') ? 34 : 0));
+      }
+      if (this.tagName === 'HEADER') {
+        return 44;
+      }
+      if (this.tagName === 'FOOTER') {
+        return this.classList.contains('foot--hidden') ? 0 : 34;
+      }
+      return 0;
+    },
+  });
 
   window.process = { platform: process.platform, env: { ...process.env, HOME: home } };
   window.cep_node = {

@@ -10,7 +10,7 @@ import {
 import { nodeRequire } from '@shared/node';
 import { serializeHotkey } from '@shared/hotkey';
 import { appendLog, settingsFile } from '@shared/paths';
-import { loadSettings, writeHelperStatus } from '@shared/settings';
+import { isPanelOpen, loadSettings, markPanelOpen, writeHelperStatus } from '@shared/settings';
 import type { Settings } from '@shared/types';
 import type { ChildProcessWithoutNullStreams } from 'child_process';
 
@@ -60,27 +60,57 @@ const stopHelper = (): void => {
   }
 };
 
+/** How long the panel is given to take its own marker down after being asked to close. */
+const DISMISS_GRACE_MS = 300;
+
+/**
+ * The shortcut toggles. A closed panel cannot hear anything, so the service opens it; an open one
+ * is told to go away and does it itself. If nothing takes the marker down in time, the marker was
+ * left behind by a panel that died, so it is cleared and the palette opens as usual.
+ */
+const summonOrDismiss = (): void => {
+  const wasOpen = isPanelOpen();
+  if (!wasOpen) {
+    openPanel();
+  }
+  // Whether this press opens or closes is decided here and carried in the event: the panel cannot
+  // tell the press that opened it from a second press arriving while it was still loading.
+  trigger({ settings: false, dismiss: wasOpen });
+  if (!wasOpen) {
+    return;
+  }
+  setTimeout(() => {
+    if (!isPanelOpen()) {
+      return;
+    }
+    log('a panel marker was left behind; opening instead of closing');
+    markPanelOpen(false);
+    openPanel();
+    trigger({ settings: false, dismiss: false });
+  }, DISMISS_GRACE_MS);
+};
+
+const trigger = (payload: { settings: boolean; dismiss: boolean }): void => {
+  try {
+    dispatchCepEvent(EVENT_TRIGGER_PALETTE, payload);
+  } catch (error) {
+    log(`trigger dispatch failed: ${String(error)}`);
+  }
+};
+
 const handleLine = (line: string): void => {
   const trimmed = line.trim();
   if (trimmed === '') {
     return;
   }
   if (trimmed === 'TRIGGER') {
-    openPanel();
-    try {
-      dispatchCepEvent(EVENT_TRIGGER_PALETTE, { settings: false });
-    } catch (error) {
-      log(`trigger dispatch failed: ${String(error)}`);
-    }
+    summonOrDismiss();
     return;
   }
   if (trimmed === 'TRIGGER_SETTINGS') {
+    // Asking for the settings screen is a destination, never a toggle.
     openPanel();
-    try {
-      dispatchCepEvent(EVENT_TRIGGER_PALETTE, { settings: true });
-    } catch (error) {
-      log(`settings dispatch failed: ${String(error)}`);
-    }
+    trigger({ settings: true, dismiss: false });
     return;
   }
   if (trimmed.startsWith('READY')) {

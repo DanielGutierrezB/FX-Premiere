@@ -1,9 +1,9 @@
 import { formatHotkey, hotkeyFromEvent, isHotkeyUsable } from '@shared/hotkey';
-import { defaultSettings, readHelperStatus } from '@shared/settings';
+import { ACCENTS, LIST_COUNTS, WIDTHS, defaultSettings, readHelperStatus } from '@shared/settings';
 import type { Settings } from '@shared/types';
 import { applyUpdate, checkForUpdate, isDevInstall, localVersion, type UpdateCheck } from '@shared/updater';
 import { clear, el } from '../dom';
-import { buttonRow, fieldRow, switchNode } from '../widgets';
+import { buttonRow, fieldRow, segmented, swatches, switchNode } from '../widgets';
 
 const RELOAD_DELAY_MS = 900;
 
@@ -15,6 +15,8 @@ export interface SettingsHost {
   hostVersion(): string;
   indexedItems(): number;
   applyTheme(): void;
+  /** Asks the palette to size the window again, for the settings that change how big it is. */
+  refit(): void;
   toast(message: string, kind?: 'info' | 'error'): void;
   reindex(): Promise<void>;
   refreshPresets(): Promise<void>;
@@ -179,6 +181,35 @@ export class SettingsSheet {
         }),
       ),
     );
+    container.appendChild(el('div', { class: 'section-title', text: 'The resting list' }));
+    container.appendChild(
+      fieldRow(
+        'Recents to show',
+        'What the palette offers before you type anything, newest first.',
+        segmented(
+          LIST_COUNTS.map((count) => ({ value: count, label: String(count) })),
+          settings.recentCount,
+          (value) => {
+            settings.recentCount = value;
+            this.save(false);
+          },
+        ),
+      ),
+    );
+    container.appendChild(
+      fieldRow(
+        'Favourites to show',
+        'Listed under the recents. Right click any row to add or remove one.',
+        segmented(
+          LIST_COUNTS.map((count) => ({ value: count, label: String(count) })),
+          settings.favoriteCount,
+          (value) => {
+            settings.favoriteCount = value;
+            this.save(false);
+          },
+        ),
+      ),
+    );
 
     container.appendChild(el('div', { class: 'section-title', text: 'Presets' }));
     const folderInput = el('input', { type: 'text', placeholder: '/path/to/my/presets' });
@@ -231,16 +262,26 @@ export class SettingsSheet {
     container.appendChild(
       fieldRow(
         'Accent colour',
-        'Used for highlights and the active row.',
-        el('input', {
-          type: 'color',
-          value: settings.accent,
-          oninput: (event: Event) => {
-            settings.accent = (event.target as HTMLInputElement).value;
-            this.host.applyTheme();
-            this.host.persist(false);
-          },
+        'Used for the active row and every highlight.',
+        swatches(ACCENTS, settings.accent, (colour) => {
+          settings.accent = colour;
+          this.host.applyTheme();
+          this.save(false);
         }),
+      ),
+    );
+    container.appendChild(
+      fieldRow(
+        'Window width',
+        'The height always follows the list, so only the width is a choice.',
+        segmented(
+          WIDTHS.map((width) => ({ value: width, label: `${width}` })),
+          settings.width,
+          (value) => {
+            settings.width = value;
+            this.save(false);
+          },
+        ),
       ),
     );
     container.appendChild(
@@ -429,6 +470,7 @@ export class SettingsSheet {
 
   private save(restartHelper: boolean): void {
     this.host.persist(restartHelper);
+    this.host.refit();
     this.rerender();
   }
 

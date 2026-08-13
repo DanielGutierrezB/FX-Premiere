@@ -108,9 +108,11 @@ body {
   flex-direction: column;
 }
 
+/* Sized to its rows, not to the window: `flex: 1` would stretch it, and then the panel measuring
+   itself would only ever read back the height it already had and could never shrink. */
 .results {
-  flex: 1;
-  min-height: 0;
+  flex: 0 1 auto;
+  max-height: 100%;
   margin: 0;
   padding: 6px 0;
   list-style: none;
@@ -412,6 +414,101 @@ input[type="color"] {
 .button[disabled]:hover {
   border-color: var(--border-strong);
   color: var(--text);
+}
+
+/* Right click on a row. Positioned in script, because it has to stay inside the window. */
+.menu {
+  position: fixed;
+  z-index: 20;
+  min-width: 168px;
+  padding: 4px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.5);
+}
+
+.menu__title {
+  padding: 5px 9px 6px;
+  color: var(--text-faint);
+  font-size: calc(10px * var(--font-scale));
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.menu__item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  appearance: none;
+  border: 0;
+  background: none;
+  padding: 6px 9px;
+  border-radius: 5px;
+  color: var(--text);
+  font: inherit;
+  font-size: calc(12px * var(--font-scale));
+  cursor: pointer;
+}
+
+.menu__item:hover {
+  background: var(--accent-dim);
+  color: var(--accent);
+}
+
+/* A row of fixed choices: one box, dividers between the options, the chosen one in accent. */
+.seg {
+  display: flex;
+  flex-shrink: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.seg__item {
+  appearance: none;
+  border: 0;
+  border-left: 1px solid var(--border-strong);
+  background: var(--bg-input);
+  color: var(--text-dim);
+  min-width: 34px;
+  padding: 4px 8px;
+  font: inherit;
+  font-size: calc(11px * var(--font-scale));
+  cursor: pointer;
+}
+
+.seg__item:first-child {
+  border-left: 0;
+}
+
+.seg__item:hover {
+  color: var(--text);
+}
+
+.seg__item--on {
+  background: var(--accent-dim);
+  color: var(--accent);
+}
+
+.swatches {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.swatch {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid rgba(0, 0, 0, 0.4);
+  cursor: pointer;
+}
+
+.swatch--on {
+  box-shadow: 0 0 0 2px var(--bg-raised), 0 0 0 3px var(--accent);
 }
 
 .switch {

@@ -1,9 +1,9 @@
 import { DEFAULT_HOTKEY } from './hotkey';
 import { nodeRequire } from './node';
-import { helperStatusFile, settingsDir, settingsFile } from './paths';
+import { helperStatusFile, panelOpenFile, settingsDir, settingsFile } from './paths';
 import { TransitionAlignment, type CatalogItem, type HelperStatus, type Settings } from './types';
 
-const SETTINGS_VERSION = 2;
+const SETTINGS_VERSION = 3;
 
 /** A light sky blue that reads well on Premiere's dark chrome. */
 export const ACCENT = '#4fc3f7';
@@ -33,7 +33,20 @@ export const defaultSettings = (): Settings => ({
   fontScale: 1,
   accent: ACCENT,
   hotkeyEnabled: true,
+  recentCount: 6,
+  favoriteCount: 3,
+  width: 440,
 });
+
+/** Choices offered in the settings sheet. Anything else in the file is pulled back into range. */
+export const WIDTHS = [380, 440, 520];
+export const LIST_COUNTS = [0, 3, 6, 9, 12];
+
+/** A handful of accents that hold up on Premiere's grey, since a colour picker never opens in CEP. */
+export const ACCENTS = [ACCENT, '#7cd6a5', '#f2c14e', '#f08a7c', '#c79bf2', '#8fa6bd'];
+
+const inRange = (value: unknown, fallback: number, min: number, max: number): number =>
+  typeof value === 'number' && Number.isFinite(value) ? Math.min(max, Math.max(min, Math.round(value))) : fallback;
 
 /** `presetFolders` was the name until v2, and it always accepted files too. */
 const presetSourcesFrom = (raw: Partial<Settings> & { presetFolders?: unknown }, fallback: string[]): string[] => {
@@ -61,6 +74,9 @@ const mergeSettings = (raw: Partial<Settings> | null): Settings => {
     usage: raw.usage && typeof raw.usage === 'object' ? raw.usage : base.usage,
     // Nobody chose the old purple on purpose, so carry them over to the new default.
     accent: raw.accent === LEGACY_ACCENT || !raw.accent ? base.accent : raw.accent,
+    recentCount: inRange(raw.recentCount, base.recentCount, 0, 12),
+    favoriteCount: inRange(raw.favoriteCount, base.favoriteCount, 0, 12),
+    width: inRange(raw.width, base.width, 320, 900),
     version: SETTINGS_VERSION,
   };
 };
@@ -120,6 +136,30 @@ export const readHelperStatus = (): HelperStatus | null => {
     return JSON.parse(fs.readFileSync(file, 'utf8')) as HelperStatus;
   } catch {
     return null;
+  }
+};
+
+/** The palette announces itself while it is on screen, so the shortcut can toggle it. */
+export const markPanelOpen = (open: boolean): void => {
+  try {
+    const fs = nodeRequire()('fs') as typeof import('fs');
+    if (!open) {
+      fs.rmSync(panelOpenFile(), { force: true });
+      return;
+    }
+    fs.mkdirSync(settingsDir(), { recursive: true });
+    fs.writeFileSync(panelOpenFile(), String(Date.now()), 'utf8');
+  } catch {
+    /* the toggle degrades to always-open, which is the old behaviour */
+  }
+};
+
+export const isPanelOpen = (): boolean => {
+  try {
+    const fs = nodeRequire()('fs') as typeof import('fs');
+    return fs.existsSync(panelOpenFile());
+  } catch {
+    return false;
   }
 };
 

@@ -24,6 +24,12 @@ export const helperStatusFile = (): string => inSettingsDir('helper-status.json'
 
 export const capturedDir = (): string => inSettingsDir('captured');
 
+/**
+ * Exists only while the palette is on screen. The invisible service reads it to decide whether the
+ * shortcut means open or close, because a closed panel cannot answer for itself.
+ */
+export const panelOpenFile = (): string => inSettingsDir('panel-open');
+
 export const appendLog = (scope: string, message: string): void => {
   try {
     const fs = nodeRequire()('fs') as typeof import('fs');

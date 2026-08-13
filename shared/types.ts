@@ -179,4 +179,9 @@ export interface Settings {
   fontScale: number;
   accent: string;
   hotkeyEnabled: boolean;
+  /** How many rows the resting palette offers, per group. Zero hides the group. */
+  recentCount: number;
+  favoriteCount: number;
+  /** Content width asked of the host. The height always follows what is on screen. */
+  width: number;
 }

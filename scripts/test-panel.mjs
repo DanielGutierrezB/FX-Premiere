@@ -378,10 +378,52 @@ const failedInstall = await waitFor(() => /Update failed/.test(window.document.q
 check('a failed install is explained instead of silently dying', failedInstall, window.document.querySelector('.toast')?.textContent ?? '');
 check('the update offer comes back so it can be retried', versionButton()?.textContent === 'Update to 9.9.9', versionButton()?.textContent ?? '');
 
+// Three settings that change what the palette looks like, so each one is checked by its effect.
+const seg = (label) => {
+  const rows = [...window.document.querySelectorAll('.field')];
+  const row = rows.find((node) => node.textContent.includes(label));
+  return [...(row?.querySelectorAll('.seg__item') ?? [])];
+};
+// A default that is not among the choices would leave the control showing nothing at all.
+const chosen = (selector) => [...window.document.querySelectorAll(selector)].filter((node) => node.className.includes('--on')).length;
+const marked = (label) => seg(label).filter((node) => node.className.includes('--on')).length;
+check(
+  'every one of these settings shows which value is in force',
+  marked('Recents to show') === 1 && marked('Favourites to show') === 1 && marked('Window width') === 1,
+  `${marked('Recents to show')} / ${marked('Favourites to show')} / ${marked('Window width')}`,
+);
+check('the accent is offered as swatches, since no colour picker opens in CEP', window.document.querySelectorAll('.swatch').length > 1);
+check('and the current accent is one of them', chosen('.swatch') === 1, String(chosen('.swatch')));
+const otherSwatch = [...window.document.querySelectorAll('.swatch')].find((node) => !node.className.includes('swatch--on'));
+otherSwatch.click();
+await settle(6);
+check('picking a swatch changes the accent', savedSettings().accent !== '#4fc3f7', savedSettings().accent);
+
+const widthButton = seg('Window width').find((node) => node.textContent === '380');
+widthButton.click();
+await settle(40);
+check('choosing a width saves it', savedSettings().width === 380, String(savedSettings().width));
+check(
+  'and the window is asked for it right away',
+  (cepCalls.resizes.at(-1) ?? [])[0] === 380,
+  JSON.stringify(cepCalls.resizes.at(-1)),
+);
+
+const recentsButton = seg('Recents to show').find((node) => node.textContent === '3');
+recentsButton.click();
+await settle(6);
+check('choosing how many recents to show saves it', savedSettings().recentCount === 3, String(savedSettings().recentCount));
+
 const closesBeforeSettingsEscape = cepCalls.closeExtension;
 await press('Escape');
 check('Escape leaves settings', !window.document.querySelector('.sheet'));
 check('the update found in settings is carried back to the palette line', /update to 9\.9\.9/.test(foot()), foot());
+await type('');
+check(
+  'the resting list honours the chosen number of recents',
+  rows().length <= 3 + savedSettings().favoriteCount,
+  `${rows().length} rows`,
+);
 check(
   'Escape in settings does not close the panel',
   cepCalls.closeExtension === closesBeforeSettingsEscape,
@@ -472,9 +514,54 @@ cep.emit('com.fxpremiere.event.trigger', { settings: false });
 await settle(20);
 check('the trigger event resets the query', window.document.querySelector('.search__input')?.value === '');
 check('the trigger event does not close the panel', cepCalls.closeExtension === before);
+
+// Whether a press opens or closes is decided by the service, which is the only side that knows
+// both states, and carried in the event. The panel obeys and takes its own marker down.
+const openMarker = join(settingsDir, 'panel-open');
+check('the palette announces itself while it is up', existsSync(openMarker));
+cep.emit('com.fxpremiere.event.trigger', { settings: false, dismiss: true });
+await settle(20);
+check('a second press closes the palette', cepCalls.closeExtension === before + 1, String(cepCalls.closeExtension));
+check('and stops announcing itself, so the next press opens', !existsSync(openMarker));
+
 cep.emit('com.fxpremiere.event.trigger', { settings: true });
 await settle(20);
 check('the settings trigger opens the settings screen', Boolean(window.document.querySelector('.sheet')));
+
+console.log('\nRight click on a row');
+await press('Escape');
+cep.emit('com.fxpremiere.event.trigger', { settings: false });
+await settle(20);
+await type('gaussian blur');
+const menuOn = (row) => {
+  const event = new window.MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 40, clientY: 60 });
+  row.dispatchEvent(event);
+};
+menuOn(rows()[0]);
+await settle(4);
+const menu = () => window.document.querySelector('.menu');
+check('right clicking a row opens a menu', Boolean(menu()), '');
+const favoriteItem = () => [...window.document.querySelectorAll('.menu__item')].find((node) => /favorites/i.test(node.textContent));
+check('the menu offers to favourite it', Boolean(favoriteItem()), menu()?.textContent ?? '');
+favoriteItem().click();
+await settle(10);
+check('the row is starred afterwards', Boolean(window.document.querySelector('.row__star')), rowNames()[0] ?? '');
+check('the choice is saved', savedSettings().favorites.some((id) => /Gaussian Blur/i.test(id)), JSON.stringify(savedSettings().favorites));
+check('the menu closes once used', !menu());
+
+await type('');
+check('favourites are listed under the recents', /Favorites/.test(window.document.body.textContent ?? ''), '');
+const starredRow = () => rows().find((row) => row.querySelector('.row__star'));
+menuOn(starredRow());
+await settle(4);
+check(
+  'right clicking a favourite offers to remove it',
+  /Remove from favorites/.test(menu()?.textContent ?? ''),
+  menu()?.textContent ?? '',
+);
+window.document.body.dispatchEvent(new window.MouseEvent('mousedown', { bubbles: true }));
+await settle(4);
+check('clicking away closes the menu', !menu());
 
 console.log('\nEmpty selection is handled gracefully');
 await press('Escape');
