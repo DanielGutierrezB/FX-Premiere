@@ -5,7 +5,7 @@
 import { execFileSync } from 'node:child_process';
 import { createServer } from 'node:http';
 import { createRequire } from 'node:module';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -78,6 +78,14 @@ for (const entry of ['panel', 'service', 'host', 'icons', 'CSXS', 'helper']) {
   }
 }
 writeFileSync(join(packaged, 'version.json'), JSON.stringify({ version: '9.9.9' }), 'utf8');
+// A released package always carries both hotkey helpers, even when this machine could only build one.
+for (const [dir, name] of [['mac', 'fxp-hotkey'], ['win', 'fxp-hotkey.exe']]) {
+  const helper = join(packaged, 'helper', dir, name);
+  if (!existsSync(helper)) {
+    mkdirSync(dirname(helper), { recursive: true });
+    writeFileSync(helper, `fake ${dir} helper`, 'utf8');
+  }
+}
 writeFileSync(join(packaged, 'NEWFILE.txt'), 'from the release', 'utf8');
 mkdirSync(join(packaged, 'META-INF'), { recursive: true });
 writeFileSync(join(packaged, 'META-INF', 'signatures.xml'), '<signature/>', 'utf8');
@@ -144,6 +152,38 @@ check('the panel entry point was replaced', readFileSync(join(installed, 'panel'
 check('files that no longer ship are removed', !existsSync(join(installed, 'panel', 'STALE.txt')));
 check('the zip envelope is not copied into the extension', !existsSync(join(installed, 'META-INF')) && !existsSync(join(installed, 'mimetype')));
 check('the hotkey helper stays executable', !existsSync(join(installed, 'helper', 'mac', 'fxp-hotkey')) || (nodeRequire('fs').statSync(join(installed, 'helper', 'mac', 'fxp-hotkey')).mode & 0o111) !== 0);
+
+check(
+  'both hotkey helpers survive an update',
+  existsSync(join(installed, 'helper', 'mac', 'fxp-hotkey')) && existsSync(join(installed, 'helper', 'win', 'fxp-hotkey.exe')),
+);
+
+// Windows will not delete the hotkey helper while it is running, and it is always running when an
+// update is installed. A directory that cannot be emptied stands in for it here.
+console.log('\nA file that cannot be deleted');
+const fs = nodeRequire('fs');
+const trapped = join(installed, 'host');
+fs.chmodSync(trapped, 0o500);
+let lockedError = '';
+try {
+  await updater.applyUpdate(`${base}/download`);
+} catch (error) {
+  lockedError = error.message;
+}
+fs.chmodSync(trapped, 0o700);
+check('the update still goes through', lockedError === '', lockedError);
+check('the new files are in place', existsSync(join(installed, 'host', 'fxpremiere.jsx')));
+const retired = readdirSync(installed).filter((entry) => entry.endsWith('.fxp-old'));
+check('the old one is moved aside rather than left in the way', retired.length === 1, JSON.stringify(retired));
+for (const entry of retired) {
+  fs.chmodSync(join(installed, entry), 0o700);
+}
+await updater.applyUpdate(`${base}/download`);
+check(
+  'and swept up by the next update',
+  readdirSync(installed).every((entry) => !entry.endsWith('.fxp-old')),
+  JSON.stringify(readdirSync(installed)),
+);
 
 console.log('\nGuard rails');
 let truncatedError = '';

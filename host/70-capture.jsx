@@ -110,11 +110,6 @@ FXP.describeComponent = function (component) {
     };
 };
 
-FXP.firstSelectedEntry = function () {
-    var selection = FXP.requireSelection();
-    return selection.length > 0 ? selection[0] : null;
-};
-
 FXP.inspectSelection = function () {
     var selection = FXP.requireSelection();
     var entry = selection.length > 0 ? selection[0] : null;

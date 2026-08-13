@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { createHost, writePresetFixture } from './lib/mock-premiere.mjs';
+import { FileStub, createHost, writePresetFixture } from './lib/mock-premiere.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const hostScript = join(root, 'dist', 'host', 'fxpremiere.jsx');
@@ -21,7 +21,7 @@ if (!existsSync(hostScript)) {
 
 const stage = mkdtempSync(join(tmpdir(), 'fxp-host-'));
 const fixtureFile = writePresetFixture(stage);
-const { world, call } = createHost({ hostScript, documentsRoot: join(stage, 'Documents') });
+const { world, call, FXP } = createHost({ hostScript, documentsRoot: join(stage, 'Documents') });
 
 console.log('Sequence and selection');
 const info = call({ op: 'sequenceInfo' });
@@ -46,6 +46,22 @@ const presets = items.filter((item) => item.kind === 'preset');
 check('both fixture presets are indexed', presets.length === 2, JSON.stringify(presets.map((item) => item.name)));
 const nested = presets.find((item) => item.name === 'Soft Blur');
 check('nested presets keep their folder path', nested?.group === 'Preset \u00b7 My Folder', nested?.group);
+
+console.log('\nPresets are stamped rather than re-read');
+const stamped = call({ op: 'presets', presetSources: [fixtureFile], since: '' });
+check('a first ask reads the files', stamped.data.unchanged === false && stamped.data.items.length === 2, JSON.stringify(stamped.data?.items?.length));
+const again = call({ op: 'presets', presetSources: [fixtureFile], since: stamped.data.stamp });
+check('asking again with the same stamp reads nothing', again.data.unchanged === true && again.data.items.length === 0, JSON.stringify(again.data));
+check('the stamp is short enough to carry on every open', stamped.data.stamp.length < 40, stamped.data.stamp);
+
+console.log('\nWindows compares paths without caring about case');
+FileStub.fs = 'Windows';
+check('a Windows path folds case and separators', FXP.pathKey('C:\\Users\\You\\Presets') === 'c:/users/you/presets', FXP.pathKey('C:\\Users\\You\\Presets'));
+const doubled = FXP.expandPresetSources([fixtureFile, fixtureFile.toUpperCase()]);
+check('the same file added twice is indexed once', doubled.length === 1, JSON.stringify(doubled));
+delete FileStub.fs;
+check('elsewhere the path is left exactly as it is', FXP.pathKey('/Users/You/Presets') === '/Users/You/Presets');
+check('and case still tells two files apart', FXP.expandPresetSources([fixtureFile, fixtureFile.toUpperCase()]).length === 2);
 
 console.log('\nApplying a video effect to the selection');
 const effectResult = call({

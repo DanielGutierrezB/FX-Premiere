@@ -7,7 +7,7 @@ import { buttonRow, fieldRow, segmented, swatches, switchNode } from '../widgets
 
 const RELOAD_DELAY_MS = 900;
 
-export interface SettingsHost {
+interface SettingsHost {
   /** The live settings object: the sheet edits it in place and then asks for a save. */
   settings(): Settings;
   replaceSettings(next: Settings): void;
@@ -212,7 +212,10 @@ export class SettingsSheet {
     );
 
     container.appendChild(el('div', { class: 'section-title', text: 'Presets' }));
-    const folderInput = el('input', { type: 'text', placeholder: '/path/to/my/presets' });
+    const folderInput = el('input', {
+      type: 'text',
+      placeholder: navigator.platform.startsWith('Win') ? 'C:\\Users\\you\\Presets' : '/path/to/my/presets',
+    });
     container.appendChild(
       fieldRow(
         'Extra preset folders',

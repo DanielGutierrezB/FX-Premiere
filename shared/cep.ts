@@ -33,12 +33,10 @@ declare global {
   }
 }
 
-export const PANEL_EXTENSION_ID = 'com.fxpremiere.panel';
-export const SERVICE_EXTENSION_ID = 'com.fxpremiere.service';
+const PANEL_EXTENSION_ID = 'com.fxpremiere.panel';
 
 export const EVENT_TRIGGER_PALETTE = 'com.fxpremiere.event.trigger';
 export const EVENT_SETTINGS_CHANGED = 'com.fxpremiere.event.settings';
-export const EVENT_HELPER_STATUS = 'com.fxpremiere.event.helperStatus';
 
 const cepApi = (): AdobeCep => {
   const api = window.__adobe_cep__;
@@ -61,7 +59,7 @@ const stripFileScheme = (raw: string): string => {
 export const systemPath = (type: 'extension' | 'userData' | 'myDocuments' | 'hostApplication' | 'commonFiles'): string =>
   stripFileScheme(cepApi().getSystemPath(type));
 
-export interface HostEnvironment {
+interface HostEnvironment {
   appName: string;
   appVersion: string;
   appLocale: string;
@@ -73,11 +71,11 @@ export interface HostEnvironment {
   };
 }
 
-export const hostEnvironment = (): HostEnvironment => JSON.parse(cepApi().getHostEnvironment()) as HostEnvironment;
+const hostEnvironment = (): HostEnvironment => JSON.parse(cepApi().getHostEnvironment()) as HostEnvironment;
 
-export const extensionId = (): string => cepApi().getExtensionId();
+const extensionId = (): string => cepApi().getExtensionId();
 
-export const evalScript = (script: string): Promise<string> =>
+const evalScript = (script: string): Promise<string> =>
   new Promise((resolve) => {
     cepApi().evalScript(script, (result) => resolve(result));
   });

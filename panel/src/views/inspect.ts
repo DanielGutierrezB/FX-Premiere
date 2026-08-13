@@ -2,7 +2,7 @@ import type { CapturedPreset, ClipInspection } from '@shared/types';
 import { clear, el } from '../dom';
 import { buttonRow, switchNode } from '../widgets';
 
-export interface InspectHost {
+interface InspectHost {
   /** Reads every parameter of every effect on the selected clip. */
   capture(): Promise<CapturedPreset | null>;
   save(preset: CapturedPreset): void;

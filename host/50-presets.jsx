@@ -108,10 +108,14 @@ FXP.expandPresetSources = function (sources) {
         }
     }
     var unique = [];
+    var seen = [];
     for (var f = 0; f < files.length; f++) {
-        if (!FXP.contains(unique, files[f])) {
-            unique[unique.length] = files[f];
+        var key = FXP.pathKey(files[f]);
+        if (FXP.contains(seen, key)) {
+            continue;
         }
+        seen[seen.length] = key;
+        unique[unique.length] = files[f];
     }
     return unique;
 };
@@ -236,7 +240,7 @@ FXP.presetState = function (path) {
     if (stamp === '') {
         return null;
     }
-    var cached = FXP.presetCache['@' + path];
+    var cached = FXP.presetCache['@' + FXP.pathKey(path)];
     if (cached && cached.stamp === stamp) {
         return cached.state;
     }
@@ -254,7 +258,7 @@ FXP.presetState = function (path) {
     if (rootId) {
         FXP.walkPresetBin(state, rootId, '', 0);
     }
-    FXP.presetCache['@' + path] = { stamp: stamp, state: state };
+    FXP.presetCache['@' + FXP.pathKey(path)] = { stamp: stamp, state: state };
     return state;
 };
 
@@ -267,7 +271,7 @@ FXP.presetState = function (path) {
 FXP.presetStamp = function (files) {
     var parts = [];
     for (var i = 0; i < files.length; i++) {
-        parts[parts.length] = files[i] + '@' + FXP.fileStamp(files[i]);
+        parts[parts.length] = FXP.pathKey(files[i]) + '@' + FXP.fileStamp(files[i]);
     }
     var text = parts.join('|');
     // Hashed rather than sent whole: a folder of presets would otherwise be kilobytes of path.
@@ -276,10 +280,6 @@ FXP.presetStamp = function (files) {
         hash = ((hash * 33) ^ text.charCodeAt(c)) >>> 0;
     }
     return String(hash) + ':' + String(text.length);
-};
-
-FXP.collectPresets = function (sources, warnings) {
-    return FXP.presetsFromFiles(FXP.expandPresetSources(sources), warnings);
 };
 
 FXP.presetsFromFiles = function (files, warnings) {

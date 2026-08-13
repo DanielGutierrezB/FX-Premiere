@@ -110,16 +110,20 @@ const writeDebug = () => {
 };
 
 const buildMacHelper = () => {
-  const target = ensure(join(dist, 'helper', 'mac'));
-  const output = join(target, 'fxp-hotkey');
+  // The directory is only created once there is something to put in it: an empty helper folder in a
+  // package looks like a helper that failed to start rather than one that was never built.
+  const output = join(dist, 'helper', 'mac', 'fxp-hotkey');
+  const target = () => ensure(dirname(output));
   const prebuilt = join(root, 'prebuilt', 'mac', 'fxp-hotkey');
   if (process.platform !== 'darwin') {
     if (existsSync(prebuilt)) {
+      target();
       copyFileSync(prebuilt, output);
       return 'copied prebuilt macOS helper';
     }
     return 'skipped macOS helper (not on macOS)';
   }
+  target();
   try {
     execFileSync(
       'swiftc',
@@ -139,24 +143,26 @@ const buildMacHelper = () => {
 };
 
 const buildWindowsHelper = () => {
-  const target = ensure(join(dist, 'helper', 'win'));
-  const output = join(target, 'fxp-hotkey.exe');
+  const output = join(dist, 'helper', 'win', 'fxp-hotkey.exe');
+  const target = () => ensure(dirname(output));
   const prebuilt = join(root, 'prebuilt', 'win', 'fxp-hotkey.exe');
   const source = join(root, 'helper', 'win', 'hotkey.cpp');
   if (process.platform !== 'win32') {
     if (existsSync(prebuilt)) {
+      target();
       copyFileSync(prebuilt, output);
       return 'copied prebuilt Windows helper';
     }
     return 'skipped Windows helper (not on Windows)';
   }
+  const built = target();
   const attempts = [
     ['g++', ['-O2', '-std=c++17', '-static', source, '-o', output, '-luser32']],
     ['cl', ['/EHsc', '/O2', '/std:c++17', source, `/Fe:${output}`, 'user32.lib']],
   ];
   for (const [command, args] of attempts) {
     try {
-      execFileSync(command, args, { stdio: 'pipe', cwd: target });
+      execFileSync(command, args, { stdio: 'pipe', cwd: built });
       return `compiled Windows helper with ${command}`;
     } catch {
       /* try the next toolchain */

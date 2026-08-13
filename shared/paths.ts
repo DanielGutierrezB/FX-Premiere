@@ -18,7 +18,7 @@ const inSettingsDir = (name: string): string => {
 
 export const settingsFile = (): string => inSettingsDir('settings.json');
 
-export const logFile = (): string => inSettingsDir('fx-premiere.log');
+const logFile = (): string => inSettingsDir('fx-premiere.log');
 
 export const helperStatusFile = (): string => inSettingsDir('helper-status.json');
 

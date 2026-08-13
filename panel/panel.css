@@ -347,18 +347,6 @@ body {
 /* Sheet fields only: the search line is bare on purpose and must not grow a box. */
 input[type="text"]:not(.search__input),
 input[type="number"],
-select {
-  background: var(--bg-input);
-  border: 1px solid var(--border-strong);
-  border-radius: 6px;
-  color: var(--text);
-  font-family: var(--font);
-  font-size: calc(12px * var(--font-scale));
-  padding: 6px 8px;
-  outline: 0;
-  user-select: text;
-}
-
 input[type="number"] {
   width: 74px;
   font-family: var(--mono);
@@ -367,19 +355,6 @@ input[type="number"] {
 
 input[type="text"]:not(.search__input):focus,
 input[type="number"]:focus,
-select:focus {
-  border-color: var(--accent);
-}
-
-input[type="color"] {
-  width: 34px;
-  height: 26px;
-  padding: 0;
-  border: 1px solid var(--border-strong);
-  border-radius: 6px;
-  background: var(--bg-input);
-}
-
 .button {
   border: 1px solid var(--border-strong);
   background: var(--bg-raised);

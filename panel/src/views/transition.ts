@@ -17,7 +17,7 @@ const SIDE_OPTIONS: Array<{ value: TransitionSide; label: string }> = [
   { value: 'both', label: 'Both edges' },
 ];
 
-export interface TransitionHost {
+interface TransitionHost {
   /** Live sequence numbers, read on every render because the selection can change underneath. */
   fps(): number;
   selectedClips(): number;

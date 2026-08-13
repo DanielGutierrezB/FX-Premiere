@@ -22,6 +22,18 @@ if [[ ! -d "$DIST" ]]; then
   exit 1
 fi
 
+# The ZXP is the one artifact both platforms install, so it has to carry both hotkey helpers.
+# Without this check a Mac-only build signs happily and every Windows editor who installs it is
+# told the helper is missing, with no shortcut and no clue why.
+for HELPER in "$DIST/helper/mac/fxp-hotkey" "$DIST/helper/win/fxp-hotkey.exe"; do
+  if [[ ! -s "$HELPER" ]]; then
+    echo "Refusing to sign: $HELPER is missing or empty." >&2
+    echo "The ZXP must carry both helpers. Put the other platform's binary in prebuilt/mac or" >&2
+    echo "prebuilt/win and rebuild; CI does this by downloading the helper job's artifact." >&2
+    exit 1
+  fi
+done
+
 mkdir -p "$RELEASE" "$CERTS"
 
 if [[ ! -x "$SIGN_TOOL" ]]; then

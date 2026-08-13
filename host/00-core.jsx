@@ -28,6 +28,22 @@ FXP.contains = function (list, value) {
     return false;
 };
 
+/**
+ * Windows opens C:\\Presets and c:\\presets as the same file, so anything that compares or caches by
+ * path has to agree with it, or the same preset library counts twice and its stamp never settles.
+ */
+FXP.pathKey = function (path) {
+    var text = String(path);
+    try {
+        if (File.fs === 'Windows') {
+            return text.replace(/\\/g, '/').toLowerCase();
+        }
+    } catch (error) {
+        /* no File in scope means no reason to fold case */
+    }
+    return text;
+};
+
 FXP.errorText = function (error) {
     if (!error) {
         return 'Unknown error';

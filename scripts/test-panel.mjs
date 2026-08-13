@@ -593,6 +593,27 @@ window.document.body.dispatchEvent(new window.MouseEvent('mousedown', { bubbles:
 await settle(4);
 check('clicking away closes the menu', !menu());
 
+// A preset the palette saved is a file the palette has to be able to throw away again.
+await type('my look');
+menuOn(rows()[0]);
+await settle(4);
+const deleteItem = () => [...window.document.querySelectorAll('.menu__item')].find((node) => /Delete this preset/.test(node.textContent));
+check('a saved preset can be deleted from its own menu', Boolean(deleteItem()), menu()?.textContent ?? '');
+deleteItem().click();
+await settle(20);
+check('the file behind it is gone', !existsSync(capturedFile));
+check('and so is the row', !rowNames().includes('My Look'), JSON.stringify(rowNames()));
+check(
+  'it does not linger in the recents either',
+  !savedSettings().recents.some((id) => /My Look/.test(id)),
+  JSON.stringify(savedSettings().recents),
+);
+menuOn(rows()[0] ?? window.document.body);
+await settle(4);
+check('effects Premiere owns cannot be deleted from here', !deleteItem(), menu()?.textContent ?? '');
+window.document.body.dispatchEvent(new window.MouseEvent('mousedown', { bubbles: true }));
+await settle(4);
+
 console.log('\nEmpty selection is handled gracefully');
 await press('Escape');
 world.select();

@@ -6,7 +6,7 @@ import { TransitionAlignment, type CatalogItem, type HelperStatus, type Settings
 const SETTINGS_VERSION = 3;
 
 /** A light sky blue that reads well on Premiere's dark chrome. */
-export const ACCENT = '#4fc3f7';
+const ACCENT = '#4fc3f7';
 const LEGACY_ACCENT = '#a48cff';
 
 /** Keeps the resting palette small: only what you actually reach for is remembered. */
@@ -106,6 +106,9 @@ export const rememberItem = (settings: Settings, item: CatalogItem): void => {
   }
 };
 
+/** Notepad saves a byte order mark, and JSON.parse refuses it, which would silently reset a profile. */
+const readJsonText = (raw: string): string => raw.replace(/^\uFEFF/, '');
+
 export const loadSettings = (): Settings => {
   try {
     const fs = nodeRequire()('fs') as typeof import('fs');
@@ -113,7 +116,7 @@ export const loadSettings = (): Settings => {
     if (!fs.existsSync(file)) {
       return defaultSettings();
     }
-    return mergeSettings(JSON.parse(fs.readFileSync(file, 'utf8')) as Partial<Settings>);
+    return mergeSettings(JSON.parse(readJsonText(fs.readFileSync(file, 'utf8'))) as Partial<Settings>);
   } catch {
     return defaultSettings();
   }
@@ -136,7 +139,7 @@ export const readHelperStatus = (): HelperStatus | null => {
     if (!fs.existsSync(file)) {
       return null;
     }
-    return JSON.parse(fs.readFileSync(file, 'utf8')) as HelperStatus;
+    return JSON.parse(readJsonText(fs.readFileSync(file, 'utf8'))) as HelperStatus;
   } catch {
     return null;
   }
@@ -170,7 +173,12 @@ export const writeHelperStatus = (status: HelperStatus): void => {
   try {
     const fs = nodeRequire()('fs') as typeof import('fs');
     fs.mkdirSync(settingsDir(), { recursive: true });
-    fs.writeFileSync(helperStatusFile(), JSON.stringify(status, null, 2), 'utf8');
+    const file = helperStatusFile();
+    // Written aside and moved into place: the settings screen reads this file while the service is
+    // writing it, and half a JSON object reads as a listener that is not running.
+    const temp = `${file}.tmp`;
+    fs.writeFileSync(temp, JSON.stringify(status, null, 2), 'utf8');
+    fs.renameSync(temp, file);
   } catch {
     /* status reporting is advisory only */
   }

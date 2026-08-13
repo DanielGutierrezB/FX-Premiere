@@ -10,7 +10,7 @@ const NEGATIVE = -1e9;
 
 const SEPARATORS = new Set([' ', '-', '_', '/', '.', '(', ')', '[', ']', ':', '\u2013']);
 
-export interface FuzzyMatch {
+interface FuzzyMatch {
   score: number;
   indices: number[];
 }

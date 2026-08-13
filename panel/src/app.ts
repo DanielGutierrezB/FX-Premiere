@@ -8,7 +8,7 @@ import {
   registerKeyInterest,
   resizeSelf,
 } from '@shared/cep';
-import { capturedItems, listCaptured, saveCaptured } from '@shared/captured';
+import { capturedItems, deleteCaptured, listCaptured, saveCaptured } from '@shared/captured';
 import { defaultSettings, loadSettings, markPanelOpen, rememberItem, saveSettings } from '@shared/settings';
 import {
   type ApplyOutcome,
@@ -811,6 +811,17 @@ export class PaletteApp {
           void this.applyItem(entry.item, 'default');
         },
       }),
+      // Only presets the palette itself saved: it has no business deleting anything Premiere owns.
+      entry.item.captured
+        ? el('button', {
+            class: 'menu__item',
+            text: 'Delete this preset',
+            onclick: () => {
+              this.closeRowMenu();
+              this.forgetCaptured(entry.item);
+            },
+          })
+        : null,
     ]);
     this.root.appendChild(menu);
     // Placed after it is in the document, so its own size is known and it can stay inside the panel.
@@ -1050,6 +1061,18 @@ export class PaletteApp {
   private storeCaptured(preset: CapturedPreset): void {
     saveCaptured(preset);
     this.captured = capturedItems(listCaptured());
+  }
+
+  private forgetCaptured(item: CatalogItem): void {
+    deleteCaptured(item.name);
+    this.captured = capturedItems(listCaptured());
+    // It cannot stay in the recents or favourites bar once the file behind it is gone.
+    this.settings.recents = this.settings.recents.filter((id) => id !== item.id);
+    this.settings.favorites = this.settings.favorites.filter((id) => id !== item.id);
+    delete this.settings.remembered[item.id];
+    saveSettings(this.settings);
+    this.updateResults();
+    this.toast(`${item.name} deleted.`);
   }
 
   private async undoLast(): Promise<void> {

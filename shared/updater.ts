@@ -57,7 +57,7 @@ export const pickZxpAsset = (release: GithubRelease): string => {
   return asset?.browser_download_url ?? '';
 };
 
-export const extensionRoot = (): string => systemPath('extension');
+const extensionRoot = (): string => systemPath('extension');
 
 export const localVersion = (): string => {
   try {
@@ -174,6 +174,42 @@ export const checkForUpdate = async (): Promise<UpdateCheck> => {
   }
 };
 
+const RETIRED_SUFFIX = '.fxp-old';
+
+/**
+ * Windows refuses to delete a file that is running, and the hotkey helper is running every time an
+ * update is installed, so a plain delete would fail halfway through and leave the extension in
+ * pieces. Renaming a running executable is allowed, so the old one is moved aside and swept up on
+ * the next update, by which time Premiere has been restarted and nothing holds it.
+ */
+const clearForReplacement = (target: string): void => {
+  const fs = nodeRequire()('fs') as typeof import('fs');
+  try {
+    fs.rmSync(target, { recursive: true, force: true });
+    if (!fs.existsSync(target)) {
+      return;
+    }
+  } catch {
+    /* something in there is in use; fall through to renaming it out of the way */
+  }
+  fs.renameSync(target, `${target}${RETIRED_SUFFIX}`);
+};
+
+const sweepRetired = (root: string): void => {
+  const fs = nodeRequire()('fs') as typeof import('fs');
+  const path = nodeRequire()('path') as typeof import('path');
+  for (const entry of fs.readdirSync(root)) {
+    if (!entry.endsWith(RETIRED_SUFFIX)) {
+      continue;
+    }
+    try {
+      fs.rmSync(path.join(root, entry), { recursive: true, force: true });
+    } catch {
+      /* still held by something; the next update will get it */
+    }
+  }
+};
+
 /**
  * A .zxp is a signed zip, so the update is applied by unpacking it over the installed
  * extension. Premiere keeps the old files in memory until the panel reloads.
@@ -195,10 +231,16 @@ export const applyUpdate = async (downloadUrl: string): Promise<void> => {
     await download(downloadUrl, archive);
     fs.mkdirSync(unpacked, { recursive: true });
     if (os.platform() === 'win32') {
+      // The paths arrive as PowerShell variables rather than inside the command text: a user named
+      // O'Brien has an apostrophe in their temp path, which would otherwise end the string early.
       childProcess.execFileSync(
         'powershell',
-        ['-NoProfile', '-Command', `Expand-Archive -LiteralPath '${archive}' -DestinationPath '${unpacked}' -Force`],
-        { stdio: 'pipe' },
+        [
+          '-NoProfile',
+          '-Command',
+          'Expand-Archive -LiteralPath $env:FXP_ARCHIVE -DestinationPath $env:FXP_TARGET -Force',
+        ],
+        { stdio: 'pipe', env: { ...process.env, FXP_ARCHIVE: archive, FXP_TARGET: unpacked } },
       );
     } else {
       childProcess.execFileSync('unzip', ['-o', '-q', archive, '-d', unpacked], { stdio: 'pipe' });
@@ -208,18 +250,25 @@ export const applyUpdate = async (downloadUrl: string): Promise<void> => {
       throw new Error('The downloaded package looks incomplete; nothing was replaced.');
     }
     const root = extensionRoot();
+    sweepRetired(root);
     for (const entry of fs.readdirSync(unpacked)) {
-      if (entry === 'META-INF' || entry === 'mimetype') {
+      if (entry === 'META-INF' || entry === 'mimetype' || entry.endsWith(RETIRED_SUFFIX)) {
         continue;
       }
-      fs.rmSync(path.join(root, entry), { recursive: true, force: true });
+      clearForReplacement(path.join(root, entry));
       fs.cpSync(path.join(unpacked, entry), path.join(root, entry), { recursive: true });
     }
-    // Zip round-trips can drop the executable bit the hotkey helper needs.
+    // Zip round-trips can drop the executable bit the hotkey helper needs, and a helper that came
+    // out of a downloaded archive is quarantined until macOS is told the user asked for it.
     if (os.platform() !== 'win32') {
       const helper = path.join(root, 'helper', 'mac', 'fxp-hotkey');
       if (fs.existsSync(helper)) {
         fs.chmodSync(helper, 0o755);
+        try {
+          childProcess.execFileSync('xattr', ['-dr', 'com.apple.quarantine', helper], { stdio: 'pipe' });
+        } catch {
+          /* no quarantine attribute to clear, which is the common case */
+        }
       }
     }
   } finally {

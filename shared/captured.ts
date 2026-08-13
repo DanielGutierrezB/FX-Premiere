@@ -11,7 +11,7 @@ const slug = (name: string): string =>
     .replace(/^-+|-+$/g, '')
     .slice(0, 60) || 'preset';
 
-export const capturedId = (name: string): string => `captured:${slug(name)}`;
+const capturedId = (name: string): string => `captured:${slug(name)}`;
 
 export const listCaptured = (): CapturedPreset[] => {
   try {

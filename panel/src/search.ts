@@ -13,7 +13,7 @@ export const SCOPES: Array<{ id: Scope; label: string }> = [
 ];
 
 /** The only part of the settings that changes the order of results. */
-export interface RankingPrefs {
+interface RankingPrefs {
   favorites: string[];
   recents: string[];
   usage: Record<string, number>;

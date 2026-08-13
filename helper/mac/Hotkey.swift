@@ -40,6 +40,10 @@ let keyCodes: [String: UInt32] = [
     "f5": UInt32(kVK_F5), "f6": UInt32(kVK_F6), "f7": UInt32(kVK_F7), "f8": UInt32(kVK_F8),
     "f9": UInt32(kVK_F9), "f10": UInt32(kVK_F10), "f11": UInt32(kVK_F11), "f12": UInt32(kVK_F12),
     "f13": UInt32(kVK_F13), "f14": UInt32(kVK_F14), "f15": UInt32(kVK_F15),
+    "f16": UInt32(kVK_F16), "f17": UInt32(kVK_F17), "f18": UInt32(kVK_F18),
+    "f19": UInt32(kVK_F19), "f20": UInt32(kVK_F20),
+    // The panel's shortcut recorder accepts Insert, which Apple keyboards call Help.
+    "insert": UInt32(kVK_Help),
 ]
 
 struct Binding {
