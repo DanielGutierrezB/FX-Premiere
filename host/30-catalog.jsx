@@ -137,7 +137,8 @@ FXP.buildCatalog = function (presetSources) {
         FXP.catalogSection(items, spec.kind, names, spec.mediaType, spec.resolve);
     }
 
-    var presets = FXP.collectPresets(presetSources, warnings);
+    var files = FXP.expandPresetSources(presetSources);
+    var presets = FXP.presetsFromFiles(files, warnings);
     for (var p = 0; p < presets.length; p++) {
         items[items.length] = presets[p];
     }
@@ -145,7 +146,8 @@ FXP.buildCatalog = function (presetSources) {
     return {
         items: items,
         hostVersion: FXP.hostVersion(),
-        builtAt: new Date().getTime(),
+        // Handed over with the index so the next open can tell whether the presets moved.
+        presetStamp: FXP.presetStamp(files),
         warnings: warnings
     };
 };

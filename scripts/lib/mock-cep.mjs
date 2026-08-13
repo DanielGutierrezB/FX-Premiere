@@ -16,7 +16,7 @@ const nodeRequire = createRequire(import.meta.url);
  * @param {string} [options.extensionRoot] what getSystemPath('extension') should report
  * @param {(script: string) => string} [options.evalScript] ExtendScript evaluator
  */
-export const createCepWindow = ({ html, home, extensionRoot = home, evalScript }) => {
+export const createCepWindow = ({ html, home, extensionRoot = home, evalScript, storage }) => {
   const calls = { openExtension: 0, closeExtension: 0, keyInterest: 0, evalScripts: [], resizes: [] };
 
   const listeners = new Map();
@@ -27,6 +27,23 @@ export const createCepWindow = ({ html, home, extensionRoot = home, evalScript }
     runScripts: 'outside-only',
   });
   const { window } = dom;
+
+  // The panel's index cache outlives a single window in Premiere, because closing the palette only
+  // unloads the page. Passing a store in lets a test open the palette twice and see the warm path.
+  if (storage) {
+    Object.defineProperty(window, 'localStorage', {
+      configurable: true,
+      value: {
+        getItem: (key) => (key in storage ? storage[key] : null),
+        setItem: (key, value) => {
+          storage[key] = String(value);
+        },
+        removeItem: (key) => {
+          delete storage[key];
+        },
+      },
+    });
+  }
 
   // jsdom starts at 1024x768 and never changes; the panel needs a window whose size can move.
   let size = { width: 1024, height: 768 };

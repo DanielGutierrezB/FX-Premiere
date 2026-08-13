@@ -3,17 +3,20 @@ import { prepare, type HaystackEntry } from '@shared/fuzzy';
 import type { Catalog, CatalogItem } from '@shared/types';
 import { searchText } from './search';
 
-const CACHE_KEY = 'fxp.catalog.v2';
+const CACHE_KEY = 'fxp.catalog.v3';
 
 interface CachedCatalog {
   hostVersion: string;
   items: CatalogItem[];
+  /** What the preset files looked like when these items were read out of them. */
+  presetStamp: string;
 }
 
 export interface IndexedCatalog {
   items: CatalogItem[];
   haystacks: Map<string, HaystackEntry>;
   warnings: string[];
+  presetStamp: string;
 }
 
 const buildHaystacks = (items: CatalogItem[]): Map<string, HaystackEntry> => {
@@ -58,7 +61,12 @@ export const loadCachedCatalog = (hostVersion: string): IndexedCatalog | null =>
   if (!cached || cached.hostVersion !== hostVersion) {
     return null;
   }
-  return { items: cached.items, haystacks: buildHaystacks(cached.items), warnings: [] };
+  return {
+    items: cached.items,
+    haystacks: buildHaystacks(cached.items),
+    warnings: [],
+    presetStamp: cached.presetStamp ?? '',
+  };
 };
 
 export const fetchCatalog = async (presetSources: string[]): Promise<IndexedCatalog> => {
@@ -67,28 +75,41 @@ export const fetchCatalog = async (presetSources: string[]): Promise<IndexedCata
     throw new Error(response.error ?? 'The effect index could not be built.');
   }
   const catalog = response.data;
-  writeCache({ hostVersion: catalog.hostVersion, items: catalog.items });
-  return { items: catalog.items, haystacks: buildHaystacks(catalog.items), warnings: catalog.warnings ?? [] };
+  const presetStamp = catalog.presetStamp ?? '';
+  writeCache({ hostVersion: catalog.hostVersion, items: catalog.items, presetStamp });
+  return {
+    items: catalog.items,
+    haystacks: buildHaystacks(catalog.items),
+    warnings: catalog.warnings ?? [],
+    presetStamp,
+  };
 };
 
 /**
- * Presets change far more often than the installed effects, so they are refreshed on their
- * own instead of paying for a full re-index.
+ * Presets change far more often than the installed effects, so they are refreshed on their own
+ * instead of paying for a full re-index. Most of the time they have not changed at all: the host
+ * is handed the stamp from last time and answers without opening a single file, which is what
+ * keeps the palette from re-parsing megabytes of preset XML on every open.
  */
 export const refreshPresets = async (
   current: IndexedCatalog,
   presetSources: string[],
 ): Promise<IndexedCatalog> => {
-  const response = await callHost<{ items: CatalogItem[]; warnings: string[] }>({ op: 'presets', presetSources });
-  if (!response.ok || !response.data) {
+  const response = await callHost<{ items: CatalogItem[]; warnings: string[]; unchanged: boolean; stamp: string }>({
+    op: 'presets',
+    presetSources,
+    since: current.presetStamp,
+  });
+  if (!response.ok || !response.data || response.data.unchanged) {
     return current;
   }
   const withoutPresets = current.items.filter((item) => item.kind !== 'preset');
   const items = [...withoutPresets, ...response.data.items];
+  const presetStamp = response.data.stamp ?? '';
   const cached = readCache();
   if (cached) {
-    writeCache({ ...cached, items });
+    writeCache({ ...cached, items, presetStamp });
   }
   // Preset parse failures only reach the user if they are carried out of here.
-  return { items, haystacks: buildHaystacks(items), warnings: response.data.warnings ?? [] };
+  return { items, haystacks: buildHaystacks(items), warnings: response.data.warnings ?? [], presetStamp };
 };

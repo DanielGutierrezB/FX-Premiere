@@ -2,15 +2,28 @@ FXP.route = function (request) {
     switch (request.op) {
         case 'ping':
             return { version: FXP.VERSION, host: FXP.hostVersion(), qe: FXP.enableQE() };
+        // Everything the palette needs on the way up, in one crossing of the bridge.
+        case 'hello':
+            return {
+                version: FXP.VERSION,
+                host: FXP.hostVersion(),
+                qe: FXP.enableQE(),
+                sequence: FXP.sequenceInfo()
+            };
         case 'sequenceInfo':
             return FXP.sequenceInfo();
         case 'catalog':
             return FXP.buildCatalog(request.presetSources || []);
         case 'presets': {
+            var files = FXP.expandPresetSources(request.presetSources || []);
+            var stamp = FXP.presetStamp(files);
+            // Nothing has been added, removed or re-saved, so the panel's copy is still the truth.
+            if (request.since && request.since === stamp) {
+                return { unchanged: true, stamp: stamp, items: [], warnings: [] };
+            }
             // The warnings array has to reach the panel: a corrupt .prfpset is silent otherwise.
             var warnings = [];
-            var items = FXP.collectPresets(request.presetSources || [], warnings);
-            return { items: items, warnings: warnings };
+            return { unchanged: false, stamp: stamp, items: FXP.presetsFromFiles(files, warnings), warnings: warnings };
         }
         case 'inspect':
             return FXP.inspectSelection();

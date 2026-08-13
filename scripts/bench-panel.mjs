@@ -10,7 +10,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { createCepWindow, settle } from './lib/mock-cep.mjs';
-import { createHost, writePresetFixture } from './lib/mock-premiere.mjs';
+import { createHost, fileReads, writePresetFixture } from './lib/mock-premiere.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const hostScript = join(root, 'dist', 'host', 'fxpremiere.jsx');
@@ -45,12 +45,31 @@ writeFileSync(
   'utf8',
 );
 
-const { evalInHost } = createHost({ hostScript, documentsRoot: join(stage, 'Documents') });
-const cep = createCepWindow({ html: panelHtml, home: stage, evalScript: evalInHost });
-const { window } = cep;
+// Closing the palette unloads the page but not the index cache, so the same store is handed to
+// every window here: the first open is somebody's first ever, the rest are every open after that.
+const storage = {};
+const openPalette = () => {
+  const { evalInHost } = createHost({ hostScript, documentsRoot: join(stage, 'Documents') });
+  return createCepWindow({ html: panelHtml, home: stage, evalScript: evalInHost, storage });
+};
+
+let cep = openPalette();
+let window = cep.window;
 
 const ms = (value) => `${value.toFixed(1)}ms`;
 const rows = () => window.document.querySelectorAll('.row').length;
+
+/** Waits until the palette stops talking to the host, which is when it has finished waking up. */
+const quiet = async () => {
+  let seen = -1;
+  let still = 0;
+  while (still < 3) {
+    await settle(2);
+    const calls = cep.calls.evalScripts.length;
+    still = calls === seen ? still + 1 : 0;
+    seen = calls;
+  }
+};
 
 const bootStarted = performance.now();
 cep.run(panelBundle);
@@ -59,8 +78,26 @@ while (!window.document.querySelector('.search__input')) {
   await settle(1);
 }
 const firstPaint = performance.now() - bootStarted;
-await settle(40);
+await quiet();
 const indexed = performance.now() - bootStarted;
+const coldCalls = cep.calls.evalScripts.length;
+
+// Every open after the first: the page is loaded again from scratch, but the index is already
+// known. What it must not do is re-read the preset files, which in a real profile are megabytes.
+cep.close();
+cep = openPalette();
+window = cep.window;
+const warmStarted = performance.now();
+fileReads.length = 0;
+cep.run(panelBundle);
+while (!window.document.querySelector('.search__input')) {
+  await settle(1);
+}
+const warmPaint = performance.now() - warmStarted;
+await quiet();
+const warmReady = performance.now() - warmStarted;
+const warmCalls = cep.calls.evalScripts.length;
+const warmPresetReads = fileReads.filter((path) => path.endsWith('.prfpset')).length;
 
 const summonTimes = [];
 let summonRows = 0;
@@ -81,6 +118,8 @@ const typeOnce = async (text) => {
   return performance.now() - started;
 };
 
+// Scores every item and draws nothing, which is the ranking cost with the DOM taken out of it.
+const scoreOnly = await typeOnce('zzqq');
 const broad = await typeOnce('e');
 const broadRows = rows();
 const narrow = await typeOnce('gaussian');
@@ -88,8 +127,11 @@ const narrowRows = rows();
 
 const median = (values) => [...values].sort((a, b) => a - b)[Math.floor(values.length / 2)];
 
-console.log(`first paint (input on screen)      ${ms(firstPaint)}`);
-console.log(`index warmed up behind it          ${ms(indexed)}`);
+console.log(`first ever open, first paint       ${ms(firstPaint)}`);
+console.log(`first ever open, index built       ${ms(indexed)}  (host calls: ${coldCalls})`);
+console.log(`every open after, first paint      ${ms(warmPaint)}`);
+console.log(`every open after, settled          ${ms(warmReady)}  (host calls: ${warmCalls}, preset files read: ${warmPresetReads})`);
 console.log(`summon, median of 5                ${ms(median(summonTimes))}  (rows drawn: ${summonRows})`);
+console.log(`keystroke, ranking only            ${ms(scoreOnly)}`);
 console.log(`keystroke, broad query             ${ms(broad)}  (rows rendered: ${broadRows})`);
 console.log(`keystroke, narrow query            ${ms(narrow)}  (rows rendered: ${narrowRows})`);

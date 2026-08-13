@@ -50,7 +50,7 @@ type View = 'search' | 'transition' | 'settings' | 'inspect';
 type ApplyIntent = 'default' | 'withOptions' | 'keepOpen';
 
 /** Rows built per render. The window follows the selection, so navigation stays O(1). */
-const MAX_ROWS = 50;
+const MAX_ROWS = 20;
 
 /** Bounds for the window Premiere draws around us, in content pixels. */
 const MIN_HEIGHT = 120;
@@ -206,7 +206,6 @@ export class PaletteApp {
     this.buildChrome();
     registerKeyInterest();
     this.bindEvents();
-    this.captured = capturedItems(listCaptured());
     this.updateResults();
     this.focusInput();
     // Off the opening path: writing a file is not something to do before the first keystroke can
@@ -216,9 +215,14 @@ export class PaletteApp {
   }
 
   private async warmUp(): Promise<void> {
-    const ping = await callHost<{ host: string }>({ op: 'ping' });
-    this.hostVersion = ping.data?.host ?? 'unknown';
-    void this.refreshSequence();
+    // One crossing of the bridge for both answers: which Premiere this is, and what is selected.
+    const hello = await callHost<{ host: string; sequence: SequenceInfo }>({ op: 'hello' });
+    this.hostVersion = hello.data?.host ?? 'unknown';
+    this.sequence = hello.data?.sequence ?? null;
+    this.renderHints();
+    // Reading the saved presets is disk work, and it belongs behind the first paint rather than
+    // in front of it: the resting list is drawn from settings and does not need them.
+    this.captured = capturedItems(listCaptured());
 
     const cached = loadCachedCatalog(this.hostVersion);
     if (cached) {
@@ -591,7 +595,7 @@ export class PaletteApp {
       return;
     }
     // Only a window of rows is built, so a 1500 item index costs the same as a 50 item one.
-    const start = Math.max(0, Math.min(this.active - 8, this.results.length - MAX_ROWS));
+    const start = Math.max(0, Math.min(this.active - 6, this.results.length - MAX_ROWS));
     const window = this.results.slice(start, start + MAX_ROWS);
     const list = el('ul', { class: 'results' });
     window.forEach((entry, offset) => {

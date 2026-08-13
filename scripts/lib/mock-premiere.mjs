@@ -267,6 +267,9 @@ export const buildWorld = () => {
   };
 };
 
+/** Every file the host script opens, so a test can prove a parse did not happen. */
+export const fileReads = [];
+
 export class FileStub {
   constructor(path) {
     this.path = String(path);
@@ -292,6 +295,7 @@ export class FileStub {
     if (!this.exists) {
       return false;
     }
+    fileReads.push(this.path);
     this.buffer = readFileSync(this.path, 'utf8');
     return true;
   }
@@ -448,6 +452,7 @@ export const writePresetFixture = (directory) => {
  */
 export const createHost = ({ hostScript, documentsRoot }) => {
   const world = buildWorld();
+  fileReads.length = 0;
   const context = createContext({
     app: {
       version: '26.0.0',

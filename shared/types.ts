@@ -75,6 +75,8 @@ export interface CapturedPreset {
 export interface Catalog {
   items: CatalogItem[];
   hostVersion: string;
+  /** What the preset files looked like when the index was built. */
+  presetStamp?: string;
   warnings: string[];
 }
 
@@ -123,9 +125,10 @@ export interface ApplyOutcome {
 
 export type HostRequest =
   | { op: 'ping' }
+  | { op: 'hello' }
   | { op: 'sequenceInfo' }
   | { op: 'catalog'; presetSources: string[] }
-  | { op: 'presets'; presetSources: string[] }
+  | { op: 'presets'; presetSources: string[]; since: string }
   | { op: 'applyEffect'; name: string; matchName?: string; mediaType: MediaType }
   | { op: 'applyTransition'; name: string; mediaType: MediaType; options: TransitionOptions }
   | { op: 'applyPreset'; preset: PresetRef }

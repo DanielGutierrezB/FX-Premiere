@@ -67,8 +67,14 @@ const writeVersionedManifest = () => {
 const copyStatic = () => {
   writeVersionedManifest();
   ensure(join(dist, 'panel'));
-  copyFileSync(join(root, 'panel', 'index.html'), join(dist, 'panel', 'index.html'));
-  copyFileSync(join(root, 'panel', 'panel.css'), join(dist, 'panel', 'panel.css'));
+  // The stylesheet is inlined: a linked one blocks the first paint on a second file read, and the
+  // palette is opened and thrown away dozens of times an hour.
+  const css = readFileSync(join(root, 'panel', 'panel.css'), 'utf8');
+  const page = readFileSync(join(root, 'panel', 'index.html'), 'utf8').replace(
+    '<link rel="stylesheet" href="panel.css" />',
+    `<style>\n${css}</style>`,
+  );
+  writeFileSync(join(dist, 'panel', 'index.html'), page, 'utf8');
   ensure(join(dist, 'service'));
   copyFileSync(join(root, 'service', 'index.html'), join(dist, 'service', 'index.html'));
 

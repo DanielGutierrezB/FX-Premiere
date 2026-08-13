@@ -258,9 +258,32 @@ FXP.presetState = function (path) {
     return state;
 };
 
+/**
+ * What the preset files look like right now, without opening any of them. A profile's presets all
+ * live in one XML file that grows to megabytes, and the panel re-evaluates this script on every
+ * open, so re-parsing it each time is the most expensive thing the palette does. The panel keeps
+ * the parsed result and this stamp, and only pays for the parse when the stamp moves.
+ */
+FXP.presetStamp = function (files) {
+    var parts = [];
+    for (var i = 0; i < files.length; i++) {
+        parts[parts.length] = files[i] + '@' + FXP.fileStamp(files[i]);
+    }
+    var text = parts.join('|');
+    // Hashed rather than sent whole: a folder of presets would otherwise be kilobytes of path.
+    var hash = 5381;
+    for (var c = 0; c < text.length; c++) {
+        hash = ((hash * 33) ^ text.charCodeAt(c)) >>> 0;
+    }
+    return String(hash) + ':' + String(text.length);
+};
+
 FXP.collectPresets = function (sources, warnings) {
+    return FXP.presetsFromFiles(FXP.expandPresetSources(sources), warnings);
+};
+
+FXP.presetsFromFiles = function (files, warnings) {
     var items = [];
-    var files = FXP.expandPresetSources(sources);
     for (var f = 0; f < files.length; f++) {
         var state = null;
         try {

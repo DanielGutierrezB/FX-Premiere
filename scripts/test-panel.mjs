@@ -12,7 +12,7 @@ import { createServer } from 'node:http';
 
 import { check, finish } from './lib/check.mjs';
 import { createCepWindow, settle, waitFor } from './lib/mock-cep.mjs';
-import { createHost, writePresetFixture } from './lib/mock-premiere.mjs';
+import { createHost, fileReads, writePresetFixture } from './lib/mock-premiere.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const hostScript = join(root, 'dist', 'host', 'fxpremiere.jsx');
@@ -40,7 +40,9 @@ await new Promise((ready) => releaseServer.listen(0, '127.0.0.1', ready));
 process.env.FXP_UPDATE_ENDPOINT = `http://127.0.0.1:${releaseServer.address().port}/releases/latest`;
 writeFileSync(join(stage, 'version.json'), JSON.stringify({ version: '1.0.0' }), 'utf8');
 
-const cep = createCepWindow({ html: panelHtml, home: stage, evalScript: evalInHost });
+// Closing the palette unloads the page but leaves the index cache behind, exactly as in Premiere.
+const storage = {};
+const cep = createCepWindow({ html: panelHtml, home: stage, evalScript: evalInHost, storage });
 const { window, calls: cepCalls } = cep;
 
 const type = async (text) => {
@@ -604,7 +606,55 @@ console.log('\nNo match');
 await type('zzzzqqq');
 check('an empty result set shows guidance', Boolean(window.document.querySelector('.empty')), '');
 
+console.log('\nOpening it again');
 cep.close();
+// A second open, as Premiere does it: the page is loaded from scratch and the host script is
+// evaluated again, so everything the palette knows has to come from what it wrote down last time.
+const second = createHost({ hostScript, documentsRoot: join(stage, 'Documents') });
+const reopened = createCepWindow({ html: panelHtml, home: stage, evalScript: second.evalInHost, storage });
+fileReads.length = 0;
+reopened.run(panelBundle);
+await settle(60);
+check('the palette comes back up', Boolean(reopened.window.document.querySelector('.search__input')));
+// The whole point: a profile's presets live in one XML file that grows to megabytes, and parsing
+// it on every open is the most expensive thing the palette could do. It is stamped instead.
+check(
+  'no preset file is opened when nothing has changed',
+  fileReads.filter((path) => path.endsWith('.prfpset')).length === 0,
+  JSON.stringify(fileReads),
+);
+check(
+  'and it wakes up in two words with the host',
+  reopened.calls.evalScripts.length === 2,
+  JSON.stringify(reopened.calls.evalScripts.map((script) => script.slice(0, 60))),
+);
+const reopenedInput = reopened.window.document.querySelector('.search__input');
+reopenedInput.value = 'soft blur';
+reopenedInput.dispatchEvent(new reopened.window.Event('input', { bubbles: true }));
+await settle(10);
+check(
+  'the presets it remembered are still searchable',
+  [...reopened.window.document.querySelectorAll('.row__name')].some((row) => row.textContent === 'Soft Blur'),
+);
+
+// A preset saved from Premiere has to show up without asking for a reindex.
+writeFileSync(presetFixture, readFileSync(presetFixture, 'utf8').replace('Soft Blur', 'Brand New Look'), 'utf8');
+reopened.close();
+const third = createHost({ hostScript, documentsRoot: join(stage, 'Documents') });
+const again = createCepWindow({ html: panelHtml, home: stage, evalScript: third.evalInHost, storage });
+again.run(panelBundle);
+await settle(60);
+const againInput = again.window.document.querySelector('.search__input');
+againInput.value = 'brand new';
+againInput.dispatchEvent(new again.window.Event('input', { bubbles: true }));
+await settle(10);
+check(
+  'a preset saved since last time is picked up',
+  [...again.window.document.querySelectorAll('.row__name')].some((row) => row.textContent === 'Brand New Look'),
+  [...again.window.document.querySelectorAll('.row__name')].map((row) => row.textContent).join(', '),
+);
+again.close();
+
 releaseServer.close();
 rmSync(stage, { recursive: true, force: true });
 finish('panel');
