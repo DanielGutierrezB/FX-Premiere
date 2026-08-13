@@ -52,6 +52,13 @@ Ctrl + Space  →  gsblr  →  Enter  →  Gaussian Blur en los 8 clips seleccio
   favoritos quieres ver decide la altura. **Y si prefieres otro tamaño, arrastra la ventana**: eso
   manda sobre todo lo anterior y se recuerda; en los ajustes aparece un botón para devolverle la
   altura a la lista.
+- **Abre igual de rápido la primera vez que la número cien**: cerrar la paleta descarga la página,
+  así que cada apertura vuelve a empezar de cero. Para que eso no se note, el índice de efectos
+  queda guardado y los presets se sellan: Premiere responde «no ha cambiado nada» sin abrir un solo
+  archivo, en vez de volver a parsear el XML de tu perfil (que con presets acumulados pesa megas)
+  cada vez que pulsas el atajo. Al despertar pregunta una sola cosa al host, lee tus presets
+  guardados por detrás del primer pintado y el CSS viaja dentro del propio HTML. Si guardas un
+  preset nuevo en Premiere, el sello cambia y aparece en la siguiente apertura, sin reindexar.
 - **Deshacer** desde la paleta con `Cmd/Ctrl + Z`.
 - **Favoritos, recientes y ranking por uso**: lo que más usas sube solo.
 - **Atajo configurable** desde los ajustes del panel (por defecto `Ctrl + Space`).
@@ -223,10 +230,11 @@ Dos herramientas que no son pruebas y por eso no están en `npm test`:
 
 - `npm run inspect:presets` pasa tus `.prfpset` reales por el parser del host y te dice qué
   entendió de cada uno. Útil cuando un preset tuyo no se aplica como esperabas.
-- `node scripts/bench-panel.mjs` mide lo que cuesta el primer pintado, invocar la paleta y cada
-  tecla. En jsdom (más lento que Premiere) el primer pintado va sobre 9 ms, invocarla sobre
-  8 ms y una consulta amplia 16 ms dibujando como máximo 50 filas, sin importar el tamaño del
-  índice.
+- `node scripts/bench-panel.mjs` mide las dos aperturas que importan: la primera de tu vida (hay que
+  construir el índice) y todas las demás. En jsdom, que es más lento que Premiere, la segunda pinta
+  en unos 4 ms y termina de despertar en 15, con dos llamadas al host y cero archivos de preset
+  abiertos; una consulta amplia cuesta unos 11 ms dibujando como máximo 20 filas, sin importar el
+  tamaño del índice. Si esos números de llamadas o de archivos suben, algo se rompió.
 - `node scripts/snapshot-ui.mjs` escribe un HTML con el panel real en sus estados principales (en
   reposo, escribiendo, el menú de clic derecho, el inspector de efectos y los ajustes) y la hoja de
   estilos de verdad, para revisar el diseño en un navegador sin instalar nada en Premiere.

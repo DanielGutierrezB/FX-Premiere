@@ -124,7 +124,6 @@ export interface ApplyOutcome {
 }
 
 export type HostRequest =
-  | { op: 'ping' }
   | { op: 'hello' }
   | { op: 'sequenceInfo' }
   | { op: 'catalog'; presetSources: string[] }

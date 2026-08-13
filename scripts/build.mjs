@@ -70,11 +70,14 @@ const copyStatic = () => {
   // The stylesheet is inlined: a linked one blocks the first paint on a second file read, and the
   // palette is opened and thrown away dozens of times an hour.
   const css = readFileSync(join(root, 'panel', 'panel.css'), 'utf8');
-  const page = readFileSync(join(root, 'panel', 'index.html'), 'utf8').replace(
-    '<link rel="stylesheet" href="panel.css" />',
-    `<style>\n${css}</style>`,
-  );
-  writeFileSync(join(dist, 'panel', 'index.html'), page, 'utf8');
+  const link = '<link rel="stylesheet" href="panel.css" />';
+  const source = readFileSync(join(root, 'panel', 'index.html'), 'utf8');
+  if (!source.includes(link)) {
+    // Shipping the link instead would mean a panel with no stylesheet at all, since panel.css is
+    // not copied into dist.
+    throw new Error('panel/index.html no longer links panel.css the way the build expects');
+  }
+  writeFileSync(join(dist, 'panel', 'index.html'), source.replace(link, `<style>\n${css}</style>`), 'utf8');
   ensure(join(dist, 'service'));
   copyFileSync(join(root, 'service', 'index.html'), join(dist, 'service', 'index.html'));
 

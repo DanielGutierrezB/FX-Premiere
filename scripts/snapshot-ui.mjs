@@ -14,7 +14,9 @@ import { createHost, writePresetFixture } from './lib/mock-premiere.mjs';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const hostScript = join(root, 'dist', 'host', 'fxpremiere.jsx');
 const panelBundle = join(root, 'dist', 'panel', 'panel.js');
-const panelHtml = join(root, 'panel', 'index.html');
+// The built page, not the source one: the stylesheet is inlined at build time and what
+// ships is what should be exercised.
+const panelHtml = join(root, 'dist', 'panel', 'index.html');
 const outfile = process.argv[2] ?? join(tmpdir(), 'fx-premiere-ui.html');
 
 for (const required of [hostScript, panelBundle]) {

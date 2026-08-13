@@ -1,7 +1,5 @@
 FXP.route = function (request) {
     switch (request.op) {
-        case 'ping':
-            return { version: FXP.VERSION, host: FXP.hostVersion(), qe: FXP.enableQE() };
         // Everything the palette needs on the way up, in one crossing of the bridge.
         case 'hello':
             return {
