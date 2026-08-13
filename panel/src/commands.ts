@@ -137,15 +137,17 @@ export const STATIC_COMMANDS: CatalogItem[] = [
   {
     id: 'command:inspect',
     kind: 'command',
-    name: 'Effects on This Clip \u2026 save as preset',
-    group: 'FX Premiere',
+    name: 'Create Preset from Clip',
+    group: 'FX Premiere \u00b7 \u2318I',
+    keywords: 'effects on this clip inspect save capture guardar preset del clip efectos',
     commandId: LOCAL_COMMAND_INSPECT,
   },
   {
     id: 'command:undo',
     kind: 'command',
     name: 'Undo Last Change',
-    group: 'FX Premiere',
+    group: 'FX Premiere \u00b7 \u2318Z',
+    keywords: 'deshacer',
     commandId: LOCAL_COMMAND_UNDO,
   },
   {
@@ -153,13 +155,15 @@ export const STATIC_COMMANDS: CatalogItem[] = [
     kind: 'command',
     name: 'Refresh Effect Index',
     group: 'FX Premiere',
+    keywords: 'reindex rescan presets actualizar indice',
     commandId: LOCAL_COMMAND_REFRESH,
   },
   {
     id: 'command:settings',
     kind: 'command',
     name: 'FX Premiere Settings',
-    group: 'FX Premiere',
+    group: 'FX Premiere \u00b7 \u2318,',
+    keywords: 'preferences shortcut update ajustes atajo actualizar',
     commandId: LOCAL_COMMAND_SETTINGS,
   },
 ];

@@ -1,6 +1,7 @@
 import { callHost } from '@shared/cep';
 import { prepare, type HaystackEntry } from '@shared/fuzzy';
 import type { Catalog, CatalogItem } from '@shared/types';
+import { searchText } from './search';
 
 const CACHE_KEY = 'fxp.catalog.v2';
 
@@ -18,7 +19,7 @@ export interface IndexedCatalog {
 const buildHaystacks = (items: CatalogItem[]): Map<string, HaystackEntry> => {
   const map = new Map<string, HaystackEntry>();
   for (const item of items) {
-    map.set(item.id, prepare(item.name));
+    map.set(item.id, prepare(searchText(item)));
   }
   return map;
 };

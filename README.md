@@ -30,10 +30,12 @@ Ctrl + Space  →  gsblr  →  Enter  →  Gaussian Blur en los 8 clips seleccio
 - **Lista de recientes y favoritos**: al abrir la paleta, sin escribir nada, ves lo último que
   aplicaste con el primer elemento ya seleccionado. Enter lo repite. Nada más se dibuja hasta
   que escribes, que es lo que hace que abra rápido.
-- **Ver los efectos de un clip y guardarlos como preset**: `Cmd/Ctrl + I` lista lo que el clip
-  tiene puesto (con cuántos parámetros y cuántos tienen keyframes), le pones nombre y queda como
-  preset propio, buscable al instante y reaplicable con los mismos valores y keyframes. Puedes
-  incluir o excluir Motion y Opacidad.
+- **Crear un preset a partir de un clip**: `Cmd/Ctrl + I`, o buscando *Create Preset from Clip*,
+  lista lo que el clip seleccionado tiene puesto (con cuántos parámetros y cuántos tienen
+  keyframes), le pones nombre y queda como preset propio, buscable al instante y reaplicable con
+  los mismos valores y keyframes. Puedes incluir o excluir Motion y Opacidad.
+- Los comandos propios de la paleta se encuentran por varios nombres, en inglés y en español:
+  *guardar preset*, *deshacer*, *ajustes* llegan al mismo sitio que sus nombres en inglés.
 - **Interfaz desnuda a propósito**: el campo y la lista, nada más. La fila seleccionada se marca
   con una barra celeste, sin rellenos, y la línea de abajo solo aparece cuando tiene algo que
   decir: los atajos y a cuántos clips va Enter mientras no escribes, o cómo salió lo último que
@@ -92,7 +94,7 @@ iscc /DAppVersion=$(node -p "require('./package.json').version") scripts\install
 | `Tab` / `Shift + Tab` | cambiar de ámbito (Todo, Efectos, Transiciones, Presets, Comandos, Favoritos) |
 | `←` `→` | moverse por la lista de recientes cuando no has escrito nada |
 | `Cmd/Ctrl + D` | marcar o desmarcar favorito |
-| `Cmd/Ctrl + I` | ver los efectos del clip y guardarlos como preset |
+| `Cmd/Ctrl + I` | crear un preset con lo que tenga el clip seleccionado |
 | `Cmd/Ctrl + Z` | deshacer el último cambio |
 | `Cmd/Ctrl + R` | reindexar efectos |
 | `Cmd/Ctrl + ,` | ajustes |

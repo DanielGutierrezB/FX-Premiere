@@ -412,6 +412,17 @@ check(
 console.log('\nInspecting a clip and saving it as a preset');
 cep.emit('com.fxpremiere.event.trigger', { settings: false });
 await settle(20);
+
+// A shortcut nobody can find is not a feature, so the row has to answer to what it is called
+// rather than to the one phrasing that happens to be its name.
+check('the footer says the shortcut makes a preset', /create preset/.test(foot()), foot());
+for (const query of ['create preset', 'preset from clip', 'guardar preset', 'effects on this clip']) {
+  await type(query);
+  const at = rowNames().indexOf('Create Preset from Clip');
+  check(`"${query}" puts the row that creates one on screen`, at >= 0 && at < 5, `position ${at} of ${rowNames().length}`);
+}
+await type('');
+
 await press('i', { metaKey: true });
 await settle(20);
 check('Cmd+I lists what is on the clip', Boolean(window.document.querySelector('.stack')));

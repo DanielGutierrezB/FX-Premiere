@@ -23,6 +23,11 @@ export interface CatalogItem {
   /** Set on presets captured from a clip, which carry their values inline instead of on disk. */
   captured?: CapturedPreset;
   commandId?: string;
+  /**
+   * Extra words this row can be found by, never shown. It exists because a command has one name
+   * and people look for it under several, in more than one language.
+   */
+  keywords?: string;
   /** Present on the synthetic rows produced by the command parser, such as `scale 50`. */
   motion?: MotionCommand;
 }

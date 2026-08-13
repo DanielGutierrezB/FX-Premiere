@@ -427,7 +427,7 @@ export class PaletteApp {
         }
         hints.push(
           { key: '\u21b5', label: this.targetLabel(), run: () => void this.applyActive('default') },
-          { key: '\u2318I', label: 'effects on clip', run: () => void this.openInspector() },
+          { key: '\u2318I', label: 'create preset', run: () => void this.openInspector() },
           { key: '\u2318Z', label: 'undo', run: () => void this.undoLast() },
           {
             key: '\u2318,',

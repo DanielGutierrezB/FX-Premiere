@@ -36,6 +36,13 @@ const KIND_BADGE: Record<ItemKind, string> = {
 
 export const badgeFor = (kind: ItemKind): string => KIND_BADGE[kind];
 
+/**
+ * What a query is matched against. Keywords ride behind the name, so any character they match sits
+ * past the end of the displayed text and the highlighter simply never reaches it.
+ */
+export const searchText = (item: CatalogItem): string =>
+  item.keywords ? `${item.name} ${item.keywords}` : item.name;
+
 const SCOPE_KINDS: Record<Exclude<Scope, 'all' | 'favorites'>, ItemKind[]> = {
   effects: ['videoEffect', 'audioEffect'],
   transitions: ['videoTransition', 'audioTransition'],
@@ -74,7 +81,7 @@ export const rank = (
     let score = 0;
     let indices: number[] = [];
     if (trimmed !== '') {
-      const haystack = haystacks.get(item.id) ?? prepare(item.name);
+      const haystack = haystacks.get(item.id) ?? prepare(searchText(item));
       const match = fuzzyMatch(haystack, trimmed);
       if (!match) {
         continue;
