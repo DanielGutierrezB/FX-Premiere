@@ -37,7 +37,10 @@ Ctrl + Space  →  gsblr  →  Enter  →  Gaussian Blur en los 8 clips seleccio
 - **Interfaz desnuda a propósito**: el campo y la lista, nada más. La fila seleccionada se marca
   con una barra celeste, sin rellenos, y la línea de abajo solo aparece cuando tiene algo que
   decir: los atajos y a cuántos clips va Enter mientras no escribes, o cómo salió lo último que
-  aplicaste. Mientras escribes, desaparece.
+  aplicaste. Mientras escribes, desaparece. Cada atajo de esa línea es además un botón: hace lo
+  mismo que su tecla.
+- **La ventana se ajusta a lo que muestra**: la paleta le pide a Premiere la altura de su propia
+  lista, así que no queda una caja medio vacía debajo de la barra de título.
 - **Deshacer** desde la paleta con `Cmd/Ctrl + Z`.
 - **Favoritos, recientes y ranking por uso**: lo que más usas sube solo.
 - **Atajo configurable** desde los ajustes del panel (por defecto `Ctrl + Space`).
@@ -226,8 +229,13 @@ Dos herramientas que no son pruebas y por eso no están en `npm test`:
 - Premiere no expone agrupación de deshacer a los scripts: aplicar a diez clips genera diez
   pasos en el historial. `Cmd/Ctrl + Z` en la paleta deshace un paso usando el QE DOM; si tu
   versión de Premiere no lo expone, la paleta lo dice y deshaces desde la línea de tiempo.
-- Los presets se aplican reconstruyendo cada efecto y sus parámetros (no existe API para
-  cargar un `.prfpset`). Valores y keyframes se replican; la curva de interpolación se
+- Los presets se aplican reconstruyendo cada efecto y sus parámetros: ni ExtendScript ni la nueva
+  API UXP saben cargar un `.prfpset`, y los presets propios de Premiere ni siquiera aparecen en la
+  lista que expone el script. Lo que sí evitamos es que se note: cada parámetro se escribe pidiendo
+  que Premiere *no* redibuje, y se redibuja una sola vez al final, así que el efecto aparece ya
+  configurado en lugar de entrar con sus valores por defecto y acomodarse a la vista. Sigue siendo
+  un paso de historial por parámetro; la agrupación en un solo deshacer solo existe en UXP.
+  Valores y keyframes se replican; la curva de interpolación se
   aproxima a lineal, hold o bezier, y algunos parámetros muy particulares (por ejemplo
   curvas de Lumetri) pueden quedar en su valor por defecto. Si un parámetro del preset no
   existe con ese nombre en tu versión del efecto, se salta y se te informa, en vez de escribirlo
@@ -236,3 +244,9 @@ Dos herramientas que no son pruebas y por eso no están en `npm test`:
   momento. Si el clip tenía dos veces el mismo efecto, el preset también.
 - El atajo global necesita el helper nativo. Si falta o el sistema lo bloquea, la paleta
   sigue abriéndose desde `Ventana > Extensiones`.
+- La barra de título es de Premiere. CEP no permite ventanas sin marco: el host dibuja el contorno
+  de toda extensión visible, y UXP tampoco lo cambia. Lo único que está en nuestra mano es que la
+  ventana mida lo que mide el contenido, que es lo que hace la paleta.
+- Adobe declaró CEP superado por UXP a partir de Premiere 25.6 y planea retirarlo. FX Premiere es
+  CEP, así que funciona hoy en todas las versiones soportadas, pero el puerto a UXP es la tarea
+  pendiente grande. A cambio traería transacciones reales: un solo paso de deshacer por preset.

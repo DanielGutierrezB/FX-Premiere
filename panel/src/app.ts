@@ -6,6 +6,7 @@ import {
   dispatchCepEvent,
   onCepEvent,
   registerKeyInterest,
+  resizeSelf,
 } from '@shared/cep';
 import { capturedItems, listCaptured, saveCaptured } from '@shared/captured';
 import { defaultSettings, loadSettings, rememberItem, saveSettings } from '@shared/settings';
@@ -51,6 +52,10 @@ type ApplyIntent = 'default' | 'withOptions' | 'keepOpen';
 /** Rows built per render. The window follows the selection, so navigation stays O(1). */
 const MAX_ROWS = 50;
 
+/** Bounds for the window Premiere draws around us, in content pixels. */
+const MIN_HEIGHT = 120;
+const MAX_HEIGHT = 520;
+
 /** What the resting list offers: the last few things applied, then favourites not among them. */
 const RECENT_LIMIT = 6;
 const FAVORITE_LIMIT = 4;
@@ -61,10 +66,11 @@ interface QuickGroup {
   items: CatalogItem[];
 }
 
-/** One entry of the footer line. A key with no label is a bare note, like the current scope. */
+/** One entry of the footer line. Every hint names a key and does what that key does when clicked. */
 interface Hint {
-  key?: string;
+  key: string;
   label: string;
+  run: () => void;
   scope?: boolean;
 }
 
@@ -78,6 +84,8 @@ export class PaletteApp {
     autocomplete: 'off',
     placeholder: 'Search effects, transitions, presets\u2026',
   });
+
+  private readonly searchNode = el('header', { class: 'search' });
 
   private readonly body = el('div', { class: 'results-host' });
 
@@ -111,6 +119,11 @@ export class PaletteApp {
 
   /** Set once a check finds a newer release, so the resting line can mention it. */
   private updateNote = '';
+
+  /** Last height asked of the host, so an unchanged layout costs nothing. */
+  private height = 0;
+
+  private fitPending = false;
 
   private readonly transitionDialog = new TransitionDialog(
     {
@@ -221,7 +234,8 @@ export class PaletteApp {
     clear(this.root);
     this.footNode.appendChild(this.statusNode);
     this.footNode.appendChild(this.hintNode);
-    this.root.appendChild(el('header', { class: 'search' }, [this.input]));
+    this.searchNode.appendChild(this.input);
+    this.root.appendChild(this.searchNode);
     this.root.appendChild(this.body);
     this.root.appendChild(this.footNode);
     this.renderHints();
@@ -295,6 +309,46 @@ export class PaletteApp {
   private syncFoot(): void {
     const empty = this.statusNode.textContent === '' && this.hintNode.childElementCount === 0;
     this.footNode.className = `foot${empty ? ' foot--hidden' : ''}`;
+    this.scheduleFit();
+  }
+
+  /** Measured after the browser has laid the new rows out, never in the middle of building them. */
+  private scheduleFit(): void {
+    if (this.fitPending) {
+      return;
+    }
+    this.fitPending = true;
+    const run = (): void => {
+      this.fitPending = false;
+      this.fitWindow();
+    };
+    if (typeof window.requestAnimationFrame === 'function') {
+      window.requestAnimationFrame(run);
+    } else {
+      run();
+    }
+  }
+
+  /**
+   * The title bar belongs to Premiere and cannot be taken away, but the box under it does not have
+   * to be mostly empty: a modeless extension is allowed to state how tall its content is, so the
+   * window ends up the height of whatever is on screen.
+   */
+  private fitWindow(): void {
+    let content = 0;
+    for (const node of [...this.body.children]) {
+      content += (node as HTMLElement).scrollHeight;
+    }
+    if (content === 0) {
+      return;
+    }
+    const chrome = this.searchNode.offsetHeight + this.footNode.offsetHeight;
+    const target = Math.max(MIN_HEIGHT, Math.min(MAX_HEIGHT, chrome + content + 2));
+    if (target === this.height) {
+      return;
+    }
+    this.height = target;
+    resizeSelf(window.innerWidth, target);
   }
 
   private toast(message: string, kind: 'info' | 'error' = 'info'): void {
@@ -331,10 +385,18 @@ export class PaletteApp {
     clear(this.hintNode);
     for (const hint of this.hintsFor()) {
       this.hintNode.appendChild(
-        el('span', { class: hint.scope ? 'hints__scope' : undefined }, [
-          hint.key ? el('span', { class: 'hints__key', text: hint.key }) : null,
-          hint.label,
-        ]),
+        el(
+          'button',
+          {
+            class: `hints__item${hint.scope ? ' hints__scope' : ''}`,
+            title: `${hint.key} \u00b7 ${hint.label}`,
+            onclick: () => {
+              hint.run();
+              this.focusInput();
+            },
+          },
+          [el('span', { class: 'hints__key', text: hint.key }), hint.label],
+        ),
       );
     }
     this.syncFoot();
@@ -344,28 +406,34 @@ export class PaletteApp {
     switch (this.view) {
       case 'transition':
         return [
-          { key: '\u2191\u2193', label: 'duration' },
-          { key: '\u21b5', label: 'apply' },
+          { key: '\u2191\u2193', label: 'duration', run: () => this.transitionDialog.nudge(1) },
+          { key: '\u21b5', label: 'apply', run: () => this.transitionDialog.confirm() },
         ];
       case 'settings':
-        return [{ key: 'esc', label: 'back' }];
+        return [{ key: 'esc', label: 'back', run: () => this.backToSearch() }];
       case 'inspect':
         return [
-          { key: '\u21b5', label: 'save preset' },
-          { key: 'esc', label: 'back' },
+          { key: '\u21b5', label: 'save preset', run: () => void this.inspectView.save() },
+          { key: 'esc', label: 'back', run: () => this.backToSearch() },
         ];
       case 'search': {
         const scope = SCOPES.find((entry) => entry.id === this.scope);
         const hints: Hint[] =
-          scope && scope.id !== 'all' ? [{ key: '\u21e5', label: scope.label.toLowerCase(), scope: true }] : [];
+          scope && scope.id !== 'all'
+            ? [{ key: '\u21e5', label: scope.label.toLowerCase(), scope: true, run: () => this.cycleScope(1) }]
+            : [];
         if (this.input.value.trim() !== '') {
           return hints;
         }
         hints.push(
-          { key: '\u21b5', label: this.targetLabel() },
-          { key: '\u2318I', label: 'effects on clip' },
-          { key: '\u2318Z', label: 'undo' },
-          { key: '\u2318,', label: this.updateNote === '' ? 'settings' : this.updateNote },
+          { key: '\u21b5', label: this.targetLabel(), run: () => void this.applyActive('default') },
+          { key: '\u2318I', label: 'effects on clip', run: () => void this.openInspector() },
+          { key: '\u2318Z', label: 'undo', run: () => void this.undoLast() },
+          {
+            key: '\u2318,',
+            label: this.updateNote === '' ? 'settings' : this.updateNote,
+            run: () => this.openSettings(),
+          },
         );
         return hints;
       }
@@ -431,6 +499,11 @@ export class PaletteApp {
   }
 
   private renderResults(): void {
+    this.paintResults();
+    this.scheduleFit();
+  }
+
+  private paintResults(): void {
     clear(this.body);
     this.body.className = 'results-host';
     if (this.input.value.trim() === '') {

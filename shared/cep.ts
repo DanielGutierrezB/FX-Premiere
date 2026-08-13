@@ -133,6 +133,23 @@ export const openPanel = (): void => cepApi().requestOpenExtension(PANEL_EXTENSI
 export const closeSelf = (): void => cepApi().closeExtension();
 
 /**
+ * Premiere refuses this for docked panels but honours it for modeless windows, which is what the
+ * palette is. It is how the window ends up the height of its own list instead of a fixed box with
+ * dead space under it. Older hosts may not expose it at all, hence the guard.
+ */
+export const resizeSelf = (width: number, height: number): void => {
+  const api = cepApi() as unknown as { resizeContent?: (w: number, h: number) => void };
+  if (typeof api.resizeContent !== 'function') {
+    return;
+  }
+  try {
+    api.resizeContent(Math.round(width), Math.round(height));
+  } catch (error) {
+    appendLog('panel', `resize failed: ${String(error)}`);
+  }
+};
+
+/**
  * Premiere consumes most keystrokes before the panel sees them, so every key the palette
  * relies on has to be declared up front.
  */

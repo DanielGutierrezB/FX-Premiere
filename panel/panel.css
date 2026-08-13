@@ -235,6 +235,23 @@ body {
   flex-shrink: 0;
 }
 
+/* Each hint is the button for the key it names: it reads as plain text until you point at it. */
+.hints__item {
+  appearance: none;
+  border: 0;
+  background: none;
+  padding: 0;
+  margin: 0;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.hints__item:hover,
+.hints__item:hover .hints__key {
+  color: var(--accent);
+}
+
 .hints__key {
   color: var(--text-dim);
   font-family: var(--mono);

@@ -294,6 +294,7 @@ FXP.applyCapturedPreset = function (request) {
             FXP.applyPresetEffectParams(component, effect, detail, context);
             appliedHere++;
         }
+        FXP.flushParams(context);
         if (appliedHere > 0) {
             outcome.applied++;
         } else {

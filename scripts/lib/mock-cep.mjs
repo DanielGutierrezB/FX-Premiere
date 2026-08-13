@@ -17,7 +17,7 @@ const nodeRequire = createRequire(import.meta.url);
  * @param {(script: string) => string} [options.evalScript] ExtendScript evaluator
  */
 export const createCepWindow = ({ html, home, extensionRoot = home, evalScript }) => {
-  const calls = { openExtension: 0, closeExtension: 0, keyInterest: 0, evalScripts: [] };
+  const calls = { openExtension: 0, closeExtension: 0, keyInterest: 0, evalScripts: [], resizes: [] };
   const listeners = new Map();
 
   const dom = new JSDOM(readFileSync(html, 'utf8'), {
@@ -26,6 +26,24 @@ export const createCepWindow = ({ html, home, extensionRoot = home, evalScript }
     runScripts: 'outside-only',
   });
   const { window } = dom;
+
+  // jsdom has no layout, so anything that measures itself reads zero. These stand-ins give the
+  // palette believable furniture heights: a row is a row, the field and the footer are fixed.
+  const measured = (name, height) =>
+    Object.defineProperty(window.HTMLElement.prototype, name, {
+      configurable: true,
+      get() {
+        if (this.classList.contains('results')) {
+          return this.childElementCount * 28;
+        }
+        if (this.classList.contains('sheet')) {
+          return 600;
+        }
+        return height(this);
+      },
+    });
+  measured('scrollHeight', () => 0);
+  measured('offsetHeight', (node) => (node.tagName === 'HEADER' ? 44 : node.tagName === 'FOOTER' && !node.classList.contains('foot--hidden') ? 34 : 0));
 
   window.process = { platform: process.platform, env: { ...process.env, HOME: home } };
   window.cep_node = {
@@ -73,7 +91,9 @@ export const createCepWindow = ({ html, home, extensionRoot = home, evalScript }
       calls.keyInterest += 1;
       return true;
     },
-    resizeContent() {},
+    resizeContent(width, height) {
+      calls.resizes.push([width, height]);
+    },
   };
 
   return {

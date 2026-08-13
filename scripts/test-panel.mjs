@@ -112,6 +112,20 @@ check(
 );
 check('the whole index is searched even though it is not drawn', rows().length + hiddenMatches() > 120, `${rows().length} + ${hiddenMatches()}`);
 check('the footer stays out of the way while typing', foot() === '', foot());
+
+// The title bar is Premiere's, but the box under it is ours to size: a modeless extension may
+// state its content height, so the window follows the list instead of sitting half empty.
+// The fit is measured on an animation frame, which is slower than a promise turn.
+const lastResize = async () => {
+  await settle(40);
+  return cepCalls.resizes[cepCalls.resizes.length - 1] ?? [0, 0];
+};
+const fullList = (await lastResize())[1];
+check('a full list asks for a taller window', fullList > 300, `${fullList}px`);
+await type('gaussian blur');
+const shortList = (await lastResize())[1];
+check('a short list shrinks the window to fit it', shortList < fullList, `${fullList}px -> ${shortList}px`);
+check('the window never collapses below a usable height', shortList >= 120, `${shortList}px`);
 await type('');
 
 console.log('\nFuzzy search and keyboard navigation');
@@ -285,6 +299,13 @@ check(
 );
 
 console.log('\nSettings screen');
+// The footer is the only chrome left, so every hint on it has to work by mouse too.
+const hint = (label) => [...window.document.querySelectorAll('.hints__item')].find((node) => node.textContent.includes(label));
+check('the footer hints are buttons, not decoration', Boolean(hint('settings')), foot());
+hint('settings').click();
+await settle();
+check('clicking the settings hint opens settings', Boolean(window.document.querySelector('.sheet')));
+await press('Escape');
 await press(',', { metaKey: true, code: 'Comma' });
 check('Cmd+, opens settings', Boolean(window.document.querySelector('.sheet')));
 const sheetText = () => window.document.querySelector('.sheet')?.textContent ?? '';

@@ -526,6 +526,12 @@ FXP.mapInterpolation = function (raw) {
     return FXP.KEYFRAME_INTERPOLATION.LINEAR;
 };
 
+/**
+ * Every write here passes updateUI = false. Premiere redraws Effect Controls and the program
+ * monitor on each true, which is what makes a preset look like it lands with default values and
+ * then twitches into place, one parameter at a time. Instead the last write is remembered on the
+ * context, and FXP.flushParams re-issues it once so the whole stack appears already configured.
+ */
 FXP.applyPresetParam = function (param, definition, detail, context) {
     if (definition.timeVarying && definition.keys.length > 0) {
         try {
@@ -533,6 +539,7 @@ FXP.applyPresetParam = function (param, definition, detail, context) {
         } catch (error) {
             FXP.trace('setTimeVarying failed for ' + definition.name);
         }
+        var wroteKey = false;
         for (var k = 0; k < definition.keys.length; k++) {
             var key = definition.keys[k];
             if (key.value === null) {
@@ -541,29 +548,60 @@ FXP.applyPresetParam = function (param, definition, detail, context) {
             var time = FXP.presetKeyTime(detail, key.ticks, context);
             try {
                 param.addKey(time);
-                param.setValueAtKey(time, key.value, true);
+                param.setValueAtKey(time, key.value, false);
+                wroteKey = true;
             } catch (error) {
                 FXP.trace('keyframe failed for ' + definition.name + ': ' + FXP.errorText(error));
                 continue;
             }
             try {
-                param.setInterpolationTypeAtKey(time, FXP.mapInterpolation(key.interp), true);
+                param.setInterpolationTypeAtKey(time, FXP.mapInterpolation(key.interp), false);
             } catch (error) {
                 /* interpolation is best effort; the keyframe value still lands */
             }
+            if (wroteKey) {
+                context.repaint = FXP.keyRepaint(param, time, key.value);
+            }
         }
-        return true;
+        return wroteKey;
     }
     if (definition.value === null) {
         return false;
     }
     try {
-        param.setValue(definition.value, true);
+        param.setValue(definition.value, false);
+        context.repaint = FXP.valueRepaint(param, definition.value);
         return true;
     } catch (error) {
         FXP.trace('setValue failed for ' + definition.name + ': ' + FXP.errorText(error));
         return false;
     }
+};
+
+/** Closures rather than a param/value pair, so the flush does not have to know which kind it is. */
+FXP.valueRepaint = function (param, value) {
+    return function () {
+        param.setValue(value, true);
+    };
+};
+
+FXP.keyRepaint = function (param, time, value) {
+    return function () {
+        param.setValueAtKey(time, value, true);
+    };
+};
+
+/** One redraw for the whole clip, after every parameter of every effect is already in place. */
+FXP.flushParams = function (context) {
+    if (!context.repaint) {
+        return;
+    }
+    try {
+        context.repaint();
+    } catch (error) {
+        FXP.trace('final repaint failed: ' + FXP.errorText(error));
+    }
+    context.repaint = null;
 };
 
 FXP.applyPresetEffectParams = function (component, effect, detail, context) {
@@ -708,6 +746,7 @@ FXP.applyPreset = function (request) {
             FXP.applyPresetEffectParams(component, effect, detail, context);
             appliedHere++;
         }
+        FXP.flushParams(context);
         if (appliedHere > 0) {
             outcome.applied++;
         } else {

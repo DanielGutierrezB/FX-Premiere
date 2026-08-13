@@ -134,7 +134,8 @@ export class InspectView {
     return this.includeIntrinsics ? effects : effects.filter((effect) => !effect.intrinsic);
   }
 
-  private async save(): Promise<void> {
+  /** Also reachable from the footer, so a click on the hint does what the key does. */
+  async save(): Promise<void> {
     if (this.busy) {
       return;
     }

@@ -185,13 +185,14 @@ export class TransitionDialog {
     }
   }
 
-  private confirm(): void {
+  /** Also reachable from the footer, so a click on the hint does what the key does. */
+  confirm(): void {
     if (this.item) {
       this.host.apply(this.item, { ...this.options });
     }
   }
 
-  private nudge(frames: number): void {
+  nudge(frames: number): void {
     this.options.durationFrames = this.clampFrames(this.options.durationFrames + frames);
     this.rerender();
   }

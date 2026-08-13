@@ -24,12 +24,17 @@ export const makeParam = (displayName, value) => ({
   current: value,
   timeVarying: false,
   keys: [],
+  /** Premiere redraws Effect Controls on every write that asks it to; the tests count those. */
+  repaints: 0,
   getValue() {
     return this.current;
   },
-  setValue(next) {
+  setValue(next, updateUI) {
     this.calls.push(['setValue', next]);
     this.current = next;
+    if (updateUI) {
+      this.repaints += 1;
+    }
   },
   setTimeVarying(state) {
     this.calls.push(['setTimeVarying', state]);
@@ -41,10 +46,20 @@ export const makeParam = (displayName, value) => ({
   addKey(at) {
     this.calls.push(['addKey', Number(Number(at).toFixed(6))]);
   },
-  setValueAtKey(at, next) {
-    this.calls.push(['setValueAtKey', Number(Number(at).toFixed(6)), next]);
-    this.keys.push({ at: Number(Number(at).toFixed(6)), value: next });
+  setValueAtKey(at, next, updateUI) {
+    const when = Number(Number(at).toFixed(6));
+    this.calls.push(['setValueAtKey', when, next]);
+    // Writing the same time twice moves that keyframe, it does not grow a second one.
+    const existing = this.keys.find((key) => Math.abs(key.at - when) < 1e-6);
+    if (existing) {
+      existing.value = next;
+    } else {
+      this.keys.push({ at: when, value: next });
+    }
     this.current = next;
+    if (updateUI) {
+      this.repaints += 1;
+    }
   },
   getKeys() {
     return this.keys.map((key) => key.at);

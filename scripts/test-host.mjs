@@ -200,8 +200,21 @@ check('reset motion recentres position', JSON.stringify(motionA.paramList[0].cur
 console.log('\nPreset replay');
 const zoomPreset = presets.find((item) => item.name === 'Zoom In Test');
 const beforeCount = world.clips.clipA.componentList.length;
+// Premiere redraws whenever a write asks it to, and a redraw per parameter is what makes a preset
+// look like it lands on defaults and then twitches into place.
+const repaintsOnA = () =>
+  world.clips.clipA.componentList.reduce(
+    (total, component) => total + component.paramList.reduce((sum, param) => sum + param.repaints, 0),
+    0,
+  );
+const repaintsBefore = repaintsOnA();
 const presetResult = call({ op: 'applyPreset', preset: zoomPreset.preset });
 check('applyPreset succeeds', presetResult.ok, presetResult.error);
+check(
+  'the whole preset costs the clip a single redraw',
+  repaintsOnA() - repaintsBefore === 1,
+  `${repaintsOnA() - repaintsBefore} redraws`,
+);
 check('applied to both video clips', presetResult.data.applied === 2, JSON.stringify(presetResult.data));
 check(
   'an intrinsic Motion preset does not add a component',
@@ -209,15 +222,16 @@ check(
   `${beforeCount} -> ${world.clips.clipA.componentList.length}`,
 );
 
+// Asserted on the keyframes the clip ends up with, not on the call log: the final redraw
+// re-issues the last write, which is a repeat rather than a new keyframe.
 const scaleParam = world.clips.clipA.componentList[0].paramList[1];
-const keyCalls = scaleParam.calls.filter(([name]) => name === 'setValueAtKey');
-check('two keyframes are written', keyCalls.length === 2, JSON.stringify(keyCalls));
+check('two keyframes are written', scaleParam.keys.length === 2, JSON.stringify(scaleParam.keys));
 check(
   'keyframes are anchored to the clip in point',
-  keyCalls[0]?.[1] === 2 && keyCalls[1]?.[1] === 3,
-  JSON.stringify(keyCalls.map((entry) => entry[1])),
+  scaleParam.keys[0]?.at === 2 && scaleParam.keys[1]?.at === 3,
+  JSON.stringify(scaleParam.keys.map((key) => key.at)),
 );
-check('keyframe values are replayed', keyCalls[0]?.[2] === 100 && keyCalls[1]?.[2] === 150);
+check('keyframe values are replayed', scaleParam.keys[0]?.value === 100 && scaleParam.keys[1]?.value === 150);
 check(
   'bezier interpolation is mapped',
   scaleParam.calls.some(([name, , type]) => name === 'setInterpolationTypeAtKey' && type === 2),

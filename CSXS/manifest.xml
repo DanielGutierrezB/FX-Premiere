@@ -40,14 +40,16 @@
         <UI>
           <Type>Modeless</Type>
           <Menu>FX Premiere</Menu>
+          <!-- The panel resizes itself to whatever it is showing, so the minimum has to be small
+               enough for a two row list. The host clamps anything below it. -->
           <Geometry>
             <Size>
-              <Width>620</Width>
-              <Height>460</Height>
+              <Width>560</Width>
+              <Height>360</Height>
             </Size>
             <MinSize>
-              <Width>420</Width>
-              <Height>180</Height>
+              <Width>380</Width>
+              <Height>96</Height>
             </MinSize>
           </Geometry>
           <Icons>
