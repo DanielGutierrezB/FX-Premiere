@@ -1,0 +1,87 @@
+/* The line under the list: the key hints, the version chip, and the status of the last thing done. */
+
+/* One quiet line, and only when it has something to say: what a key does while you are at rest,
+   or how the last thing you pressed went. Never both, never while you are typing. */
+/* Fixed height, like the search field and the captions: the window is planned from these numbers
+   rather than measured, so a padding-driven height here would make the plan wrong. */
+.foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-shrink: 0;
+  height: calc(32px * var(--font-scale));
+  padding: 0 15px;
+  color: var(--text-faint);
+  font-size: calc(10.5px * var(--font-scale));
+}
+
+.foot--hidden {
+  display: none;
+}
+
+.hints {
+  display: flex;
+  gap: 11px;
+  flex-shrink: 0;
+}
+
+/* Each hint is the button for the key it names: it reads as plain text until you point at it. */
+.hints__item {
+  appearance: none;
+  border: 0;
+  background: none;
+  padding: 0;
+  margin: 0;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.hints__item:hover,
+.hints__item:hover .hints__key {
+  color: var(--accent);
+}
+
+.hints__key {
+  color: var(--text-dim);
+  font-family: var(--mono);
+  margin-right: 4px;
+}
+
+.hints__scope {
+  color: var(--accent);
+}
+
+/* Which version this is, at the left of the line, dim until there is a newer one to point at. */
+.hints__version {
+  appearance: none;
+  border: 0;
+  background: none;
+  padding: 0;
+  margin-right: 2px;
+  color: var(--text-faint);
+  font: inherit;
+  font-family: var(--mono);
+  cursor: pointer;
+}
+
+.hints__version--update,
+.hints__version:hover {
+  color: var(--accent);
+}
+
+.status {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.status--ok {
+  color: var(--ok);
+}
+
+.status--error {
+  color: var(--danger);
+}

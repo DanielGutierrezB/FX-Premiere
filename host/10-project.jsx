@@ -9,6 +9,26 @@ FXP.enableQE = function () {
     return typeof qe !== 'undefined' && qe ? true : false;
 };
 
+/**
+ * Asks Premiere to keep an extension in memory when its window closes, which is what turns closing
+ * the palette into hiding it instead of tearing down the whole CEPHtmlEngine process pair. After
+ * Effects has no such call and older Premiere builds may not either, so a refusal is only traced:
+ * without it the palette still works, it just pays for Chromium and Node on every summon.
+ */
+FXP.setPersistent = function (extensionId, on) {
+    var id = FXP.trim(extensionId || '');
+    if (id === '') {
+        return false;
+    }
+    try {
+        app.setExtensionPersistent(id, on ? 1 : 0);
+        return true;
+    } catch (error) {
+        FXP.trace('setExtensionPersistent failed: ' + FXP.errorText(error));
+        return false;
+    }
+};
+
 FXP.activeSequence = function () {
     if (!app.project) {
         return null;

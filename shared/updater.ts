@@ -59,15 +59,27 @@ export const pickZxpAsset = (release: GithubRelease): string => {
 
 const extensionRoot = (): string => systemPath('extension');
 
+let installedVersion = '';
+
+/**
+ * Read once and kept. This is a synchronous bridge call to Premiere, a file read and a parse, and
+ * it is reached from the hints row on every render — which is every keystroke in the search field,
+ * on the thread drawing the results. Nothing can change the answer while the page is alive:
+ * installing an update replaces the extension and Premiere loads it again from scratch.
+ */
 export const localVersion = (): string => {
+  if (installedVersion !== '') {
+    return installedVersion;
+  }
   try {
     const fs = nodeRequire()('fs') as typeof import('fs');
     const path = nodeRequire()('path') as typeof import('path');
     const file = path.join(extensionRoot(), 'version.json');
-    return (JSON.parse(fs.readFileSync(file, 'utf8')) as { version?: string }).version ?? '0.0.0';
+    installedVersion = (JSON.parse(fs.readFileSync(file, 'utf8')) as { version?: string }).version ?? '0.0.0';
   } catch {
-    return '0.0.0';
+    installedVersion = '0.0.0';
   }
+  return installedVersion;
 };
 
 /**

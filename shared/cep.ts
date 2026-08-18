@@ -131,6 +131,32 @@ export const openPanel = (): void => cepApi().requestOpenExtension(PANEL_EXTENSI
 export const closeSelf = (): void => cepApi().closeExtension();
 
 /**
+ * The last value this page got an answer for, so arming it from two places costs one call. Only a
+ * host that agreed is remembered: a refusal answered from here on every later ask would report a
+ * Premiere that will not keep the page loaded as one that will, and the un-nest decides whether it
+ * is safe to start on that answer.
+ */
+let persistenceHeld: boolean | null = null;
+
+/**
+ * Marks the palette as persistent, which is what makes `closeSelf` hide the window instead of
+ * unloading the page and `openPanel` re-activate a page that is still running. The service arms it
+ * once per Premiere session and the panel arms it for itself, in case the service is disabled;
+ * whichever gets there first, the other one is a no-op inside Premiere as well as here.
+ */
+export const setPanelPersistent = async (on: boolean): Promise<boolean> => {
+  if (persistenceHeld === on) {
+    return true;
+  }
+  const response = await callHost<{ persistent: boolean }>({ op: 'persist', extensionId: PANEL_EXTENSION_ID, on });
+  const held = response.ok && response.data?.persistent === true;
+  if (held) {
+    persistenceHeld = on;
+  }
+  return held;
+};
+
+/**
  * Premiere refuses this for docked panels but honours it for modeless windows, which is what the
  * palette is. It is how the window ends up the height of its own list instead of a fixed box with
  * dead space under it. Older hosts may not expose it at all, hence the guard.
@@ -161,43 +187,49 @@ export const resizeSelf = (width: number, height: number): void => {
 };
 
 /**
- * Premiere consumes most keystrokes before the panel sees them, so every key the palette
- * relies on has to be declared up front.
+ * Premiere consumes most keystrokes before the panel sees them, so every key the palette relies on
+ * has to be declared up front: six hundred descriptors, and a call into the host to hand them over.
+ *
+ * All of it happens a tick late, so it lands behind the first paint instead of in front of it. The
+ * palette is summoned by a global shortcut and typed into afterwards, so nothing is pressed in the
+ * window between the page appearing and the next macrotask.
  */
 export const registerKeyInterest = (): void => {
-  const keys: Array<Record<string, number | boolean>> = [];
-  const plain = [
-    8, 9, 13, 27, 32, 33, 34, 35, 36, 37, 38, 39, 40, 46, 186, 187, 188, 189, 190, 191, 192, 219,
-    220, 221, 222,
-  ];
-  for (let code = 65; code <= 90; code += 1) plain.push(code);
-  // The numpad operators. Its digits are declared below, with the ones on the top row.
-  for (let code = 106; code <= 111; code += 1) plain.push(code);
-  for (const keyCode of plain) {
-    keys.push({ keyCode });
-    keys.push({ keyCode, shiftKey: true });
-    keys.push({ keyCode, ctrlKey: true });
-    keys.push({ keyCode, altKey: true });
-    keys.push({ keyCode, metaKey: true });
-  }
-  // A favourite row can be reached by any combination of held keys, and a combination nobody asked
-  // for never arrives: the digits are declared for all sixteen of them, not one modifier at a time.
-  for (const base of [48, 96]) {
-    for (let digit = 0; digit <= 9; digit += 1) {
-      for (let held = 0; held < 16; held += 1) {
-        keys.push({
-          keyCode: base + digit,
-          ctrlKey: (held & 1) !== 0,
-          altKey: (held & 2) !== 0,
-          shiftKey: (held & 4) !== 0,
-          metaKey: (held & 8) !== 0,
-        });
+  window.setTimeout(() => {
+    const keys: Array<Record<string, number | boolean>> = [];
+    const plain = [
+      8, 9, 13, 27, 32, 33, 34, 35, 36, 37, 38, 39, 40, 46, 186, 187, 188, 189, 190, 191, 192, 219,
+      220, 221, 222,
+    ];
+    for (let code = 65; code <= 90; code += 1) plain.push(code);
+    // The numpad operators. Its digits are declared below, with the ones on the top row.
+    for (let code = 106; code <= 111; code += 1) plain.push(code);
+    for (const keyCode of plain) {
+      keys.push({ keyCode });
+      keys.push({ keyCode, shiftKey: true });
+      keys.push({ keyCode, ctrlKey: true });
+      keys.push({ keyCode, altKey: true });
+      keys.push({ keyCode, metaKey: true });
+    }
+    // A favourite row can be reached by any combination of held keys, and a combination nobody asked
+    // for never arrives: the digits are declared for all sixteen of them, not one modifier at a time.
+    for (const base of [48, 96]) {
+      for (let digit = 0; digit <= 9; digit += 1) {
+        for (let held = 0; held < 16; held += 1) {
+          keys.push({
+            keyCode: base + digit,
+            ctrlKey: (held & 1) !== 0,
+            altKey: (held & 2) !== 0,
+            shiftKey: (held & 4) !== 0,
+            metaKey: (held & 8) !== 0,
+          });
+        }
       }
     }
-  }
-  try {
-    cepApi().registerKeyEventsInterest(JSON.stringify(keys));
-  } catch {
-    /* older hosts silently ignore this */
-  }
+    try {
+      cepApi().registerKeyEventsInterest(JSON.stringify(keys));
+    } catch {
+      /* older hosts silently ignore this */
+    }
+  }, 0);
 };

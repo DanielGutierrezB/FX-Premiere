@@ -1,0 +1,107 @@
+/* The tokens every other sheet reads, the reset, and the frame the views sit in. */
+
+:root {
+  --accent: #4fc3f7;
+  --accent-dim: rgba(79, 195, 247, 0.14);
+  --bg: #101113;
+  --bg-raised: #191b1f;
+  --bg-input: #101113;
+  --border: #23252a;
+  --border-strong: #2f3339;
+  /* Dimmer than the panel border: it separates the field from the list without drawing a line. */
+  --hairline: #1c1e22;
+  --text: #e2e5ea;
+  --text-dim: #9297a0;
+  --text-faint: #5d6169;
+  --danger: #ff6b6b;
+  --ok: #5ddba0;
+  --row-height: 28px;
+  --font-scale: 1;
+  --font: "Adobe Clean", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --mono: "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  overflow: hidden;
+  background: transparent;
+  font-family: var(--font);
+  font-size: calc(13px * var(--font-scale));
+  color: var(--text);
+  user-select: none;
+  cursor: default;
+}
+
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+/* The field and the list are the whole interface: one hairline between them and nothing else. */
+.search {
+  display: flex;
+  align-items: center;
+  height: calc(44px * var(--font-scale));
+  flex-shrink: 0;
+  padding: 0 15px;
+  background: var(--bg-input);
+  border-bottom: 1px solid var(--hairline);
+}
+
+.search__input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text);
+  font-family: var(--font);
+  font-size: calc(14px * var(--font-scale));
+  letter-spacing: 0.1px;
+  user-select: text;
+  cursor: text;
+}
+
+.search__input::placeholder {
+  color: var(--text-faint);
+}
+
+/* The only label in the list: which handful of items is being offered before anything is typed. */
+.cap {
+  display: flex;
+  align-items: flex-end;
+  height: calc(26px * var(--font-scale));
+  padding: 0 15px 5px;
+  color: var(--text-faint);
+  font-size: calc(9.5px * var(--font-scale));
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.icon-button {
+  border: 0;
+  background: transparent;
+  color: var(--text-faint);
+  padding: 4px;
+  border-radius: 6px;
+  cursor: default;
+  line-height: 1;
+  font-size: calc(13px * var(--font-scale));
+}
+
+.icon-button:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.06);
+}

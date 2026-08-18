@@ -30,6 +30,12 @@ export const capturedDir = (): string => inSettingsDir('captured');
  */
 export const panelOpenFile = (): string => inSettingsDir('panel-open');
 
+/**
+ * What the last shortcut press that opened the palette asked for. The event carrying the same thing
+ * is dispatched before a cold page can hear it, so the panel claims this on the way up instead.
+ */
+export const pendingIntentFile = (): string => inSettingsDir('pending-intent');
+
 export const appendLog = (scope: string, message: string): void => {
   try {
     const fs = nodeRequire()('fs') as typeof import('fs');

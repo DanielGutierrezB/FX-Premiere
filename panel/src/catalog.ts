@@ -14,7 +14,12 @@ interface CachedCatalog {
 
 export interface IndexedCatalog {
   items: CatalogItem[];
-  haystacks: Map<string, HaystackEntry>;
+  /**
+   * What a query is matched against, one entry per item. Asked for on the first keystroke and not
+   * before: the resting list is drawn from the remembered copies in settings and ranks nothing, so
+   * an opening palette has no use for a thousand of these.
+   */
+  haystacks: () => Map<string, HaystackEntry>;
   warnings: string[];
   presetStamp: string;
 }
@@ -25,6 +30,14 @@ const buildHaystacks = (items: CatalogItem[]): Map<string, HaystackEntry> => {
     map.set(item.id, prepare(searchText(item)));
   }
   return map;
+};
+
+const lazyHaystacks = (items: CatalogItem[]): (() => Map<string, HaystackEntry>) => {
+  let built: Map<string, HaystackEntry> | null = null;
+  return () => {
+    built ??= buildHaystacks(items);
+    return built;
+  };
 };
 
 const readCache = (): CachedCatalog | null => {
@@ -61,7 +74,12 @@ export const loadCachedCatalog = (hostVersion: string): IndexedCatalog | null =>
   if (!cached || cached.hostVersion !== hostVersion) {
     return null;
   }
-  return { items: cached.items, haystacks: buildHaystacks(cached.items), warnings: [], presetStamp: cached.presetStamp };
+  return {
+    items: cached.items,
+    haystacks: lazyHaystacks(cached.items),
+    warnings: [],
+    presetStamp: cached.presetStamp,
+  };
 };
 
 export const fetchCatalog = async (presetSources: string[]): Promise<IndexedCatalog> => {
@@ -72,7 +90,7 @@ export const fetchCatalog = async (presetSources: string[]): Promise<IndexedCata
   const catalog = response.data;
   const indexed = {
     items: catalog.items,
-    haystacks: buildHaystacks(catalog.items),
+    haystacks: lazyHaystacks(catalog.items),
     warnings: catalog.warnings ?? [],
     presetStamp: catalog.presetStamp,
   };
@@ -109,5 +127,10 @@ export const refreshPresets = async (
     writeCache({ ...cached, items, presetStamp: refreshed.presetStamp });
   }
   // Preset parse failures only reach the user if they are carried out of here.
-  return { items, haystacks: buildHaystacks(items), warnings: refreshed.warnings, presetStamp: refreshed.presetStamp };
+  return {
+    items,
+    haystacks: lazyHaystacks(items),
+    warnings: refreshed.warnings,
+    presetStamp: refreshed.presetStamp,
+  };
 };

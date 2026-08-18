@@ -5,6 +5,9 @@ FXP.OPACITY_MATCH_NAMES = ['AE.ADBE Opacity'];
 FXP.MOTION_DISPLAY_NAMES = ['Motion', 'Movimiento', 'Movimento', 'Mouvement', 'Bewegung'];
 FXP.OPACITY_DISPLAY_NAMES = ['Opacity', 'Opacidad', 'Opacidade', 'Opacit\u00e9', 'Deckkraft'];
 
+FXP.TRANSFORM_MATCH_NAMES = ['AE.ADBE Geometry2'];
+FXP.TRANSFORM_DISPLAY_NAMES = ['Transform', 'Transformar', 'Transformaci\u00f3n', 'Transforma\u00e7\u00e3o'];
+
 /** Parameter order inside Premiere's intrinsic Motion and Opacity components. */
 FXP.MOTION_PARAM_INDEX = {
     position: 0,
@@ -13,6 +16,63 @@ FXP.MOTION_PARAM_INDEX = {
     uniformScale: 3,
     rotation: 4,
     anchor: 5
+};
+
+/** Parameter order inside the Transform effect, which holds the same geometry in another order. */
+FXP.TRANSFORM_PARAM_INDEX = {
+    anchor: 0,
+    position: 1,
+    uniformScale: 2,
+    scale: 3,
+    scaleWidth: 4,
+    skew: 5,
+    skewAxis: 6,
+    rotation: 7
+};
+
+FXP.OPACITY_PARAM_INDEX = {
+    opacity: 0
+};
+
+/**
+ * What each geometry parameter is called, in the languages this host already matches components
+ * across. Both the anchor tool and the ease reach for these: a parameter is found by what it is
+ * called, and only a build that names nothing at all falls back to where the parameter usually sits.
+ */
+FXP.PARAM_NAMES = {
+    anchor: [
+        'Anchor Point',
+        'Punto de ancla',
+        'Punto de anclaje',
+        'Ponto de ancoragem',
+        'Punto di ancoraggio',
+        'Point d\u2019ancrage',
+        'Ankerpunkt'
+    ],
+    position: ['Position', 'Posici\u00f3n', 'Posi\u00e7\u00e3o', 'Posizione'],
+    scale: [
+        'Scale',
+        'Scale Height',
+        'Escala',
+        'Escala vertical',
+        'Altura de escala',
+        'Altura da escala',
+        'Scala',
+        '\u00c9chelle',
+        'Skalierung'
+    ],
+    scaleWidth: [
+        'Scale Width',
+        'Escala horizontal',
+        'Ancho de escala',
+        'Largura da escala',
+        'Scala orizzontale',
+        '\u00c9chelle horizontale',
+        'Skalierungsbreite'
+    ],
+    uniformScale: ['Uniform Scale', 'Escala uniforme', 'Escala uniform', 'Scala uniforme', '\u00c9chelle uniforme'],
+    rotation: ['Rotation', 'Rotaci\u00f3n', 'Rota\u00e7\u00e3o', 'Rotazione', 'Drehung'],
+    opacity: ['Opacity', 'Opacidad', 'Opacidade', 'Opacit\u00e0', 'Opacit\u00e9', 'Deckkraft']
 };
 
 FXP.findComponent = function (clip, matchNames, displayNames) {
@@ -75,6 +135,106 @@ FXP.playheadTimeInClip = function (entry) {
     return inPoint + offset;
 };
 
+/**
+ * A moment to address a keyframe with. Premiere matches a keyframe on its tick, so the Time object
+ * it handed back is what a caller that has one passes on; a key a tool is about to create has none,
+ * and this is the tick it will land on rather than a float that has to round to it.
+ */
+FXP.keyAt = function (seconds) {
+    return { seconds: seconds, ticks: String(Math.round(seconds * FXP.TICKS_PER_SECOND)) };
+};
+
+/**
+ * Whether the property already holds a keyframe at this moment. `getValueAtKey` refuses when there
+ * is nothing there, which is the question asked; a build that refuses either way answers no, and
+ * the only thing that turns on the answer is whether a failed write cleans up after itself.
+ */
+FXP.keyIsThere = function (param, at) {
+    try {
+        param.getValueAtKey(at);
+        return true;
+    } catch (error) {
+        /* nothing at that address in the form it was given */
+    }
+    if (at === null || typeof at !== 'object' || at.seconds === undefined) {
+        return false;
+    }
+    try {
+        param.getValueAtKey(at.seconds);
+        return true;
+    } catch (error) {
+        return false;
+    }
+};
+
+/**
+ * Writes one keyframe, creating it first because `setValueAtKey` only writes to a keyframe that is
+ * already there. Returns the address that worked, which is what the interpolation type and the
+ * final repaint have to be asked for with, or null when the build took neither form. The seconds
+ * form is the second attempt because a build that will not take a Time object still takes the
+ * seconds it stands for.
+ *
+ * A write that fails takes back the keyframe `addKey` made. Left there it would hold whatever the
+ * property read at that moment, which is a keyframe nobody asked for on the one path whose whole
+ * job is to change nothing.
+ */
+FXP.keyWrite = function (param, at, value, updateUI) {
+    var had = FXP.keyIsThere(param, at);
+    var forms = [at];
+    if (at !== null && typeof at === 'object' && at.seconds !== undefined) {
+        forms[forms.length] = at.seconds;
+    }
+    for (var i = 0; i < forms.length; i++) {
+        try {
+            param.addKey(forms[i]);
+            param.setValueAtKey(forms[i], value, updateUI === true);
+            return forms[i];
+        } catch (error) {
+            FXP.trace('keyWrite failed: ' + FXP.errorText(error));
+        }
+    }
+    if (!had) {
+        FXP.keyRemove(param, at);
+    }
+    return null;
+};
+
+FXP.keyRemove = function (param, at) {
+    try {
+        param.removeKey(at);
+        return true;
+    } catch (error) {
+        FXP.trace('removeKey failed: ' + FXP.errorText(error));
+    }
+    if (at === null || typeof at !== 'object' || at.seconds === undefined) {
+        return false;
+    }
+    try {
+        param.removeKey(at.seconds);
+        return true;
+    } catch (error) {
+        FXP.trace('removeKey by seconds failed: ' + FXP.errorText(error));
+    }
+    return false;
+};
+
+/** Reads the type back through the same two forms `keyWrite` writes through, and for the same reason. */
+FXP.keyInterpolationAt = function (param, at) {
+    try {
+        return param.getInterpolationTypeAtKey(at);
+    } catch (error) {
+        FXP.trace('getInterpolationTypeAtKey failed: ' + FXP.errorText(error));
+    }
+    if (at === null || typeof at !== 'object' || at.seconds === undefined) {
+        return null;
+    }
+    try {
+        return param.getInterpolationTypeAtKey(at.seconds);
+    } catch (error) {
+        return null;
+    }
+};
+
 FXP.writeParam = function (param, value, entry) {
     var timeVarying = false;
     try {
@@ -83,13 +243,8 @@ FXP.writeParam = function (param, value, entry) {
         timeVarying = false;
     }
     if (timeVarying) {
-        var time = FXP.playheadTimeInClip(entry);
-        try {
-            param.addKey(time);
-            param.setValueAtKey(time, value, true);
+        if (FXP.keyWrite(param, FXP.keyAt(FXP.playheadTimeInClip(entry)), value, true) !== null) {
             return true;
-        } catch (error) {
-            FXP.trace('setValueAtKey failed: ' + FXP.errorText(error));
         }
     }
     try {
@@ -129,12 +284,12 @@ FXP.motionTargetValue = function (command, current, frame) {
             var normalizedX = command.percent ? x / 100 : x / frame.width;
             var normalizedY = command.percent ? y / 100 : y / frame.height;
             if (relative) {
-                var currentX = current instanceof Array ? Number(current[0]) : 0.5;
-                var currentY = current instanceof Array ? Number(current[1]) : 0.5;
+                var currentX = FXP.isList(current) ? Number(current[0]) : 0.5;
+                var currentY = FXP.isList(current) ? Number(current[1]) : 0.5;
                 return [currentX + normalizedX, currentY + normalizedY];
             }
             if (values.length < 2) {
-                var keepY = current instanceof Array ? Number(current[1]) : 0.5;
+                var keepY = FXP.isList(current) ? Number(current[1]) : 0.5;
                 return [normalizedX, keepY];
             }
             return [normalizedX, normalizedY];
@@ -143,8 +298,8 @@ FXP.motionTargetValue = function (command, current, frame) {
             var ax = Number(values[0]) || 0;
             var ay = values.length > 1 ? Number(values[1]) || 0 : 0;
             if (relative) {
-                var baseX = current instanceof Array ? Number(current[0]) : 0;
-                var baseY = current instanceof Array ? Number(current[1]) : 0;
+                var baseX = FXP.isList(current) ? Number(current[0]) : 0;
+                var baseY = FXP.isList(current) ? Number(current[1]) : 0;
                 return [baseX + ax, baseY + ay];
             }
             return [ax, ay];

@@ -111,6 +111,13 @@ export const LOCAL_COMMAND_REFRESH = 'local:refresh';
 export const LOCAL_COMMAND_SETTINGS = 'local:settings';
 export const LOCAL_COMMAND_INSPECT = 'local:inspect';
 export const LOCAL_COMMAND_UNDO = 'local:undo';
+export const LOCAL_COMMAND_UNNEST = 'local:unnest';
+export const LOCAL_COMMAND_EASE = 'local:ease';
+export const LOCAL_COMMAND_ANCHOR = 'local:anchor';
+export const LOCAL_COMMAND_PROBE_MULTICAM = 'local:probeMulticam';
+export const LOCAL_COMMAND_PASTE = 'local:paste';
+export const LOCAL_COMMAND_COMPASS = 'local:compass';
+export const LOCAL_COMMAND_COMPASS_EXPORT = 'local:compassExport';
 
 export const STATIC_COMMANDS: CatalogItem[] = [
   {
@@ -141,6 +148,62 @@ export const STATIC_COMMANDS: CatalogItem[] = [
     group: 'FX Premiere \u00b7 \u2318I',
     keywords: 'effects on this clip inspect save capture guardar preset del clip efectos',
     commandId: LOCAL_COMMAND_INSPECT,
+  },
+  {
+    id: 'command:unnest',
+    kind: 'command',
+    name: 'Un-nest Selected Sequences',
+    group: 'FX Premiere',
+    keywords: 'unnest un-nest desanidar nest nido anidado grave robber expandir extraer',
+    commandId: LOCAL_COMMAND_UNNEST,
+  },
+  {
+    id: 'command:ease',
+    kind: 'command',
+    name: 'Ease Keyframes',
+    group: 'FX Premiere',
+    keywords: 'ease easing suavizar curva curvas keyframes easyfy interpolar smooth suave',
+    commandId: LOCAL_COMMAND_EASE,
+  },
+  {
+    id: 'command:anchor',
+    kind: 'command',
+    name: 'Move Anchor Point',
+    group: 'FX Premiere',
+    keywords: 'anchor punto de anclaje ancla pivote origen anchor point mover ancla',
+    commandId: LOCAL_COMMAND_ANCHOR,
+  },
+  {
+    id: 'command:paste',
+    kind: 'command',
+    name: 'Paste Clipboard',
+    group: 'FX Premiere',
+    keywords: 'paste clipboard pegar portapapeles captura pantallazo png transparencia alfa imagen',
+    commandId: LOCAL_COMMAND_PASTE,
+  },
+  {
+    id: 'command:compass',
+    kind: 'command',
+    name: 'Compass Export Paths',
+    group: 'FX Premiere',
+    keywords: 'compass exportar ruta rutas carpeta salida export path comodines wildcards brujula br\u00fajula',
+    commandId: LOCAL_COMMAND_COMPASS,
+  },
+  {
+    id: 'command:compassExport',
+    kind: 'command',
+    name: 'Export via Compass',
+    group: 'FX Premiere',
+    keywords: 'export media encoder cola queue exportar encolar compass ruta resuelta',
+    commandId: LOCAL_COMMAND_COMPASS_EXPORT,
+  },
+  {
+    id: 'command:probeMulticam',
+    kind: 'command',
+    name: 'Probe Multicam Clip',
+    group: 'FX Premiere \u00b7 diagnostics',
+    keywords: 'multicam multicamara multic\u00e1mara angle angulo \u00e1ngulo probe diagnostico diagn\u00f3stico',
+    commandId: LOCAL_COMMAND_PROBE_MULTICAM,
   },
   {
     id: 'command:undo',

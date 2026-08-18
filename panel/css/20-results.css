@@ -1,0 +1,114 @@
+/* The list itself: the scroller, the rows and their parts, and the state with nothing to show. */
+
+.results-host {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Sized to its rows, not to the window: `flex: 1` would stretch it, and then the panel measuring
+   itself would only ever read back the height it already had and could never shrink. */
+.results {
+  flex: 0 1 auto;
+  max-height: 100%;
+  margin: 0;
+  padding: 6px 0;
+  list-style: none;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.results::-webkit-scrollbar {
+  width: 10px;
+}
+
+.results::-webkit-scrollbar-thumb {
+  background: #33333a;
+  border-radius: 999px;
+  border: 3px solid var(--bg);
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: calc(var(--row-height) * var(--font-scale));
+  padding: 0 15px;
+  /* Every row reserves the bar so the selection never shifts the text sideways. */
+  border-left: 2px solid transparent;
+  cursor: default;
+}
+
+.row--active {
+  border-left-color: var(--accent);
+}
+
+.row--active .row__name {
+  color: #7fd3f9;
+}
+
+.more {
+  padding: 6px 15px 10px;
+  color: var(--text-faint);
+  font-size: calc(10.5px * var(--font-scale));
+}
+
+.row__badge {
+  flex-shrink: 0;
+  width: 34px;
+  text-align: center;
+  font-family: var(--mono);
+  font-size: calc(9px * var(--font-scale));
+  letter-spacing: 0.5px;
+  color: var(--text-faint);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 0;
+}
+
+.row--active .row__badge {
+  color: var(--accent);
+  border-color: var(--accent-dim);
+}
+
+.row__name {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: calc(12.5px * var(--font-scale));
+}
+
+.row__name mark {
+  background: transparent;
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.row__group {
+  flex-shrink: 0;
+  max-width: 42%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-faint);
+  font-size: calc(11px * var(--font-scale));
+}
+
+.row__star {
+  flex-shrink: 0;
+  color: var(--accent);
+  font-size: calc(9px * var(--font-scale));
+  opacity: 0.75;
+  width: 10px;
+}
+
+.empty {
+  padding: 28px 18px;
+  text-align: center;
+  color: var(--text-faint);
+  font-size: calc(12px * var(--font-scale));
+  line-height: 1.6;
+}

@@ -1,13 +1,24 @@
+import { compassFrom, defaultCompass, defaultPaste, pasteFrom } from './compass';
 import { DEFAULT_HOTKEY } from './hotkey';
 import { nodeRequire } from './node';
-import { helperStatusFile, panelOpenFile, settingsDir, settingsFile } from './paths';
+import { helperStatusFile, panelOpenFile, pendingIntentFile, settingsDir, settingsFile } from './paths';
 import {
   TransitionAlignment,
+  type AnchorBoundsMode,
+  type AnchorComponent,
+  type AnchorOptions,
+  type AnchorTarget,
   type CatalogItem,
+  type EaseOptions,
+  type EaseSettings,
   type FavoriteRow,
   type HelperStatus,
   type Modifiers,
+  type PendingIntent,
   type Settings,
+  type UnnestMedia,
+  type UnnestOptions,
+  type UnnestOriginal,
 } from './types';
 
 
@@ -71,6 +82,9 @@ const rowsFrom = (saved: unknown, legacy: unknown, slots: number): FavoriteRow[]
 /** Keeps the resting palette small: only what you actually reach for is remembered. */
 const REMEMBERED_LIMIT = 60;
 
+/** "33 Out 100 In", which is the floor every ease amount falls back to. */
+export const EASE_FACTORY: EaseOptions = { easeOut: 33, easeIn: 100 };
+
 export const defaultSettings = (): Settings => ({
   hotkey: { ...DEFAULT_HOTKEY },
   settingsHotkey: null,
@@ -82,6 +96,15 @@ export const defaultSettings = (): Settings => ({
     side: 'end',
     applyToAudio: true,
   },
+  // The nest is disabled rather than deleted: its audio would play twice under the clips that just
+  // came out of it, and deleting is the one choice that cannot be taken back by a glance at the
+  // timeline. Turning it back on is one click away for whoever wants the nest back.
+  unnest: { media: 'both', original: 'disable', recursive: false, maxDepth: 3 },
+  // The amount an editor asks for by name: a gentle exit and a long, slow arrival.
+  ease: { current: { ...EASE_FACTORY }, saved: { ...EASE_FACTORY }, previous: { ...EASE_FACTORY } },
+  anchor: { target: 'center', component: 'motion', bounds: 'frame' },
+  compass: defaultCompass(),
+  paste: defaultPaste(),
   presetSources: [],
   favoriteRows: [{ modifiers: { ...NO_MODIFIERS }, slots: [null, null, null, null] }],
   recents: [],
@@ -91,6 +114,7 @@ export const defaultSettings = (): Settings => ({
   fontScale: 1,
   accent: ACCENT,
   hotkeyEnabled: true,
+  keepLoaded: true,
   recentCount: 6,
   favoriteSlots: 4,
   width: null,
@@ -116,6 +140,81 @@ const presetSourcesFrom = (raw: Partial<Settings> & { presetFolders?: unknown },
   return Array.isArray(raw.presetFolders) ? (raw.presetFolders as string[]) : fallback;
 };
 
+/** Deep enough for the nests people actually build, shallow enough that a cycle cannot run away. */
+export const MAX_UNNEST_DEPTH = 8;
+
+const UNNEST_MEDIA: UnnestMedia[] = ['video', 'audio', 'both'];
+const UNNEST_ORIGINAL: UnnestOriginal[] = ['disable', 'keep', 'delete'];
+
+/**
+ * Spread over the defaults the way the transition options are would carry a word the host has no
+ * branch for straight through to the timeline, so each choice is checked against the ones that
+ * exist. A file edited by hand, or written by a version that spelled these differently, lands back
+ * on the default instead of on nothing at all.
+ */
+const unnestFrom = (raw: unknown, base: UnnestOptions): UnnestOptions => {
+  const source = (raw ?? {}) as Partial<UnnestOptions>;
+  return {
+    media: UNNEST_MEDIA.includes(source.media as UnnestMedia) ? (source.media as UnnestMedia) : base.media,
+    original: UNNEST_ORIGINAL.includes(source.original as UnnestOriginal)
+      ? (source.original as UnnestOriginal)
+      : base.original,
+    recursive: source.recursive === true,
+    maxDepth: inRange(source.maxDepth, base.maxDepth, 1, MAX_UNNEST_DEPTH),
+  };
+};
+
+const easeOptionsFrom = (raw: unknown, base: EaseOptions): EaseOptions => {
+  const source = (raw ?? {}) as Partial<EaseOptions>;
+  return {
+    easeOut: inRange(source.easeOut, base.easeOut, 0, 100),
+    easeIn: inRange(source.easeIn, base.easeIn, 0, 100),
+  };
+};
+
+/**
+ * The saved default is the floor for the amount in play, and the factory pair is the floor for the
+ * saved one: a profile that only ever recorded what it last applied still opens on something, and
+ * the restore button still has somewhere to go back to.
+ */
+const easeFrom = (raw: unknown, base: EaseSettings): EaseSettings => {
+  const source = (raw ?? {}) as Partial<EaseSettings>;
+  const saved = easeOptionsFrom(source.saved, base.saved);
+  return {
+    current: easeOptionsFrom(source.current, saved),
+    saved,
+    previous: easeOptionsFrom(source.previous, base.previous),
+  };
+};
+
+const ANCHOR_TARGETS: AnchorTarget[] = [
+  'topLeft',
+  'topCenter',
+  'topRight',
+  'middleLeft',
+  'center',
+  'middleRight',
+  'bottomLeft',
+  'bottomCenter',
+  'bottomRight',
+];
+const ANCHOR_COMPONENTS: AnchorComponent[] = ['motion', 'transform'];
+const ANCHOR_BOUNDS: AnchorBoundsMode[] = ['frame', 'alpha'];
+
+/** Checked one choice at a time, for the same reason the un-nest options are. */
+const anchorFrom = (raw: unknown, base: AnchorOptions): AnchorOptions => {
+  const source = (raw ?? {}) as Partial<AnchorOptions>;
+  return {
+    target: ANCHOR_TARGETS.includes(source.target as AnchorTarget) ? (source.target as AnchorTarget) : base.target,
+    component: ANCHOR_COMPONENTS.includes(source.component as AnchorComponent)
+      ? (source.component as AnchorComponent)
+      : base.component,
+    bounds: ANCHOR_BOUNDS.includes(source.bounds as AnchorBoundsMode)
+      ? (source.bounds as AnchorBoundsMode)
+      : base.bounds,
+  };
+};
+
 const mergeSettings = (raw: Partial<Settings> | null): Settings => {
   const base = defaultSettings();
   if (!raw || typeof raw !== 'object') {
@@ -138,6 +237,11 @@ const mergeSettings = (raw: Partial<Settings> | null): Settings => {
     hotkey: { ...base.hotkey, ...(raw.hotkey ?? {}) },
     settingsHotkey: raw.settingsHotkey ?? null,
     lastTransition: { ...base.lastTransition, ...(raw.lastTransition ?? {}) },
+    unnest: unnestFrom(raw.unnest, base.unnest),
+    ease: easeFrom(raw.ease, base.ease),
+    anchor: anchorFrom(raw.anchor, base.anchor),
+    compass: compassFrom(raw.compass, base.compass),
+    paste: pasteFrom(raw.paste, base.paste),
     presetSources: presetSourcesFrom(raw, base.presetSources),
     favoriteSlots: slots,
     favoriteRows: rowsFrom(raw.favoriteRows, favorites, slots),
@@ -217,6 +321,13 @@ export const readHelperStatus = (): HelperStatus | null => {
   }
 };
 
+/**
+ * A palette that is closed by quitting Premiere never gets to withdraw its marker, so the marker
+ * carries the process that wrote it. That process is gone after a restart, which is what makes the
+ * next press open the palette instead of spending itself dismissing something already gone.
+ */
+const PANEL_MARK_MAX_AGE_MS = 12 * 60 * 60 * 1000;
+
 /** The palette announces itself while it is on screen, so the shortcut can toggle it. */
 export const markPanelOpen = (open: boolean): void => {
   try {
@@ -226,18 +337,77 @@ export const markPanelOpen = (open: boolean): void => {
       return;
     }
     fs.mkdirSync(settingsDir(), { recursive: true });
-    fs.writeFileSync(panelOpenFile(), String(Date.now()), 'utf8');
+    fs.writeFileSync(panelOpenFile(), `${Date.now()} ${process.pid}`, 'utf8');
   } catch {
     /* the toggle degrades to always-open, which is the old behaviour */
+  }
+};
+
+const processIsAlive = (pid: number): boolean => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    // Owned by another user, which a Premiere-hosted panel never is, but still alive.
+    return (error as { code?: string }).code === 'EPERM';
   }
 };
 
 export const isPanelOpen = (): boolean => {
   try {
     const fs = nodeRequire()('fs') as typeof import('fs');
-    return fs.existsSync(panelOpenFile());
+    const file = panelOpenFile();
+    if (!fs.existsSync(file)) {
+      return false;
+    }
+    const parts = String(fs.readFileSync(file, 'utf8')).trim().split(/\s+/);
+    const written = Number(parts[0]);
+    const pid = Number(parts[1]);
+    const stale =
+      (Number.isFinite(written) && written > 0 && Date.now() - written > PANEL_MARK_MAX_AGE_MS) ||
+      (Number.isFinite(pid) && pid > 0 && !processIsAlive(pid));
+    if (stale) {
+      fs.rmSync(file, { force: true });
+      return false;
+    }
+    return true;
   } catch {
     return false;
+  }
+};
+
+/**
+ * Written by the service every time it asks the host to open the palette. A press for the search
+ * view writes nothing and clears whatever was there, so an intent nobody ever claimed cannot come
+ * back later as a palette that opens on the settings screen for no reason.
+ */
+export const setPendingIntent = (intent: PendingIntent | null): void => {
+  try {
+    const fs = nodeRequire()('fs') as typeof import('fs');
+    if (!intent) {
+      fs.rmSync(pendingIntentFile(), { force: true });
+      return;
+    }
+    fs.mkdirSync(settingsDir(), { recursive: true });
+    fs.writeFileSync(pendingIntentFile(), JSON.stringify(intent), 'utf8');
+  } catch {
+    /* the palette then opens where it always opens, on the search view */
+  }
+};
+
+/** Reads the intent and takes it away in one go: it is meant for exactly one panel coming up. */
+export const claimPendingIntent = (): PendingIntent | null => {
+  try {
+    const fs = nodeRequire()('fs') as typeof import('fs');
+    const file = pendingIntentFile();
+    if (!fs.existsSync(file)) {
+      return null;
+    }
+    const raw = readJsonText(fs.readFileSync(file, 'utf8'));
+    fs.rmSync(file, { force: true });
+    return { settings: (JSON.parse(raw) as Partial<PendingIntent>).settings === true };
+  } catch {
+    return null;
   }
 };
 

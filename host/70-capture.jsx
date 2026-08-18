@@ -40,6 +40,12 @@ FXP.keyframeSeconds = function (time) {
     return numeric > 100000 ? numeric / FXP.TICKS_PER_SECOND : numeric;
 };
 
+/**
+ * `time` is whatever Premiere handed back, kept beside the seconds it works out to. Premiere
+ * addresses a keyframe by its tick and a seconds value is a conversion of one, so anything that
+ * writes back to a key it read here hands the original object over rather than a number that has
+ * been through arithmetic on the way.
+ */
 FXP.captureKeyframes = function (param) {
     var keys = [];
     if (!FXP.paramIsTimeVarying(param)) {
@@ -68,9 +74,19 @@ FXP.captureKeyframes = function (param) {
                 continue;
             }
         }
-        keys[keys.length] = { seconds: seconds, value: value };
+        keys[keys.length] = { seconds: seconds, value: value, time: times[i] };
     }
     return keys;
+};
+
+/** The captured shape carries seconds only: a Time object is Premiere's, not something to store. */
+FXP.capturedKeyframes = function (param) {
+    var keys = FXP.captureKeyframes(param);
+    var out = [];
+    for (var i = 0; i < keys.length; i++) {
+        out[out.length] = { seconds: keys[i].seconds, value: keys[i].value };
+    }
+    return out;
 };
 
 FXP.describeComponent = function (component) {
@@ -177,7 +193,7 @@ FXP.captureSelection = function () {
             } catch (error) {
                 displayName = '';
             }
-            var keys = FXP.captureKeyframes(param);
+            var keys = FXP.capturedKeyframes(param);
             params[params.length] = {
                 name: displayName,
                 index: p,

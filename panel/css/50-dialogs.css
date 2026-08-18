@@ -1,0 +1,365 @@
+/* The dialogs that ask one thing each: transition, un-nest, ease, anchor, and what they share. */
+
+.transition {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  padding: 18px;
+  gap: 4px;
+}
+
+.transition__name {
+  font-size: calc(17px * var(--font-scale));
+  font-weight: 400;
+}
+
+.transition__meta {
+  color: var(--text-dim);
+  font-size: calc(11.5px * var(--font-scale));
+  margin-bottom: 12px;
+}
+
+.duration {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 4px 0 8px;
+}
+
+.duration input {
+  width: 96px;
+  font-size: calc(24px * var(--font-scale));
+  font-family: var(--mono);
+  padding: 4px 8px;
+}
+
+.duration__unit {
+  color: var(--text-dim);
+  font-size: calc(12px * var(--font-scale));
+}
+
+/* The un-nest dialog: the same box as the transition one, with one question in it. */
+.unnest {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  padding: 18px;
+  gap: 4px;
+}
+
+/* What the nests hold that may not survive. A warning, so it reads like one and blocks nothing. */
+.unnest__survey {
+  color: var(--text-faint);
+  font-size: calc(10.5px * var(--font-scale));
+}
+
+/* The one thing that cannot be taken back, so it is not in the faint colour the survey is. */
+.unnest__warning {
+  color: var(--accent);
+  font-size: calc(10.5px * var(--font-scale));
+  margin-bottom: 4px;
+}
+
+.unnest__blocked {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  margin-bottom: 8px;
+  border: 1px solid var(--accent);
+  border-radius: 5px;
+  background: var(--accent-dim);
+}
+
+.unnest__blocked-text {
+  flex: 1;
+  font-size: calc(10.5px * var(--font-scale));
+  line-height: 1.35;
+}
+
+.choices {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 4px 0 8px;
+}
+
+/* One row per answer, with the digit that reaches it: the keyboard is the way in, so it is shown. */
+.choice {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  text-align: left;
+  appearance: none;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--bg-input);
+  color: var(--text-dim);
+  padding: 8px 10px;
+  font: inherit;
+  cursor: default;
+}
+
+.choice--active {
+  border-color: var(--accent);
+  background: var(--accent-dim);
+  color: var(--text);
+}
+
+.choice__key {
+  flex: 0 0 auto;
+  color: var(--text-faint);
+  font-family: var(--mono);
+  font-size: calc(10px * var(--font-scale));
+  padding-top: 2px;
+}
+
+.choice--active .choice__key {
+  color: var(--accent);
+}
+
+.choice__label {
+  font-size: calc(12.5px * var(--font-scale));
+}
+
+.choice__hint {
+  display: block;
+  margin-top: 2px;
+  color: var(--text-faint);
+  font-size: calc(10.5px * var(--font-scale));
+}
+
+/* The ease dialog: the two influences side by side, since they are read as a pair. */
+.ease {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  padding: 18px;
+  gap: 4px;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* What a bake costs the undo list, in the accent the un-nest uses for the same kind of warning. */
+.ease__warning {
+  color: var(--accent);
+  font-size: calc(10.5px * var(--font-scale));
+  margin-bottom: 4px;
+}
+
+.influences {
+  display: flex;
+  gap: 10px;
+  margin: 4px 0 10px;
+}
+
+.influence {
+  flex: 1 1 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--bg-input);
+  padding: 8px 10px;
+}
+
+.influence--active {
+  border-color: var(--accent);
+  background: var(--accent-dim);
+}
+
+.influence__label {
+  color: var(--text-dim);
+  font-size: calc(11px * var(--font-scale));
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.influence--active .influence__label {
+  color: var(--accent);
+}
+
+.influence__value {
+  width: 100%;
+  font-size: calc(22px * var(--font-scale));
+  font-family: var(--mono);
+  padding: 2px 4px;
+}
+
+.influence__hint {
+  color: var(--text-faint);
+  font-size: calc(10.5px * var(--font-scale));
+}
+
+/* The anchor dialog: nine cells laid out like the frame they stand for. */
+.anchor {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  padding: 18px;
+  gap: 4px;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* The frame's shape, so the nine cells read as places in a picture; capped so the switches under it
+   still fit the sheet at a large font scale. */
+.grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 4px;
+  margin: 6px 0 10px;
+  aspect-ratio: 16 / 9;
+  max-height: 180px;
+  flex-shrink: 0;
+}
+
+.grid__cell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  appearance: none;
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  background: var(--bg-input);
+  color: var(--text-faint);
+  font: inherit;
+  cursor: default;
+}
+
+.grid__cell:hover {
+  border-color: var(--text-faint);
+}
+
+.grid__cell--on {
+  border-color: var(--accent);
+  background: var(--accent-dim);
+  color: var(--accent);
+}
+
+.grid__key {
+  font-family: var(--mono);
+  font-size: calc(11px * var(--font-scale));
+}
+
+.chips {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.chip {
+  white-space: nowrap;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-input);
+  color: var(--text-dim);
+  border-radius: 6px;
+  padding: 5px 10px;
+  font-size: calc(11.5px * var(--font-scale));
+  cursor: default;
+}
+
+.chip--active {
+  border-color: var(--accent);
+  background: var(--accent-dim);
+  color: var(--accent);
+}
+
+.stack {
+  margin: 4px 0 14px;
+  padding: 0;
+  list-style: none;
+}
+
+.stack__row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.stack__row--muted {
+  opacity: 0.4;
+}
+
+.stack__name {
+  font-size: calc(12.5px * var(--font-scale));
+}
+
+.stack__note {
+  color: var(--text-faint);
+  font-size: calc(10.5px * var(--font-scale));
+  white-space: nowrap;
+}
+
+.name-input {
+  flex: 1;
+  background: var(--bg-input);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  color: var(--text);
+  font-family: var(--font);
+  font-size: calc(13px * var(--font-scale));
+  padding: 7px 10px;
+  outline: 0;
+  user-select: text;
+  cursor: text;
+}
+
+.name-input:focus {
+  border-color: var(--accent);
+}
+
+.folder-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.folder-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 8px;
+  font-family: var(--mono);
+  font-size: calc(10.5px * var(--font-scale));
+  color: var(--text-dim);
+}
+
+.folder-row span {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: left;
+}
+
+.toast {
+  position: absolute;
+  left: 50%;
+  bottom: 20px;
+  transform: translateX(-50%);
+  background: rgba(10, 10, 12, 0.94);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  padding: 8px 14px;
+  font-size: calc(11.5px * var(--font-scale));
+  color: var(--text);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+  max-width: 80%;
+  text-align: center;
+  pointer-events: none;
+}
+
+.toast--error {
+  border-color: rgba(255, 107, 107, 0.5);
+  color: #ffd5d5;
+}

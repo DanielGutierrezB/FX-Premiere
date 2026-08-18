@@ -1,0 +1,106 @@
+/* The numbered bar above the list: its rows, its slots, and the states they are reached in. */
+
+/* The numbered bar. Fixed heights and gaps, like the field and the footer: the window is planned
+   from these numbers rather than measured, so anything springy here would make the plan wrong. */
+.slots {
+  display: flex;
+  flex-direction: column;
+  gap: calc(6px * var(--font-scale));
+  flex-shrink: 0;
+  padding: calc(8px * var(--font-scale));
+  border-bottom: 1px solid var(--hairline);
+}
+
+/* A `display` of its own outranks the hidden attribute, so the bar has to be told twice. */
+.slots[hidden] {
+  display: none;
+}
+
+.slots--inert {
+  opacity: 0.45;
+}
+
+.slots__row {
+  display: flex;
+  align-items: center;
+  gap: calc(6px * var(--font-scale));
+  height: calc(30px * var(--font-scale));
+}
+
+/* What to hold to reach this line. Lit on the line you are actually holding the keys for. */
+.slots__held {
+  flex: 0 0 calc(36px * var(--font-scale));
+  text-align: center;
+  color: var(--text-faint);
+  font-size: calc(10.5px * var(--font-scale));
+  letter-spacing: 0.04em;
+}
+
+.slots__row--armed .slots__held {
+  color: var(--accent);
+}
+
+.slot {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  gap: calc(7px * var(--font-scale));
+  flex: 1 1 0;
+  min-width: 0;
+  height: 100%;
+  padding: 0 calc(8px * var(--font-scale));
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: var(--bg-raised);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: calc(11.5px * var(--font-scale));
+  text-align: left;
+  cursor: default;
+}
+
+/* Pointing at a slot says it can be pressed, since the numbers are the real way in. */
+.slot:hover {
+  border-color: var(--border-strong);
+}
+
+.slot--empty {
+  background: transparent;
+  border: 1px dashed var(--border);
+  color: var(--text-faint);
+}
+
+.slot__key {
+  flex: 0 0 auto;
+  color: var(--text-faint);
+  font-family: var(--mono);
+  font-size: calc(10px * var(--font-scale));
+}
+
+.slot__name {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.slots__row--armed .slot {
+  border-color: var(--border-strong);
+}
+
+.slots__row--armed .slot__key {
+  color: var(--accent);
+}
+
+/* Choosing where to put something: every slot is a target, so every number is spelled out. */
+.slots--picking .slot {
+  border-color: var(--accent-dim);
+}
+
+.slots--picking .slot__key {
+  color: var(--accent);
+}
+
+.slots--picking .slots__row--armed .slot {
+  border-color: var(--accent);
+}

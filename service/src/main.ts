@@ -5,12 +5,15 @@ import {
   isInsideCep,
   onCepEvent,
   openPanel,
+  setPanelPersistent,
   systemPath,
 } from '@shared/cep';
+import { planCompass } from '@shared/compass';
+import { applyCompass, readContext, roundTripped } from '@shared/compass-run';
 import { nodeRequire } from '@shared/node';
 import { serializeHotkey } from '@shared/hotkey';
 import { appendLog, settingsFile } from '@shared/paths';
-import { isPanelOpen, loadSettings, markPanelOpen, writeHelperStatus } from '@shared/settings';
+import { isPanelOpen, loadSettings, markPanelOpen, setPendingIntent, writeHelperStatus } from '@shared/settings';
 import type { Settings } from '@shared/types';
 import type { ChildProcessWithoutNullStreams } from 'child_process';
 
@@ -61,6 +64,19 @@ const stopHelper = (): void => {
 };
 
 /**
+ * Asking the host to open the panel and telling the panel what the press meant are two separate
+ * things, and on a cold start the second one arrives first: the page has not bound a listener yet,
+ * so the event lands nowhere. A plain summon survives that because the panel does the same work on
+ * the way up anyway, but "open the settings" is an intent nothing else would reconstruct, so it is
+ * left on disk for the panel to claim as it comes up.
+ */
+const open = (wantsSettings: boolean): void => {
+  setPendingIntent(wantsSettings ? { settings: true } : null);
+  openPanel();
+  trigger({ settings: wantsSettings, dismiss: false });
+};
+
+/**
  * The shortcut toggles. A closed palette cannot hear anything, so the service opens it; an open one
  * is told to go away and does it itself. Whether this press opens or closes is decided here and
  * carried in the event, because the panel cannot tell the press that opened it from a second press
@@ -68,7 +84,8 @@ const stopHelper = (): void => {
  *
  * The marker comes down here rather than waiting for the panel to take it down, so there is no
  * timer betting on how quickly the panel answers. A palette busy applying a preset closes late; a
- * palette that died without cleaning up costs one press instead of wedging the shortcut for good.
+ * palette that closed without cleaning up — which is what the window's own X button does now that
+ * the page survives being closed — costs one press instead of wedging the shortcut for good.
  */
 const summonOrDismiss = (): void => {
   if (isPanelOpen()) {
@@ -76,8 +93,7 @@ const summonOrDismiss = (): void => {
     trigger({ settings: false, dismiss: true });
     return;
   }
-  openPanel();
-  trigger({ settings: false, dismiss: false });
+  open(false);
 };
 
 const trigger = (payload: { settings: boolean; dismiss: boolean }): void => {
@@ -99,8 +115,7 @@ const handleLine = (line: string): void => {
   }
   if (trimmed === 'TRIGGER_SETTINGS') {
     // Asking for the settings screen is a destination, never a toggle.
-    openPanel();
-    trigger({ settings: true, dismiss: false });
+    open(true);
     return;
   }
   if (trimmed.startsWith('READY')) {
@@ -186,6 +201,69 @@ const startHelper = (): void => {
   status(false, `Starting listener for ${serializeHotkey(settings.hotkey)}\u2026`);
 };
 
+/**
+ * Compass follows whatever is open. Premiere exposes no event for "the active sequence changed"
+ * that reaches an extension, so the only way to keep the export path in step with the project is to
+ * ask. It is one small script call, and only when something is actually different does anything get
+ * written: the answer is compared before the folders are made or the properties touched.
+ */
+const COMPASS_INTERVAL_MS = 4000;
+
+let compassKey = '';
+let compassTimer: ReturnType<typeof setInterval> | null = null;
+let compassBusy = false;
+
+const compassTick = async (): Promise<void> => {
+  if (compassBusy || !settings.compass.enabled) {
+    return;
+  }
+  compassBusy = true;
+  try {
+    const context = await readContext();
+    if (context.sequence === '') {
+      return;
+    }
+    // Keyed on what the template resolves to rather than on the project it resolved from. A tick
+    // that lands on the same two folders has nothing to say, and saying it anyway would overwrite
+    // whatever the editor typed into the Export dialog since the last one.
+    const plan = planCompass(settings.compass, context, new Date());
+    const key = `${plan.error}|${plan.media}|${plan.frame}`;
+    if (key === compassKey) {
+      return;
+    }
+    compassKey = key;
+    const result = await applyCompass(settings, context);
+    if (result.error !== '') {
+      log(`compass: ${result.error}`);
+      return;
+    }
+    log(
+      roundTripped(result.writes)
+        ? `compass: pointed at ${result.plan.media}`
+        : `compass: Premiere refused ${result.writes.filter((write) => !write.ok).map((write) => write.key).join(', ')}`,
+    );
+  } catch (error) {
+    log(`compass tick failed: ${String(error)}`);
+  } finally {
+    compassBusy = false;
+  }
+};
+
+const watchCompass = (): void => {
+  if (compassTimer) {
+    clearInterval(compassTimer);
+    compassTimer = null;
+  }
+  if (!settings.compass.enabled) {
+    return;
+  }
+  // Forgotten on purpose when the feature is switched on, so the first tick writes rather than
+  // recognising the project it was already looking at.
+  compassKey = '';
+  compassTimer = setInterval(() => void compassTick(), COMPASS_INTERVAL_MS);
+  void compassTick();
+};
+
 const reload = (forceRestart: boolean): void => {
   const previous = settings;
   settings = loadSettings();
@@ -194,6 +272,11 @@ const reload = (forceRestart: boolean): void => {
     (previous.settingsHotkey ? serializeHotkey(previous.settingsHotkey) : '') !==
     (settings.settingsHotkey ? serializeHotkey(settings.settingsHotkey) : '');
   const enabledChanged = previous.hotkeyEnabled !== settings.hotkeyEnabled;
+
+  void setPanelPersistent(settings.keepLoaded);
+  if (previous.compass.enabled !== settings.compass.enabled) {
+    watchCompass();
+  }
 
   if (forceRestart || enabledChanged || !child) {
     restarts = 0;
@@ -229,7 +312,12 @@ const boot = (): void => {
     return;
   }
   log('service starting');
+  // The palette pays for Chromium, Node and a window on every summon unless Premiere is told to
+  // keep it in memory. The flag lasts for as long as Premiere is running and this runs once per
+  // launch, which is the same scope, so there is nowhere else it needs to be renewed.
+  void setPanelPersistent(settings.keepLoaded);
   startHelper();
+  watchCompass();
 
   const fs = nodeRequire()('fs') as typeof import('fs');
   try {
@@ -251,6 +339,10 @@ const boot = (): void => {
   const shutdown = (): void => {
     stopping = true;
     status(false, 'Premiere is closing.');
+    if (compassTimer) {
+      clearInterval(compassTimer);
+      compassTimer = null;
+    }
     stopHelper();
   };
   window.addEventListener('beforeunload', shutdown);

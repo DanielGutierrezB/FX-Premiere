@@ -16,7 +16,7 @@ const SHEET_HEIGHT = 460;
 
 /**
  * The furniture the window is built from, in CSS pixels at font scale 1. These are the numbers in
- * panel.css: the window is planned from them rather than measured, so keep the two in step.
+ * panel/css: the window is planned from them rather than measured, so keep the two in step.
  * scripts/check-layout.mjs lays the real stylesheet out in Chrome and says so when they drift.
  */
 const FIELD_HEIGHT = 44;
@@ -68,7 +68,13 @@ export class WindowSize {
     const settings = this.settings();
     const height = settings.height ?? (box === 'list' ? this.plannedHeight() : SHEET_HEIGHT);
     const width = settings.width ?? this.plannedWidth();
-    if (height === this.height && width === this.width) {
+    // Within the slack the host would round away, the window is already the right size: asking for
+    // it again would be a second sizing before the first paint, which is the flicker this whole
+    // file exists to avoid. The manifest opens the palette at the size a fresh profile asks for, so
+    // on that path there is nothing left to do here.
+    if (Math.abs(height - this.height) <= SIZE_SLACK && Math.abs(width - this.width) <= SIZE_SLACK) {
+      this.height = height;
+      this.width = width;
       return;
     }
     this.height = height;

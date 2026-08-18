@@ -19,6 +19,14 @@ FXP.trim = function (value) {
     return String(value).replace(/^[\s\u00A0]+/, '').replace(/[\s\u00A0]+$/, '');
 };
 
+/**
+ * Whether a value is a list of things. `instanceof Array` is not enough: a value that arrived from
+ * another script's scope has another script's Array behind it and would be read as a scalar.
+ */
+FXP.isList = function (value) {
+    return value !== null && typeof value === 'object' && typeof value.length === 'number';
+};
+
 FXP.contains = function (list, value) {
     for (var i = 0; i < list.length; i++) {
         if (list[i] === value) {

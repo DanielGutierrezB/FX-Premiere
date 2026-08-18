@@ -1,0 +1,79 @@
+/* Compass: the two export paths, the wildcards that go in them, and what they come out as. */
+
+.compass {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  padding: 18px;
+  overflow-y: auto;
+}
+
+.compass__path {
+  border-left: 2px solid transparent;
+  padding: 8px 0 8px 8px;
+  margin-left: -10px;
+}
+
+.compass__path--active {
+  border-left-color: var(--accent);
+}
+
+.compass__head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.compass__entry {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+  margin: 6px 0 4px;
+}
+
+/* Overrides the sheet's own narrow, right-aligned text field: a path is read from its left end. */
+.compass__input {
+  flex: 1;
+  font-family: var(--mono);
+  font-size: calc(11.5px * var(--font-scale));
+  text-align: left;
+}
+
+.compass__relative {
+  width: 30px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--bg-input);
+  color: var(--text-faint);
+  font-family: var(--mono);
+  font-size: calc(11px * var(--font-scale));
+  cursor: pointer;
+}
+
+.compass__relative--on {
+  border-color: var(--accent);
+  background: var(--accent-dim);
+  color: var(--accent);
+}
+
+/* The whole point of the sheet: a wildcard means nothing until this shows what it turns into. */
+.compass__preview {
+  font-family: var(--mono);
+  font-size: calc(10.5px * var(--font-scale));
+  color: var(--text-dim);
+  overflow-wrap: anywhere;
+}
+
+.compass__wildcards {
+  display: flex;
+  gap: 5px;
+  flex-wrap: wrap;
+  margin: 8px 0 14px;
+}
+
+.chip--wildcard {
+  font-family: var(--mono);
+  font-size: calc(10.5px * var(--font-scale));
+  padding: 3px 7px;
+}

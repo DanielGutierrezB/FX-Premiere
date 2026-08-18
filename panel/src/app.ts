@@ -6,20 +6,37 @@ import {
   dispatchCepEvent,
   onCepEvent,
   registerKeyInterest,
+  setPanelPersistent,
 } from '@shared/cep';
 import { capturedItems, deleteCaptured, listCaptured, saveCaptured } from '@shared/captured';
-import { defaultSettings, loadSettings, markPanelOpen, rememberItem, saveSettings } from '@shared/settings';
 import {
+  claimPendingIntent,
+  defaultSettings,
+  loadSettings,
+  markPanelOpen,
+  saveSettings,
+} from '@shared/settings';
+import {
+  type AnchorOptions,
+  type AnchorSource,
   type ApplyOutcome,
   type CapturedPreset,
   type CatalogItem,
-  type ClipInspection,
+  type EaseOptions,
   type HostResponse,
   type QuickGroup,
   type SequenceInfo,
   type Settings,
   type TransitionOptions,
+  type UnnestMedia,
 } from '@shared/types';
+import { localVersion } from '@shared/updater';
+import { resolveAnchorBounds } from './alpha';
+import { ApplyPipeline, type ApplyIntent } from './apply';
+import { applyCompass, compassMessages, exportViaCompass, roundTripped } from '@shared/compass-run';
+import { keysBridge } from './keys-bridge';
+import { commitPaste } from './paste';
+import { runUnnest, showPalette } from './unnest';
 import {
   clearCatalogCache,
   fetchCatalog,
@@ -27,38 +44,14 @@ import {
   refreshPresets,
   type IndexedCatalog,
 } from './catalog';
-import {
-  LOCAL_COMMAND_INSPECT,
-  LOCAL_COMMAND_REFRESH,
-  LOCAL_COMMAND_SETTINGS,
-  LOCAL_COMMAND_UNDO,
-  STATIC_COMMANDS,
-  parseMotionQuery,
-} from './commands';
+import { STATIC_COMMANDS, parseMotionQuery } from './commands';
 import { clear, el, highlight } from './dom';
 import { SCOPES, badgeFor, rank, type RankedItem, type Scope } from './search';
+import { Sheets, type Hint, type View } from './sheets';
+import { flushMarks, mark } from './timing';
 import { WindowSize } from './window-size';
-import { InspectView } from './views/inspect';
 import { openRowMenu } from './views/row-menu';
 import { FavoriteBar } from './views/slots';
-import { SettingsSheet } from './views/settings';
-import { TransitionDialog } from './views/transition';
-
-type View = 'search' | 'transition' | 'settings' | 'inspect';
-
-/**
- * How Enter was pressed. `withOptions` means Shift was held, which flips whatever the transition
- * prompt setting says; `keepOpen` means Cmd/Ctrl was held to apply several things in a row.
- */
-type ApplyIntent = 'default' | 'withOptions' | 'keepOpen';
-
-/** One entry of the footer line. Every hint names a key and does what that key does when clicked. */
-interface Hint {
-  key: string;
-  label: string;
-  run: () => void;
-  scope?: boolean;
-}
 
 export class PaletteApp {
   private readonly root: HTMLElement;
@@ -93,8 +86,6 @@ export class PaletteApp {
 
   private scope: Scope = 'all';
 
-  private view: View = 'search';
-
   private sequence: SequenceInfo | null = null;
 
   private hostVersion = '';
@@ -106,14 +97,43 @@ export class PaletteApp {
   /** Set once a check finds a newer release, so the resting line can mention it. */
   private updateNote = '';
 
+  /** The version that check found, which is what the footer's own version chip switches to. */
+  private updateRemote = '';
+
   private rowMenu: HTMLElement | null = null;
 
   private readonly bar = new FavoriteBar({
     settings: () => this.settings,
     query: () => this.input.value.trim(),
-    apply: (item) => void this.applyItem(item, 'default'),
+    apply: (item) => void this.pipeline.item(item, 'default'),
     status: (text, kind) => this.setStatus(text, kind),
     changed: () => this.updateResults(),
+  });
+
+  private readonly pipeline = new ApplyPipeline({
+    settings: () => this.settings,
+    busy: () => this.busy,
+    setBusy: (on) => {
+      this.busy = on;
+    },
+    status: (text, kind) => this.setStatus(text, kind),
+    toast: (message, kind) => this.toast(message, kind),
+    reindex: () => this.ensureCatalog(true),
+    openSettings: () => this.sheets.openSettings(),
+    openInspector: () => this.sheets.openInspector(),
+    openTransition: (item) => this.sheets.openTransition(item),
+    openUnnest: (item) => this.sheets.openUnnest(item),
+    openEase: (item) => this.sheets.openEase(item),
+    openAnchor: (item) => this.sheets.openAnchor(item),
+    undo: () => this.undoLast(),
+    unnest: () => this.runUnnest(),
+    openPaste: (item) => this.sheets.openPaste(item),
+    openCompass: () => this.sheets.openCompass(),
+    paste: () => this.runPaste(),
+    compassExport: () => this.runCompassExport(),
+    backToSearch: (clearQuery) => this.backToSearch(clearQuery),
+    dismiss: () => this.dismiss(),
+    refreshSequence: () => void this.refreshSequence(),
   });
 
   private readonly size = new WindowSize(
@@ -121,40 +141,34 @@ export class PaletteApp {
     () => this.quickGroups(),
   );
 
-  private readonly transitionDialog = new TransitionDialog(
-    {
-      fps: () => this.sequence?.fps ?? 25,
-      selectedClips: () => this.sequence?.selectedClips ?? 0,
-      apply: (item, options) => void this.confirmTransition(item, options),
-      back: () => this.backToSearch(),
-    },
-    defaultSettings().lastTransition,
-  );
-
   private captured: CatalogItem[] = [];
 
-  private readonly inspectView = new InspectView({
-    capture: () => this.captureSelection(),
-    save: (preset) => this.storeCaptured(preset),
-    toast: (message, kind) => this.toast(message, kind),
-    back: () => this.backToSearch(),
-  });
-
-  private readonly settingsSheet = new SettingsSheet({
+  private readonly sheets = new Sheets({
+    body: () => this.body,
     settings: () => this.settings,
     replaceSettings: (next) => {
       this.settings = next;
     },
-    persist: (restartHelper) => this.persistAndNotify(restartHelper),
+    sequence: () => this.sequence,
     hostVersion: () => this.hostVersion,
     indexedItems: () => this.catalog?.items.length ?? 0,
+    persist: (restartHelper) => this.persistAndNotify(restartHelper),
+    setPersistent: (on) => void setPanelPersistent(on),
     applyTheme: () => this.applyTheme(),
-    refit: () => this.size.apply(this.view === 'search' ? 'list' : 'sheet'),
+    status: (text, kind) => this.setStatus(text, kind),
     toast: (message, kind) => this.toast(message, kind),
     reindex: () => this.ensureCatalog(true),
     refreshPresets: () => this.refreshPresetsOnly(),
     flagUpdate: (available, remote) => this.flagUpdate(available, remote),
-    close: () => this.backToSearch(),
+    applyTransition: (item, options) => void this.confirmTransition(item, options),
+    applyUnnest: (item, media) => void this.confirmUnnest(item, media),
+    applyEase: (item, options) => void this.confirmEase(item, options),
+    applyAnchor: (item, options) => void this.confirmAnchor(item, options),
+    applyPaste: (item, seconds) => void this.confirmPaste(item, seconds),
+    applyCompass: () => this.runCompass(),
+    storeCaptured: (preset) => this.storeCaptured(preset),
+    viewChanged: (view) => this.viewChanged(view),
+    back: () => this.backToSearch(),
   });
 
   constructor(root: HTMLElement) {
@@ -176,10 +190,27 @@ export class PaletteApp {
     this.bindEvents();
     this.updateResults();
     this.focusInput();
-    // Off the opening path: writing a file is not something to do before the first keystroke can
+    mark('paint');
+    // Off the opening path: touching files is not something to do before the first keystroke can
     // land. The shortcut only needs the marker by the time it can be pressed again.
-    window.setTimeout(() => markPanelOpen(true), 0);
+    window.setTimeout(() => {
+      markPanelOpen(true);
+      this.claimIntent();
+      // Armed by the invisible service once per Premiere session as well. Doing it here too is what
+      // keeps the palette quick to summon for somebody who turned the service off.
+      void setPanelPersistent(this.settings.keepLoaded);
+    }, 0);
     await this.warmUp();
+  }
+
+  /**
+   * A press that asked for the settings screen while the page was still loading: the event carrying
+   * that intent went out before there was a listener for it, so it was left on disk instead.
+   */
+  private claimIntent(): void {
+    if (claimPendingIntent()?.settings) {
+      this.sheets.openSettings();
+    }
   }
 
   private async warmUp(): Promise<void> {
@@ -188,6 +219,7 @@ export class PaletteApp {
     this.hostVersion = hello.data?.host ?? 'unknown';
     this.sequence = hello.data?.sequence ?? null;
     this.renderHints();
+    mark('hello');
     // Reading the saved presets is disk work, and it belongs behind the first paint rather than
     // in front of it: the resting list is drawn from settings and does not need them.
     this.captured = capturedItems(listCaptured());
@@ -199,10 +231,14 @@ export class PaletteApp {
       if (this.input.value.trim() !== '') {
         this.updateResults();
       }
+      mark('catalog');
+      flushMarks();
       void this.refreshPresetsOnly();
       return;
     }
     await this.ensureCatalog(true);
+    mark('catalog');
+    flushMarks();
   }
 
   /**
@@ -263,9 +299,15 @@ export class PaletteApp {
     window.addEventListener('blur', () => this.bar.noteModifiers(null));
     window.addEventListener('focus', () => this.focusInput());
     window.addEventListener('resize', () => this.size.noteHostResize());
-    // Closed by the window's own button rather than by us: the marker has to go down anyway, or
-    // the next shortcut would think the palette is still up and try to dismiss it.
-    window.addEventListener('unload', () => markPanelOpen(false));
+    // Closed by the window's own button rather than by us: the marker has to go down anyway, or the
+    // next shortcut would think the palette is still up and try to dismiss it. Neither event is
+    // promised for a persistent extension, which Premiere hides rather than unloads, so the marker
+    // can be left standing over a palette nobody can see. That is survivable and deliberately so:
+    // the service takes the marker down itself when it asks the palette to go away, so the worst a
+    // stale one costs is a press that closes nothing, and the press after it opens as usual.
+    const release = (): void => markPanelOpen(false);
+    window.addEventListener('unload', release);
+    window.addEventListener('pagehide', release);
     document.addEventListener('mousedown', (event) => {
       const target = event.target instanceof HTMLElement ? event.target : null;
       if (!target?.closest('.menu')) {
@@ -291,18 +333,16 @@ export class PaletteApp {
   }
 
   /** The view and the size of the window are the same decision, so they are made together. */
-  private setView(view: View): void {
-    this.view = view;
+  private viewChanged(view: View): void {
     this.bar.show(view === 'search');
     this.size.apply(view === 'search' ? 'list' : 'sheet');
+    this.renderHints();
   }
 
   private onSummon(wantsSettings = false): void {
     // Re-announced rather than only on boot: a host that hides the window instead of unloading it
     // would otherwise leave the palette up with nothing saying so.
     markPanelOpen(true);
-    this.transitionDialog.clear();
-    this.settingsSheet.closed();
     this.input.value = '';
     this.active = 0;
     // Every summon starts clean: how the last thing went is stale news by now.
@@ -310,13 +350,14 @@ export class PaletteApp {
     this.settings = loadSettings();
     this.applyTheme();
     // What was applied since the last summon changes the resting list, and so its size. Entering the
-    // search view is also what reads the bar back out of the settings that were just loaded.
-    this.setView('search');
+    // search view is also what reads the bar back out of the settings that were just loaded, and
+    // what puts away a sheet that was up when the palette was last dismissed.
+    this.sheets.toSearch();
     this.updateResults();
     this.renderHints();
     void this.refreshSequence();
     if (wantsSettings) {
-      this.openSettings();
+      this.sheets.openSettings();
       return;
     }
     this.focusInput();
@@ -330,7 +371,7 @@ export class PaletteApp {
   }
 
   private focusInput(): void {
-    if (this.view !== 'search') {
+    if (!this.sheets.isSearch()) {
       return;
     }
     const attempt = () => {
@@ -386,7 +427,13 @@ export class PaletteApp {
    */
   private renderHints(): void {
     clear(this.hintNode);
-    for (const hint of this.hintsFor()) {
+    const hints = this.hintsFor();
+    // The version earns the footer's left edge only when the footer is already there: it is the one
+    // thing on that line that answers a question nobody asked, so it never brings the line with it.
+    if (hints.length > 0) {
+      this.hintNode.appendChild(this.versionChip());
+    }
+    for (const hint of hints) {
       this.hintNode.appendChild(
         el(
           'button',
@@ -405,47 +452,47 @@ export class PaletteApp {
     this.syncFoot();
   }
 
+  /**
+   * Which version this is, so the answer to "am I on the latest" is on screen instead of two clicks
+   * away. Dim while it is the latest; in the accent colour, and worth clicking, once it is not.
+   */
+  private versionChip(): HTMLElement {
+    const current = localVersion();
+    const waiting = this.updateRemote !== '';
+    return el('button', {
+      class: `hints__version${waiting ? ' hints__version--update' : ''}`,
+      title: waiting ? `${current} \u00b7 ${this.updateNote}` : `FX Premiere ${current}`,
+      text: waiting ? `${current} \u2192 ${this.updateRemote}` : current,
+      onclick: () => {
+        this.sheets.openSettings();
+      },
+    });
+  }
+
   private hintsFor(): Hint[] {
-    switch (this.view) {
-      case 'transition':
-        return [
-          { key: '\u2191\u2193', label: 'duration', run: () => this.transitionDialog.nudge(1) },
-          { key: '\u21b5', label: 'apply', run: () => this.transitionDialog.confirm() },
-        ];
-      case 'settings':
-        return [{ key: 'esc', label: 'back', run: () => this.backToSearch() }];
-      case 'inspect':
-        return [
-          { key: '\u21b5', label: 'save preset', run: () => void this.inspectView.save() },
-          { key: 'esc', label: 'back', run: () => this.backToSearch() },
-        ];
-      case 'search': {
-        const scope = SCOPES.find((entry) => entry.id === this.scope);
-        const hints: Hint[] =
-          scope && scope.id !== 'all'
-            ? [{ key: '\u21e5', label: scope.label.toLowerCase(), scope: true, run: () => this.cycleScope(1) }]
-            : [];
-        if (this.input.value.trim() !== '') {
-          return hints;
-        }
-        hints.push(
-          { key: '\u21b5', label: this.targetLabel(), run: () => void this.applyActive('default') },
-          { key: '\u2318D', label: 'put on a number', run: () => this.pickActive() },
-          { key: '\u2318I', label: 'create preset', run: () => void this.openInspector() },
-          { key: '\u2318Z', label: 'undo', run: () => void this.undoLast() },
-          {
-            key: '\u2318,',
-            label: this.updateNote === '' ? 'settings' : this.updateNote,
-            run: () => this.openSettings(),
-          },
-        );
-        return hints;
-      }
-      default: {
-        const exhaustive: never = this.view;
-        throw new Error(`Unhandled view: ${String(exhaustive)}`);
-      }
+    if (!this.sheets.isSearch()) {
+      return this.sheets.hints();
     }
+    const scope = SCOPES.find((entry) => entry.id === this.scope);
+    const hints: Hint[] =
+      scope && scope.id !== 'all'
+        ? [{ key: '\u21e5', label: scope.label.toLowerCase(), scope: true, run: () => this.cycleScope(1) }]
+        : [];
+    if (this.input.value.trim() !== '') {
+      return hints;
+    }
+    hints.push(
+      { key: '\u21b5', label: this.targetLabel(), run: () => void this.applyActive('default') },
+      { key: '\u2318D', label: 'put on a number', run: () => this.pickActive() },
+      { key: '\u2318I', label: 'create preset', run: () => void this.sheets.openInspector() },
+      { key: '\u2318Z', label: 'undo', run: () => void this.undoLast() },
+      {
+        key: '\u2318,',
+        label: this.updateNote === '' ? 'settings' : this.updateNote,
+        run: () => this.sheets.openSettings(),
+      },
+    );
+    return hints;
   }
 
   private allItems(): CatalogItem[] {
@@ -483,7 +530,7 @@ export class PaletteApp {
   }
 
   private updateResults(): void {
-    if (this.view !== 'search') {
+    if (!this.sheets.isSearch()) {
       return;
     }
     const query = this.input.value;
@@ -495,7 +542,7 @@ export class PaletteApp {
       // A typed motion command is not a search result: it is what you just wrote, so it goes
       // straight to the top instead of through the ranking and back out of it.
       const dynamic = parseMotionQuery(query);
-      const ranked = rank(this.allItems(), this.catalog?.haystacks ?? new Map(), query, this.scope, {
+      const ranked = rank(this.allItems(), this.catalog?.haystacks() ?? new Map(), query, this.scope, {
         favorites: this.bar.list(),
         recents: this.settings.recents,
         usage: this.settings.usage,
@@ -607,16 +654,8 @@ export class PaletteApp {
 
   private onKeyDown(event: KeyboardEvent): void {
     this.bar.noteModifiers(event);
-    if (this.view === 'transition') {
-      this.transitionDialog.handleKey(event);
-      return;
-    }
-    if (this.view === 'settings') {
-      this.settingsSheet.handleKey(event);
-      return;
-    }
-    if (this.view === 'inspect') {
-      this.inspectView.handleKey(event);
+    if (!this.sheets.isSearch()) {
+      this.sheets.handleKey(event);
       return;
     }
 
@@ -677,12 +716,12 @@ export class PaletteApp {
     }
     if (accel && (event.key === 'i' || event.key === 'I')) {
       event.preventDefault();
-      void this.openInspector();
+      void this.sheets.openInspector();
       return;
     }
     if (accel && event.key === ',') {
       event.preventDefault();
-      this.openSettings();
+      this.sheets.openSettings();
     }
   }
 
@@ -719,7 +758,7 @@ export class PaletteApp {
       },
       apply: () => {
         this.closeRowMenu();
-        void this.applyItem(entry.item, 'default');
+        void this.pipeline.item(entry.item, 'default');
       },
       remove: entry.item.captured
         ? () => {
@@ -780,139 +819,106 @@ export class PaletteApp {
     if (!entry) {
       return;
     }
-    await this.applyItem(entry.item, intent);
-  }
-
-  private async applyItem(item: CatalogItem, intent: ApplyIntent): Promise<void> {
-    if (item.commandId === LOCAL_COMMAND_REFRESH) {
-      await this.ensureCatalog(true);
-      return;
-    }
-    if (item.commandId === LOCAL_COMMAND_SETTINGS) {
-      this.openSettings();
-      return;
-    }
-    if (item.commandId === LOCAL_COMMAND_INSPECT) {
-      await this.openInspector();
-      return;
-    }
-    if (item.commandId === LOCAL_COMMAND_UNDO) {
-      await this.undoLast();
-      return;
-    }
-    const isTransition = item.kind === 'videoTransition' || item.kind === 'audioTransition';
-    if (isTransition) {
-      if (this.settings.transitionPromptEnabled !== (intent === 'withOptions')) {
-        this.openTransition(item);
-        return;
-      }
-    }
-    await this.runApply(item, intent === 'keepOpen');
-  }
-
-  private async runApply(item: CatalogItem, keepOpen: boolean, options?: TransitionOptions): Promise<void> {
-    if (this.busy) {
-      return;
-    }
-    this.busy = true;
-    this.setStatus('Applying\u2026');
-    try {
-      const response = await this.sendApply(item, options);
-      if (!response.ok) {
-        this.setStatus(response.error ?? 'Failed', 'error');
-        this.toast(response.error ?? 'Could not apply this item.', 'error');
-        return;
-      }
-      const outcome = response.data ?? { applied: 0, skipped: 0, failed: 0, messages: [] };
-      this.recordUsage(item);
-      if (outcome.applied === 0) {
-        const reason = outcome.messages[0] ?? 'Nothing was applied.';
-        this.setStatus(reason, 'error');
-        this.toast(reason, 'error');
-        return;
-      }
-      const notes = [
-        outcome.skipped > 0 ? `${outcome.skipped} left alone` : '',
-        outcome.failed > 0 ? `${outcome.failed} failed` : '',
-      ].filter(Boolean);
-      const summary = `${item.name} \u2192 ${outcome.applied} clip${outcome.applied === 1 ? '' : 's'}${
-        notes.length > 0 ? ` (${notes.join(', ')})` : ''
-      }`;
-      this.setStatus(summary, outcome.failed > 0 ? 'error' : 'ok');
-      // Clips of the other media type are normal in a linked A/V selection, so only a real
-      // failure is worth keeping the palette open for.
-      const closing = this.settings.closeAfterApply && !keepOpen && outcome.failed === 0;
-      // Land back on the search view either way: the panel can survive being closed, and
-      // reopening it on a stale transition dialog would re-apply that transition on Enter.
-      this.backToSearch(closing);
-      if (closing) {
-        this.dismiss();
-        return;
-      }
-      this.toast(outcome.messages.length > 0 ? `${summary} \u00b7 ${outcome.messages.join(' \u00b7 ')}` : summary);
-      void this.refreshSequence();
-    } finally {
-      this.busy = false;
-    }
-  }
-
-  private sendApply(item: CatalogItem, options?: TransitionOptions): Promise<HostResponse<ApplyOutcome>> {
-    switch (item.kind) {
-      case 'videoEffect':
-      case 'audioEffect':
-        return callHost<ApplyOutcome>({
-          op: 'applyEffect',
-          name: item.name,
-          matchName: item.matchName,
-          mediaType: item.kind === 'audioEffect' ? 'audio' : 'video',
-        });
-      case 'videoTransition':
-      case 'audioTransition':
-        return callHost<ApplyOutcome>({
-          op: 'applyTransition',
-          name: item.name,
-          mediaType: item.kind === 'audioTransition' ? 'audio' : 'video',
-          options: options ?? this.settings.lastTransition,
-        });
-      case 'preset':
-        return item.captured
-          ? callHost<ApplyOutcome>({ op: 'applyCaptured', preset: item.captured })
-          : callHost<ApplyOutcome>({ op: 'applyPreset', preset: item.preset! });
-      case 'command':
-        return item.motion
-          ? callHost<ApplyOutcome>({ op: 'motion', command: item.motion })
-          : callHost<ApplyOutcome>({ op: 'command', commandId: item.commandId! });
-      default: {
-        const exhaustive: never = item.kind;
-        throw new Error(`Unhandled item kind: ${String(exhaustive)}`);
-      }
-    }
-  }
-
-  private recordUsage(item: CatalogItem): void {
-    this.settings.usage[item.id] = (this.settings.usage[item.id] ?? 0) + 1;
-    this.settings.recents = [item.id, ...this.settings.recents.filter((entry) => entry !== item.id)].slice(0, 24);
-    rememberItem(this.settings, item);
-    saveSettings(this.settings);
-  }
-
-  private openTransition(item: CatalogItem): void {
-    this.setView('transition');
-    this.transitionDialog.open(item, this.settings.lastTransition);
-    this.transitionDialog.render(this.body);
-    this.renderHints();
+    await this.pipeline.item(entry.item, intent);
   }
 
   private async confirmTransition(item: CatalogItem, options: TransitionOptions): Promise<void> {
     this.settings.lastTransition = { ...options };
     saveSettings(this.settings);
-    await this.runApply(item, false, options);
+    await this.pipeline.run(item, false, { transition: options });
+  }
+
+  private async confirmUnnest(item: CatalogItem, media: UnnestMedia): Promise<void> {
+    this.settings.unnest = { ...this.settings.unnest, media };
+    saveSettings(this.settings);
+    await this.pipeline.run(item, false);
+  }
+
+  /**
+   * The palette is hidden for the whole run, so its own report of what happened would go out onto a
+   * window nobody can see. It comes back for anything worth reading — a failure, a nest that was
+   * refused, a census warning, a nest disabled instead of deleted — and not only for a run that got
+   * nothing done: a run that opened one nest and lost a clip doing it reports one applied, and that
+   * sentence is the whole point of taking the census.
+   */
+  private async runUnnest(): Promise<HostResponse<ApplyOutcome>> {
+    const response = await runUnnest(this.settings.unnest, {
+      keys: keysBridge(),
+      status: (text, kind) => this.setStatus(text, kind),
+      keepLoaded: () => this.settings.keepLoaded,
+      nests: () => this.sheets.nests(),
+    });
+    const outcome = response.data;
+    const worthReading =
+      !response.ok || !outcome || outcome.applied === 0 || outcome.failed > 0 || outcome.messages.length > 0;
+    if (worthReading) {
+      showPalette();
+    }
+    return response;
+  }
+
+  private async confirmEase(item: CatalogItem, options: EaseOptions): Promise<void> {
+    this.settings.ease = { ...this.settings.ease, current: { ...options } };
+    saveSettings(this.settings);
+    await this.pipeline.run(item, false, { hold: true });
+  }
+
+  /**
+   * Where the object is inside each selected clip is the panel's half of the job: reading a PNG's
+   * alpha channel needs Node, which only this side has. The host says what the clips are made of,
+   * this resolves the bounds, and the anchor op is handed the answer rather than guessing at it.
+   */
+  private async confirmAnchor(item: CatalogItem, options: AnchorOptions): Promise<void> {
+    this.settings.anchor = { ...options };
+    saveSettings(this.settings);
+    const sources = await callHost<AnchorSource[]>({ op: 'anchorSources' });
+    if (!sources.ok || !sources.data) {
+      const reason = sources.error ?? 'Could not read the selected clips.';
+      this.setStatus(reason, 'error');
+      this.toast(reason, 'error');
+      return;
+    }
+    const resolved = resolveAnchorBounds(sources.data, options.bounds, this.sequence);
+    await this.pipeline.run(item, false, {
+      anchor: { options, bounds: resolved.bounds },
+      notes: resolved.notes,
+      hold: true,
+    });
+  }
+
+  /**
+   * The duration is the one thing the dialog can change, and it is remembered rather than asked for
+   * again: the default the setting holds is what Premiere would not say, not what was last wanted.
+   */
+  private async confirmPaste(item: CatalogItem, seconds: number): Promise<void> {
+    this.settings.paste.stillSeconds = seconds;
+    saveSettings(this.settings);
+    await this.pipeline.run(item, false, { hold: true });
+  }
+
+  private async runPaste(): Promise<HostResponse<ApplyOutcome>> {
+    const probe = this.sheets.probe();
+    if (!probe) {
+      return { ok: false, error: 'Nothing was read from the clipboard.' };
+    }
+    return commitPaste({ ...probe, seconds: this.settings.paste.stillSeconds }, this.settings);
+  }
+
+  /** Reported rather than announced: a write Premiere refused has to reach the status line as one. */
+  private async runCompass(): Promise<void> {
+    const result = await applyCompass(this.settings, await this.sheets.context());
+    const messages = compassMessages(result);
+    const ok = result.error === '' && roundTripped(result.writes);
+    this.setStatus(messages[0] ?? '', ok ? 'ok' : 'error');
+    this.toast(messages.join(' \u00b7 '), ok ? 'info' : 'error');
+  }
+
+  private async runCompassExport(): Promise<HostResponse<ApplyOutcome>> {
+    return exportViaCompass(this.settings, await this.sheets.context());
   }
 
   private backToSearch(clearQuery = false): void {
-    this.setView('search');
-    this.transitionDialog.clear();
-    this.settingsSheet.closed();
+    this.sheets.toSearch();
     if (clearQuery) {
       this.input.value = '';
       this.active = 0;
@@ -920,36 +926,6 @@ export class PaletteApp {
     this.renderHints();
     this.updateResults();
     this.focusInput();
-  }
-
-  private openSettings(): void {
-    this.setView('settings');
-    this.settingsSheet.render(this.body);
-    this.settingsSheet.opened();
-    this.renderHints();
-  }
-
-  private async openInspector(): Promise<void> {
-    const response = await callHost<ClipInspection>({ op: 'inspect' });
-    if (!response.ok || !response.data) {
-      const reason = response.error ?? 'Could not read the effects on this clip.';
-      this.setStatus(reason, 'error');
-      this.toast(reason, 'error');
-      return;
-    }
-    this.setView('inspect');
-    this.inspectView.open(response.data);
-    this.inspectView.render(this.body);
-    this.renderHints();
-  }
-
-  private async captureSelection(): Promise<CapturedPreset | null> {
-    const response = await callHost<CapturedPreset>({ op: 'capture' });
-    if (!response.ok || !response.data) {
-      this.toast(response.error ?? 'Could not capture this clip.', 'error');
-      return null;
-    }
-    return response.data;
   }
 
   private storeCaptured(preset: CapturedPreset): void {
@@ -980,6 +956,7 @@ export class PaletteApp {
   /** With no gear to mark, an available update lives in the resting line next to its shortcut. */
   private flagUpdate(available: boolean, remote: string): void {
     this.updateNote = available ? `update to ${remote}` : '';
+    this.updateRemote = available ? remote : '';
     this.renderHints();
   }
 

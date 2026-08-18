@@ -10,9 +10,18 @@ import {
   readHelperStatus,
   sameModifiers,
 } from '@shared/settings';
-import type { Modifiers, Settings } from '@shared/types';
+import type { KeysReport, Modifiers, Settings } from '@shared/types';
+import { keysBridge } from '../keys-bridge';
 import { applyUpdate, checkForUpdate, isDevInstall, localVersion, type UpdateCheck } from '@shared/updater';
 import { clear, el } from '../dom';
+import {
+  KEYS_ASKED,
+  KEYS_GRANTED,
+  KEYS_GRANT_BUTTON,
+  KEYS_ROW_TITLE,
+  KEYS_WHY,
+  keysState,
+} from '../keys-copy';
 import { buttonRow, fieldRow, segmented, swatches, switchNode } from '../widgets';
 
 const RELOAD_DELAY_MS = 900;
@@ -29,6 +38,8 @@ interface SettingsHost {
   settings(): Settings;
   replaceSettings(next: Settings): void;
   persist(restartHelper: boolean): void;
+  /** Asks Premiere to keep the palette loaded between summons, or to stop doing it. */
+  setPersistent(on: boolean): void;
   hostVersion(): string;
   indexedItems(): number;
   applyTheme(): void;
@@ -56,6 +67,8 @@ export class SettingsSheet {
 
   private state: 'idle' | 'checking' | 'installing' = 'idle';
 
+  private keys: KeysReport | null = null;
+
   private container: HTMLElement | null = null;
 
   constructor(private readonly host: SettingsHost) {}
@@ -65,6 +78,7 @@ export class SettingsSheet {
     if (this.update === null && this.state === 'idle' && !isDevInstall()) {
       void this.checkForUpdate();
     }
+    void this.checkKeys();
   }
 
   closed(): void {
@@ -168,6 +182,9 @@ export class SettingsSheet {
       ),
     );
 
+    container.appendChild(el('div', { class: 'section-title', text: 'Un-nest' }));
+    container.appendChild(this.keysRow());
+
     container.appendChild(el('div', { class: 'section-title', text: 'Behaviour' }));
     container.appendChild(
       fieldRow(
@@ -175,6 +192,17 @@ export class SettingsSheet {
         'Keeps the keyboard flow: summon, type, Enter, back to the timeline.',
         switchNode(settings.closeAfterApply, (next) => {
           settings.closeAfterApply = next;
+          this.save(false);
+        }),
+      ),
+    );
+    container.appendChild(
+      fieldRow(
+        'Keep the palette loaded',
+        'Premiere holds the palette in memory once you close it, so every summon after the first is instant. It costs the memory of one loaded panel, and the first summon after Premiere starts is slow either way.',
+        switchNode(settings.keepLoaded, (next) => {
+          settings.keepLoaded = next;
+          this.host.setPersistent(next);
           this.save(false);
         }),
       ),
@@ -199,6 +227,36 @@ export class SettingsSheet {
         }),
       ),
     );
+    container.appendChild(el('div', { class: 'section-title', text: 'Un-nesting' }));
+    container.appendChild(
+      fieldRow(
+        'The nest itself',
+        'Disabled by default, so its audio does not play under the clips that just came out of it. Deleting cannot be taken back by a glance at the timeline, and keeping it means hearing it twice.',
+        segmented(
+          [
+            { value: 'disable' as const, label: 'Disable' },
+            { value: 'keep' as const, label: 'Keep' },
+            { value: 'delete' as const, label: 'Delete' },
+          ],
+          settings.unnest.original,
+          (value) => {
+            settings.unnest.original = value;
+            this.save(false);
+          },
+        ),
+      ),
+    );
+    container.appendChild(
+      fieldRow(
+        'Go into nests inside nests',
+        `Un-nests what came out of a nest as well, up to ${settings.unnest.maxDepth} levels deep.`,
+        switchNode(settings.unnest.recursive, (next) => {
+          settings.unnest.recursive = next;
+          this.save(false);
+        }),
+      ),
+    );
+
     container.appendChild(el('div', { class: 'section-title', text: 'The resting list' }));
     container.appendChild(
       fieldRow(
@@ -383,6 +441,36 @@ export class SettingsSheet {
         el('button', { class: 'button button--primary', text: 'Done', onclick: () => this.host.close() }),
       ]),
     );
+  }
+
+  /**
+   * The keystroke permission un-nesting needs. Checked when the sheet opens rather than on every
+   * render: the answer comes from a process, and a sheet that re-renders on every keypress would
+   * spawn one each time.
+   */
+  private keysRow(): HTMLElement {
+    const windows = process.platform === 'win32';
+    return fieldRow(
+      KEYS_ROW_TITLE,
+      `${keysState(this.keys, windows)}. ${KEYS_WHY}`,
+      el('button', {
+        class: 'button',
+        text: KEYS_GRANT_BUTTON,
+        disabled: windows || this.keys?.access === 'granted',
+        onclick: () => void this.requestKeys(),
+      }),
+    );
+  }
+
+  private async checkKeys(): Promise<void> {
+    this.keys = await keysBridge().preflight();
+    this.rerender();
+  }
+
+  private async requestKeys(): Promise<void> {
+    const asked = await keysBridge().request();
+    this.host.toast(asked.access === 'granted' ? KEYS_GRANTED : KEYS_ASKED, asked.access === 'granted' ? 'info' : 'error');
+    await this.checkKeys();
   }
 
   private updateRow(): HTMLElement {
