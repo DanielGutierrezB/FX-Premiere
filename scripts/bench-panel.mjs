@@ -10,7 +10,8 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { createCepWindow, settle } from './lib/mock-cep.mjs';
-import { createHost, fileReads, writePresetFixture } from './lib/mock-premiere.mjs';
+import { fileReads, writePresetFixture } from './lib/mock-files.mjs';
+import { createHost } from './lib/mock-premiere.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const hostScript = join(root, 'dist', 'host', 'fxpremiere.jsx');
@@ -132,6 +133,20 @@ const broadRows = rows();
 const narrow = await typeOnce('gaussian');
 const narrowRows = rows();
 
+// The same keystroke without letting the loop breathe afterwards. Everything a keystroke costs is
+// synchronous — ranking, the rows, the footer — so this is the part the typist actually waits on,
+// with the millisecond of timer the other numbers cannot avoid taken out.
+const typeSync = (text) => {
+  input.value = text;
+  const started = performance.now();
+  input.dispatchEvent(new window.Event('input', { bubbles: true }));
+  return performance.now() - started;
+};
+const blocking = [];
+for (const text of ['g', 'ga', 'gau', 'gaus', 'gauss', 'gaussi', 'gaussia', 'gaussian', 'e', 'bl']) {
+  blocking.push(typeSync(text));
+}
+
 const median = (values) => [...values].sort((a, b) => a - b)[Math.floor(values.length / 2)];
 
 console.log(`first ever open, first paint       ${ms(firstPaint)}`);
@@ -142,3 +157,4 @@ console.log(`summon, median of 5                ${ms(median(summonTimes))}  (row
 console.log(`keystroke, ranking only            ${ms(scoreOnly)}`);
 console.log(`keystroke, broad query             ${ms(broad)}  (rows rendered: ${broadRows})`);
 console.log(`keystroke, narrow query            ${ms(narrow)}  (rows rendered: ${narrowRows})`);
+console.log(`keystroke, thread blocked          ${ms(median(blocking))}  (median of ${blocking.length}, worst ${ms(Math.max(...blocking))})`);

@@ -4,9 +4,14 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as esbuild from 'esbuild';
 
+import { panelCss } from './lib/panel-css.mjs';
+import { sharedAlias } from './lib/shared-alias.mjs';
+
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const dist = join(root, 'dist');
 const watch = process.argv.includes('--watch');
+/** `scripts/build-helper.sh` comes back through here, so the compiler flags cannot drift apart. */
+const helperOnly = process.argv.includes('--helper-only');
 
 const ensure = (path) => {
   mkdirSync(path, { recursive: true });
@@ -27,15 +32,6 @@ const bundleHost = () => {
   return files.length;
 };
 
-const sharedAlias = {
-  name: 'shared-alias',
-  setup(build) {
-    build.onResolve({ filter: /^@shared\// }, (args) => ({
-      path: join(root, 'shared', `${args.path.replace('@shared/', '')}.ts`),
-    }));
-  },
-};
-
 const bundleOptions = (entry, outfile, label) => ({
   entryPoints: [entry],
   outfile,
@@ -47,7 +43,7 @@ const bundleOptions = (entry, outfile, label) => ({
   minify: !watch,
   legalComments: 'none',
   banner: { js: banner(label) },
-  plugins: [sharedAlias],
+  plugins: [sharedAlias(root)],
   external: ['fs', 'path', 'os', 'child_process'],
   logLevel: 'silent',
 });
@@ -69,13 +65,13 @@ const copyStatic = () => {
   ensure(join(dist, 'panel'));
   // The stylesheet is inlined: a linked one blocks the first paint on a second file read, and the
   // palette is opened and thrown away dozens of times an hour.
-  const css = readFileSync(join(root, 'panel', 'panel.css'), 'utf8');
-  const link = '<link rel="stylesheet" href="panel.css" />';
+  const css = panelCss(root);
+  const link = '<link rel="stylesheet" href="css/panel.css" />';
   const source = readFileSync(join(root, 'panel', 'index.html'), 'utf8');
   if (!source.includes(link)) {
-    // Shipping the link instead would mean a panel with no stylesheet at all, since panel.css is
-    // not copied into dist.
-    throw new Error('panel/index.html no longer links panel.css the way the build expects');
+    // Shipping the link instead would mean a panel with no stylesheet at all: there is no
+    // css/panel.css on disk, and panel/css is not copied into dist.
+    throw new Error('panel/index.html no longer links the stylesheet the way the build expects');
   }
   writeFileSync(join(dist, 'panel', 'index.html'), source.replace(link, `<style>\n${css}</style>`), 'utf8');
   ensure(join(dist, 'service'));
@@ -109,37 +105,69 @@ const writeDebug = () => {
   writeFileSync(join(dist, '.debug'), debug, 'utf8');
 };
 
+/** A compiler that is not installed at all, as opposed to one that ran and rejected the source. */
+const isMissingCompiler = (error) => error.code === 'ENOENT';
+
+const compilerComplaint = (command, error) => {
+  const said = `${String(error.stderr ?? '')}\n${String(error.stdout ?? '')}`
+    .split('\n')
+    .map((line) => line.trim())
+    .find((line) => line !== '');
+  return `${command}: ${said ?? error.message}`;
+};
+
+/**
+ * The deployment targets are the oldest each architecture can have: arm64 Macs start at Big Sur,
+ * and Catalina is where the accessibility API the helper preflights was introduced.
+ */
+const macSlices = [
+  ['arm64', 'arm64-apple-macos11.0'],
+  ['x86_64', 'x86_64-apple-macos10.15'],
+];
+
 const buildMacHelper = () => {
   // The directory is only created once there is something to put in it: an empty helper folder in a
   // package looks like a helper that failed to start rather than one that was never built.
   const output = join(dist, 'helper', 'mac', 'fxp-hotkey');
   const target = () => ensure(dirname(output));
   const prebuilt = join(root, 'prebuilt', 'mac', 'fxp-hotkey');
+  const usePrebuilt = (note) => {
+    if (!existsSync(prebuilt)) {
+      return null;
+    }
+    target();
+    copyFileSync(prebuilt, output);
+    return note;
+  };
   if (process.platform !== 'darwin') {
-    if (existsSync(prebuilt)) {
-      target();
-      copyFileSync(prebuilt, output);
-      return 'copied prebuilt macOS helper';
-    }
-    return 'skipped macOS helper (not on macOS)';
+    return usePrebuilt('copied prebuilt macOS helper') ?? 'skipped macOS helper (not on macOS)';
   }
-  target();
-  try {
-    execFileSync(
-      'swiftc',
-      ['-O', '-framework', 'AppKit', '-framework', 'Carbon', join(root, 'helper', 'mac', 'Hotkey.swift'), '-o', output],
-      { stdio: 'pipe' },
-    );
-    execFileSync('chmod', ['755', output]);
-    return 'compiled macOS helper';
-  } catch (error) {
-    if (existsSync(prebuilt)) {
-      copyFileSync(prebuilt, output);
-      return 'swiftc failed, copied prebuilt macOS helper';
+  const built = target();
+  const source = join(root, 'helper', 'mac', 'Hotkey.swift');
+  const slices = [];
+  for (const [arch, triple] of macSlices) {
+    const slice = join(built, `fxp-hotkey-${arch}`);
+    try {
+      execFileSync('swiftc', ['-O', '-target', triple, '-framework', 'AppKit', '-framework', 'Carbon', source, '-o', slice], {
+        stdio: 'pipe',
+      });
+    } catch (error) {
+      if (isMissingCompiler(error)) {
+        return usePrebuilt('no Swift toolchain, copied prebuilt macOS helper') ?? 'skipped macOS helper (no Swift toolchain)';
+      }
+      // A helper that no longer compiles must not be replaced by whatever was built last time.
+      throw new Error(`macOS helper failed to compile for ${arch} - ${compilerComplaint('swiftc', error)}`);
     }
-    const detail = error.stderr ? String(error.stderr).split('\n')[0] : String(error.message);
-    return `macOS helper not built: ${detail}`;
+    slices.push(slice);
   }
+  // Intel Macs are still editing on, and an arm64-only helper does not launch on one at all: the
+  // palette comes up with no global shortcut and nothing to explain why.
+  execFileSync('lipo', ['-create', ...slices, '-output', output], { stdio: 'pipe' });
+  for (const slice of slices) {
+    rmSync(slice, { force: true });
+  }
+  execFileSync('chmod', ['755', output]);
+  return `compiled universal macOS helper (${macSlices.map(([arch]) => arch).join(', ')})`;
 };
 
 const buildWindowsHelper = () => {
@@ -147,35 +175,46 @@ const buildWindowsHelper = () => {
   const target = () => ensure(dirname(output));
   const prebuilt = join(root, 'prebuilt', 'win', 'fxp-hotkey.exe');
   const source = join(root, 'helper', 'win', 'hotkey.cpp');
-  if (process.platform !== 'win32') {
-    if (existsSync(prebuilt)) {
-      target();
-      copyFileSync(prebuilt, output);
-      return 'copied prebuilt Windows helper';
+  const usePrebuilt = (note) => {
+    if (!existsSync(prebuilt)) {
+      return null;
     }
-    return 'skipped Windows helper (not on Windows)';
+    target();
+    copyFileSync(prebuilt, output);
+    return note;
+  };
+  if (process.platform !== 'win32') {
+    return usePrebuilt('copied prebuilt Windows helper') ?? 'skipped Windows helper (not on Windows)';
   }
   const built = target();
   const attempts = [
-    ['g++', ['-O2', '-std=c++17', '-static', source, '-o', output, '-luser32']],
-    ['cl', ['/EHsc', '/O2', '/std:c++17', source, `/Fe:${output}`, 'user32.lib']],
+    ['g++', ['-O2', '-std=c++17', '-static', source, '-o', output, '-luser32', '-lgdiplus']],
+    ['cl', ['/EHsc', '/O2', '/std:c++17', source, `/Fe:${output}`, 'user32.lib', 'gdiplus.lib']],
   ];
   for (const [command, args] of attempts) {
     try {
       execFileSync(command, args, { stdio: 'pipe', cwd: built });
       return `compiled Windows helper with ${command}`;
-    } catch {
-      /* try the next toolchain */
+    } catch (error) {
+      if (!isMissingCompiler(error)) {
+        // A compiler that was there and said no is a broken helper, not a missing toolchain.
+        throw new Error(`Windows helper failed to compile - ${compilerComplaint(command, error)}`);
+      }
     }
   }
-  if (existsSync(prebuilt)) {
-    copyFileSync(prebuilt, output);
-    return 'no compiler found, copied prebuilt Windows helper';
-  }
-  return 'Windows helper not built: install MinGW g++ or MSVC cl';
+  return (
+    usePrebuilt('no compiler found, copied prebuilt Windows helper') ??
+    'Windows helper not built: install MinGW g++ or MSVC cl'
+  );
 };
 
 const run = async () => {
+  if (helperOnly) {
+    for (const note of [buildMacHelper(), buildWindowsHelper()]) {
+      console.log(`  ${note}`);
+    }
+    return;
+  }
   if (!watch) {
     rmSync(dist, { recursive: true, force: true });
   }

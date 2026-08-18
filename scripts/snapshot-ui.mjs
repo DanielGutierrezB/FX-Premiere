@@ -3,13 +3,15 @@
 // without installing anything into Premiere.
 // Usage: node scripts/snapshot-ui.mjs [outfile]
 
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { createCepWindow, settle } from './lib/mock-cep.mjs';
-import { createHost, writePresetFixture } from './lib/mock-premiere.mjs';
+import { writePresetFixture } from './lib/mock-files.mjs';
+import { createHost } from './lib/mock-premiere.mjs';
+import { panelCss } from './lib/panel-css.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const hostScript = join(root, 'dist', 'host', 'fxpremiere.jsx');
@@ -104,7 +106,7 @@ window.dispatchEvent(new window.KeyboardEvent('keydown', { key: ',', metaKey: tr
 await settle(30);
 shot('Settings');
 
-const css = readFileSync(join(root, 'panel', 'panel.css'), 'utf8');
+const css = panelCss(root);
 const page = `<!doctype html>
 <html><head><meta charset="utf-8"><title>FX Premiere UI</title>
 <style>${css}</style>

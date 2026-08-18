@@ -7,7 +7,7 @@
 // Usage: node scripts/check-layout.mjs
 
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -15,11 +15,12 @@ import { fileURLToPath } from 'node:url';
 import { check, finish } from './lib/check.mjs';
 import { createCepWindow, settle } from './lib/mock-cep.mjs';
 import { createHost } from './lib/mock-premiere.mjs';
+import { panelCss } from './lib/panel-css.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const panelBundle = join(root, 'dist', 'panel', 'panel.js');
 const hostScript = join(root, 'dist', 'host', 'fxpremiere.jsx');
-const css = readFileSync(join(root, 'panel', 'panel.css'), 'utf8');
+const css = panelCss(root);
 
 const CHROME = [
   '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',

@@ -8,17 +8,10 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import * as esbuild from 'esbuild';
 
+import { sharedAlias } from './lib/shared-alias.mjs';
+
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const stage = mkdtempSync(join(tmpdir(), 'fxp-test-'));
-
-const sharedAlias = {
-  name: 'shared-alias',
-  setup(build) {
-    build.onResolve({ filter: /^@shared\// }, (args) => ({
-      path: join(root, 'shared', `${args.path.replace('@shared/', '')}.ts`),
-    }));
-  },
-};
 
 const entry = join(stage, 'entry.ts');
 const outfile = join(stage, 'bundle.mjs');
@@ -38,7 +31,7 @@ await esbuild.build({
   bundle: true,
   format: 'esm',
   platform: 'neutral',
-  plugins: [sharedAlias],
+  plugins: [sharedAlias(root)],
   logLevel: 'silent',
 });
 

@@ -8,7 +8,8 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { FileStub, createHost, writePresetFixture } from './lib/mock-premiere.mjs';
+import { FileStub, writePresetFixture } from './lib/mock-files.mjs';
+import { createHost } from './lib/mock-premiere.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const hostScript = join(root, 'dist', 'host', 'fxpremiere.jsx');

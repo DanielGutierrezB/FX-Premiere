@@ -5,19 +5,23 @@
 
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { check, finish } from './lib/check.mjs';
 import { createCepWindow, settle, waitFor } from './lib/mock-cep.mjs';
+import { createHost } from './lib/mock-premiere.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const serviceBundle = join(root, 'dist', 'service', 'service.js');
 const serviceHtml = join(root, 'service', 'index.html');
+const hostScript = join(root, 'dist', 'host', 'fxpremiere.jsx');
 
-if (!existsSync(serviceBundle)) {
-  console.error('dist/service/service.js missing. Run: npm run build');
-  process.exit(1);
+for (const required of [serviceBundle, hostScript]) {
+  if (!existsSync(required)) {
+    console.error(`${required} missing. Run: npm run build`);
+    process.exit(1);
+  }
 }
 
 const EVENT_TRIGGER = 'com.fxpremiere.event.trigger';
@@ -133,7 +137,11 @@ if (process.platform === 'win32') {
   process.exit(0);
 }
 
-const cep = createCepWindow({ html: serviceHtml, home: stage, extensionRoot });
+// The service reaches Premiere for one thing only: Compass, which has to follow whatever project is
+// open. The same mock host the other suites use answers it here.
+const { world, evalInHost } = createHost({ hostScript, documentsRoot: join(stage, 'Documents') });
+world.projectPath = join(stage, 'projects', 'Mock Project.prproj');
+const cep = createCepWindow({ html: serviceHtml, home: stage, extensionRoot, evalScript: evalInHost });
 const triggers = [];
 cep.window.__adobe_cep__.addEventListener(EVENT_TRIGGER, (event) => triggers.push(event.data));
 
@@ -190,6 +198,29 @@ check(
   String(triggers.at(-1)),
 );
 
+// Quitting Premiere takes the palette with it and never runs the handler that withdraws the marker,
+// so a marker from the last session is still on disk at the next start. The press that finds one has
+// to open the palette, not spend itself dismissing something that no longer exists.
+console.log('\nA marker left behind by the last session');
+writeFileSync(marker, `${Date.now()} 999999`, 'utf8');
+fireHelper('FIRE');
+const afterDeadOwner = await waitFor(() => cep.calls.openExtension === 3, { label: 'the palette to open past a dead marker' });
+check('a marker whose owner is gone does not cost a press', afterDeadOwner, String(cep.calls.openExtension));
+check('and it is taken down on the way', !existsSync(marker));
+check(
+  'the press opens the palette rather than asking it to close',
+  triggers.at(-1) === JSON.stringify({ settings: false, dismiss: false }),
+  String(triggers.at(-1)),
+);
+
+// The owning process is enough on the same machine; the age is what covers a pid that came round
+// again and now belongs to something else entirely.
+writeFileSync(marker, `${Date.now() - 13 * 60 * 60 * 1000} ${process.pid}`, 'utf8');
+fireHelper('FIRE');
+const afterOldMark = await waitFor(() => cep.calls.openExtension === 4, { label: 'the palette to open past an old marker' });
+check('a marker older than half a day does not cost one either', afterOldMark, String(cep.calls.openExtension));
+check('and it is taken down too', !existsSync(marker));
+
 fireHelper('FIRE_SETTINGS');
 const openedSettings = await waitFor(() => /settings":true/.test(String(triggers.at(-1))), { label: 'the settings trigger' });
 check(
@@ -197,7 +228,17 @@ check(
   openedSettings && triggers.at(-1) === JSON.stringify({ settings: true, dismiss: false }),
   String(triggers.at(-1)),
 );
-check('it reuses the same panel request path', cep.calls.openExtension === 3, String(cep.calls.openExtension));
+check('it reuses the same panel request path', cep.calls.openExtension === 5, String(cep.calls.openExtension));
+
+// The event above is dispatched the instant the host is asked for the panel, so a panel that is
+// still loading never hears it. Where it is going has to survive on disk, or the settings shortcut
+// silently becomes a plain summon every time the palette was closed.
+const intentFile = join(settingsDir, 'pending-intent');
+const intent = () => (existsSync(intentFile) ? JSON.parse(readFileSync(intentFile, 'utf8')) : null);
+check('the settings press is also left where a cold panel will find it', intent()?.settings === true, JSON.stringify(intent()));
+fireHelper('FIRE');
+const plainPress = await waitFor(() => intent() === null, { label: 'the intent to be cleared' });
+check('and a plain press clears it, so it cannot resurface later', plainPress, JSON.stringify(intent()));
 
 console.log('\nLive shortcut change');
 writeSettings({ hotkey: { key: 'j', ctrl: false, alt: true, shift: true, meta: false } });
@@ -272,10 +313,63 @@ check(
   `${pidBeforeDisable} -> ${helperPid()}`,
 );
 
+console.log('\nCompass follows the project in the background');
+const exportPath = () => world.properties.get('MZ.Prefs.Export.Media.Path') ?? '';
+const pathBefore = exportPath();
+writeSettings({
+  compass: { enabled: true, media: { template: 'EXPORT/#SEQ', relative: true }, frame: { template: 'EXPORT/Frames', relative: true } },
+});
+const followed = await waitFor(() => exportPath() !== pathBefore, { label: 'Compass to write the export path' });
+const projectFolder = join(stage, 'projects');
+check(
+  'turning Compass on from the panel makes the background service write the export path',
+  followed && exportPath() === join(projectFolder, 'EXPORT', 'Mock Sequence') + sep,
+  exportPath(),
+);
+check('and the folder it points at exists', existsSync(join(projectFolder, 'EXPORT', 'Mock Sequence')), '');
+check(
+  'the frame path is written in the same pass',
+  world.properties.get('Monitor.ExportFrame.CurrentPath') === join(projectFolder, 'EXPORT', 'Frames') + sep,
+  world.properties.get('Monitor.ExportFrame.CurrentPath') ?? '',
+);
+
+// The editor opens the Export dialog and types somewhere else for this one deliverable. Compass
+// has nothing new to say — same project, same sequence, same template — and a tick that writes
+// anyway takes the export back off them without either of the two saying anything happened.
+const byHand = join(stage, 'By Hand') + sep;
+const writesBefore = world.propertyWrites.length;
+world.properties.set('MZ.Prefs.Export.Media.Path', byHand);
+await settle(9000);
+check('a path the editor typed by hand survives the ticks that follow it', exportPath() === byHand, exportPath());
+check(
+  'because nothing was written at all while the answer stayed the same',
+  world.propertyWrites.length === writesBefore,
+  JSON.stringify(world.propertyWrites.slice(writesBefore)),
+);
+
+// The whole reason this lives in the service: nobody has the panel open while they cut.
+world.current = world.sequences.find((entry) => entry.name === 'Nested Sequence');
+const followedSequence = await waitFor(() => exportPath().includes('Nested Sequence'), {
+  label: 'Compass to follow the new active sequence',
+});
+check(
+  'changing the active sequence with no panel open moves the export path with it',
+  followedSequence && exportPath() === join(projectFolder, 'EXPORT', 'Nested Sequence') + sep,
+  exportPath(),
+);
+
+const pathWhenOff = exportPath();
+world.current = world.sequence;
+writeSettings({ compass: { enabled: false } });
+await settle(2000);
+check('turning Compass off stops it writing', exportPath() === pathWhenOff, exportPath());
+
 console.log('\nShutdown');
 const pidAtShutdown = helperPid();
 cep.window.dispatchEvent(new cep.window.Event('beforeunload'));
-await settle(20);
+// Waited for rather than slept through: on a loaded machine the helper it is taking down can get a
+// status write in first, and this suite has no reason to be the flaky one.
+await waitFor(() => status()?.running === false && /closing/i.test(status()?.message ?? ''), { label: 'the shutdown to be reported' });
 check('closing Premiere stops the listener', status()?.running === false, JSON.stringify(status()));
 check('the shutdown is reported', /closing/i.test(status()?.message ?? ''), status()?.message ?? '');
 const cleanedUp = await waitFor(() => !processAlive(pidAtShutdown), { label: 'the helper to exit on shutdown' });

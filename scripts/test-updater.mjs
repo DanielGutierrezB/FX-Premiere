@@ -40,9 +40,17 @@ await esbuild.build({
   ],
 });
 
+// Counted, because the version is asked for on every render of the palette's hints row and each
+// answer is a synchronous call across the CEP bridge on the thread drawing the search results.
+let systemPathCalls = 0;
 globalThis.window = {
   cep_node: { require: nodeRequire },
-  __adobe_cep__: { getSystemPath: () => `file://${installed}` },
+  __adobe_cep__: {
+    getSystemPath: () => {
+      systemPathCalls += 1;
+      return `file://${installed}`;
+    },
+  },
 };
 
 const updater = await import(pathToFileURL(bundle).href);
@@ -125,6 +133,14 @@ process.env.FXP_UPDATE_ENDPOINT = `${base}/releases/latest`;
 
 console.log('\nChecking for an update');
 check('the installed version is read from version.json', updater.localVersion() === '1.0.0', updater.localVersion());
+{
+  const asked = systemPathCalls;
+  for (let render = 0; render < 200; render += 1) {
+    updater.localVersion();
+  }
+  check('two hundred more renders cross the bridge no times at all', systemPathCalls === asked, String(systemPathCalls - asked));
+  check('and every one of them answers the same version', updater.localVersion() === '1.0.0', updater.localVersion());
+}
 releaseBody = { tag_name: 'v9.9.9', body: 'Nuevo', assets: [{ name: 'FX-Premiere-9.9.9.zxp', browser_download_url: `${base}/redirect` }] };
 const found = await updater.checkForUpdate();
 check('an available update is reported', found.available === true, JSON.stringify(found));

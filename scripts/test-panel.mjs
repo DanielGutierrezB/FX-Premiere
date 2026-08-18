@@ -12,7 +12,13 @@ import { createServer } from 'node:http';
 
 import { check, finish } from './lib/check.mjs';
 import { createCepWindow, settle, waitFor } from './lib/mock-cep.mjs';
-import { createHost, fileReads, writePresetFixture } from './lib/mock-premiere.mjs';
+import { writePresetFixture } from './lib/mock-files.mjs';
+import { createHost } from './lib/mock-premiere.mjs';
+import { easeAndAnchorDialogs } from './lib/panel-dialogs.mjs';
+import { createKeysFake, realKeysBridge } from './lib/panel-keys.mjs';
+import { createClipboardFake, pasteAndCompassViews } from './lib/panel-new-views.mjs';
+import { panelUnnest } from './lib/panel-unnest.mjs';
+import { laterOpens } from './lib/panel-later-opens.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const hostScript = join(root, 'dist', 'host', 'fxpremiere.jsx');
@@ -46,6 +52,15 @@ writeFileSync(join(stage, 'version.json'), JSON.stringify({ version: '1.0.0' }),
 const storage = {};
 const cep = createCepWindow({ html: panelHtml, home: stage, evalScript: evalInHost, storage });
 const { window, calls: cepCalls } = cep;
+
+// Premiere's Copy and Paste, which un-nesting can only reach as keystrokes. Installed before the
+// bundle boots, the way the update endpoint is: everything around the keystroke is the real thing.
+const keysFake = createKeysFake(world);
+window.__fxpKeys = keysFake.keys;
+
+// The clipboard needs a desktop with an image on it, so the same seam stands in for the helper.
+const clipboard = createClipboardFake(stage);
+window.__fxpClipboard = clipboard.bridge;
 
 const type = async (text) => {
   const input = window.document.querySelector('.search__input');
@@ -380,6 +395,23 @@ check(
   String(cepCalls.closeExtension),
 );
 
+await panelUnnest({
+  window,
+  world,
+  cep,
+  cepCalls,
+  keysFake,
+  settingsDir,
+  type,
+  press,
+  rowNames,
+  activeRow,
+  status,
+  savedSettings,
+  toastText,
+  foot,
+});
+
 console.log('\nMotion commands typed into the palette');
 await type('scale 50');
 check('the typed command is offered first', activeRow().startsWith('Scale'), activeRow());
@@ -466,6 +498,17 @@ check(
 await press('Escape');
 check('Escape cancels recording', !window.document.querySelector('.button--recording'));
 
+// Un-nesting is the one thing that needs it, so the state belongs where every other permission and
+// switch is rather than only in the dialog that trips over it.
+const keysRow = () =>
+  [...window.document.querySelectorAll('.sheet .field')]
+    .find((row) => row.querySelector('.field__label')?.textContent === 'Permission to press keys')
+    ?.textContent ?? '';
+await waitFor(() => /Granted/.test(keysRow()), 3000);
+check('settings says whether the keystroke permission is there', /Granted/.test(keysRow()), keysRow());
+check('and whose name the permission row carries', /Adobe Premiere Pro/.test(keysRow()), keysRow());
+check('with what it is for, and that nothing is read', /Copy and Paste/.test(keysRow()) && /does not read what you type/.test(keysRow()), keysRow());
+
 console.log('\nA newer release is offered');
 const versionButton = () => {
   const field = [...window.document.querySelectorAll('.sheet .field')].find(
@@ -493,6 +536,28 @@ const failedInstall = await waitFor(() => /Update failed/.test(window.document.q
 });
 check('a failed install is explained instead of silently dying', failedInstall, window.document.querySelector('.toast')?.textContent ?? '');
 check('the update offer comes back so it can be retried', versionButton()?.textContent === 'Update to 9.9.9', versionButton()?.textContent ?? '');
+
+// Being kept in memory is the whole reason a summon can be instant, so switching it off has to
+// reach Premiere rather than only the settings file: the flag lives in the host, not here.
+const switchFor = (label) => {
+  const row = [...window.document.querySelectorAll('.sheet .field')].find(
+    (node) => node.querySelector('.field__label')?.textContent === label,
+  );
+  return row?.querySelector('.switch');
+};
+const persistCalls = () => cepCalls.evalScripts.filter((script) => script.includes('persist'));
+check('the palette offers to stop being kept loaded', Boolean(switchFor('Keep the palette loaded')), '');
+switchFor('Keep the palette loaded').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+await settle(10);
+check('turning it off is written down', savedSettings().keepLoaded === false, String(savedSettings().keepLoaded));
+check(
+  'and Premiere is asked to stop holding the palette in memory',
+  persistCalls().some((script) => /\\"on\\":false/.test(script)),
+  JSON.stringify(persistCalls().map((script) => script.slice(40, 110))),
+);
+switchFor('Keep the palette loaded').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+await settle(10);
+check('and turning it back on is too', savedSettings().keepLoaded === true, String(savedSettings().keepLoaded));
 
 // Three settings that change what the palette looks like, so each one is checked by its effect.
 const seg = (label) => {
@@ -618,6 +683,20 @@ check(
   String(cepCalls.closeExtension),
 );
 
+// Which version this is belongs on screen rather than two clicks away, and once a newer one is known
+// the same chip is where it says so.
+console.log('\nThe version in the footer');
+const chip = () => window.document.querySelector('.hints__version');
+check('the footer carries the version at its left edge', chip()?.textContent?.startsWith('1.0.0') === true, chip()?.textContent ?? '(no chip)');
+check('and the update it found is on it', chip()?.textContent === '1.0.0 \u2192 9.9.9', chip()?.textContent ?? '');
+check('in the accent colour rather than dimmed', chip()?.className.includes('hints__version--update') === true, chip()?.className ?? '');
+check('with what it found on hover', /update to 9\.9\.9/.test(chip()?.title ?? ''), chip()?.title ?? '');
+chip()?.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+await settle(10);
+check('and clicking it goes to the settings screen, where the update is', Boolean(window.document.querySelector('.sheet')));
+await press('Escape');
+await settle(10);
+
 console.log('\nThe resting bar reapplies the last thing used');
 world.select('A.mp4', 'B.mp4', 'A.wav');
 await settle(10);
@@ -712,6 +791,17 @@ await settle(20);
 check('a second press closes the palette', cepCalls.closeExtension === before + 1, String(cepCalls.closeExtension));
 check('and stops announcing itself, so the next press opens', !existsSync(openMarker));
 
+// A palette Premiere hid instead of unloading never ran its unload handler, so the marker can be
+// left standing over a window nobody can see. The press that finds it takes it down and closes
+// nothing, and the press after that opens as usual: it costs a press and it cannot get stuck.
+writeFileSync(openMarker, String(Date.now()), 'utf8');
+cep.emit('com.fxpremiere.event.trigger', { settings: false, dismiss: true });
+await settle(20);
+check('a marker left behind by a hidden palette is cleared by the press that finds it', !existsSync(openMarker));
+cep.emit('com.fxpremiere.event.trigger', { settings: false });
+await settle(20);
+check('and the press after that has the palette announcing itself again', existsSync(openMarker));
+
 cep.emit('com.fxpremiere.event.trigger', { settings: true });
 await settle(20);
 check('the settings trigger opens the settings screen', Boolean(window.document.querySelector('.sheet')));
@@ -797,117 +887,14 @@ console.log('\nNo match');
 await type('zzzzqqq');
 check('an empty result set shows guidance', Boolean(window.document.querySelector('.empty')), '');
 
+await easeAndAnchorDialogs({ window, world, cep, cepCalls, stage, type, press, savedSettings, toastText });
+await pasteAndCompassViews({ window, world, cep, stage, type, press, savedSettings, toastText, clipboard });
+
 console.log('\nOpening it again');
 cep.close();
-// A second open, as Premiere does it: the page is loaded from scratch and the host script is
-// evaluated again, so everything the palette knows has to come from what it wrote down last time.
-const second = createHost({ hostScript, documentsRoot: join(stage, 'Documents') });
-const reopened = createCepWindow({ html: panelHtml, home: stage, evalScript: second.evalInHost, storage });
-fileReads.length = 0;
-reopened.run(panelBundle);
-await settle(60);
-check('the palette comes back up', Boolean(reopened.window.document.querySelector('.search__input')));
-// The whole point: a profile's presets live in one XML file that grows to megabytes, and parsing
-// it on every open is the most expensive thing the palette could do. It is stamped instead.
-check(
-  'no preset file is opened when nothing has changed',
-  fileReads.filter((path) => path.endsWith('.prfpset')).length === 0,
-  JSON.stringify(fileReads),
-);
-check(
-  'and it wakes up in two words with the host',
-  reopened.calls.evalScripts.length === 2,
-  JSON.stringify(reopened.calls.evalScripts.map((script) => script.slice(0, 60))),
-);
-const reopenedInput = reopened.window.document.querySelector('.search__input');
-reopenedInput.value = 'soft blur';
-reopenedInput.dispatchEvent(new reopened.window.Event('input', { bubbles: true }));
-await settle(10);
-check(
-  'the presets it remembered are still searchable',
-  [...reopened.window.document.querySelectorAll('.row__name')].some((row) => row.textContent === 'Soft Blur'),
-);
-
-// A preset saved from Premiere has to show up without asking for a reindex.
-writeFileSync(presetFixture, readFileSync(presetFixture, 'utf8').replace('Soft Blur', 'Brand New Look'), 'utf8');
-reopened.close();
-const third = createHost({ hostScript, documentsRoot: join(stage, 'Documents') });
-const again = createCepWindow({ html: panelHtml, home: stage, evalScript: third.evalInHost, storage });
-again.run(panelBundle);
-await settle(60);
-const againInput = again.window.document.querySelector('.search__input');
-againInput.value = 'brand new';
-againInput.dispatchEvent(new again.window.Event('input', { bubbles: true }));
-await settle(10);
-check(
-  'a preset saved since last time is picked up',
-  [...again.window.document.querySelectorAll('.row__name')].some((row) => row.textContent === 'Brand New Look'),
-  [...again.window.document.querySelectorAll('.row__name')].map((row) => row.textContent).join(', '),
-);
-again.close();
+await laterOpens({ hostScript, panelHtml, panelBundle, stage, storage, presetFixture, settingsDir });
+await realKeysBridge({ panelHtml, panelBundle, distRoot: join(root, 'dist'), home: stage, evalScript: evalInHost });
 
 releaseServer.close();
 rmSync(stage, { recursive: true, force: true });
-// Premiere sometimes comes up without the undocumented DOM the effect lists come from. That is a
-// bad open, not the truth about the machine, and it must not be the answer every later open reads.
-console.log('\nAn index that came back empty is not kept');
-const brokenStage = mkdtempSync(join(tmpdir(), 'fxp-noqe-'));
-const brokenStorage = {};
-const noQE = createHost({ hostScript, documentsRoot: join(brokenStage, 'Documents'), withoutQE: true });
-const search = async (panel, text) => {
-  const input = panel.window.document.querySelector('.search__input');
-  input.value = text;
-  input.dispatchEvent(new panel.window.Event('input', { bubbles: true }));
-  await settle(10);
-  return [...panel.window.document.querySelectorAll('.row')].length;
-};
-
-const badOpen = createCepWindow({ html: panelHtml, home: brokenStage, evalScript: noQE.evalInHost, storage: brokenStorage });
-badOpen.run(panelBundle);
-await settle(60);
-check('a host that cannot list its effects finds nothing', (await search(badOpen, 'gaussian')) === 0, '');
-check('and that empty index is not written to the cache', Object.keys(brokenStorage).length === 0, JSON.stringify(Object.keys(brokenStorage)));
-badOpen.close();
-
-const healthy = createHost({ hostScript, documentsRoot: join(brokenStage, 'Documents') });
-const nextOpen = createCepWindow({ html: panelHtml, home: brokenStage, evalScript: healthy.evalInHost, storage: brokenStorage });
-nextOpen.run(panelBundle);
-await settle(60);
-const foundLater = await search(nextOpen, 'gaussian');
-check('so the next open finds the effects instead of an empty palette', foundLater > 0, `${foundLater} rows`);
-nextOpen.close();
-
-// Favourites used to be an unordered set with a count of how many to list. They become the first
-// row of the bar, in the order they were saved: the same items, reachable by number.
-console.log('\nA profile from before the numbered bar');
-const oldStage = mkdtempSync(join(tmpdir(), 'fxp-legacy-'));
-const oldSettingsDir = join(oldStage, 'Library', 'Application Support', 'FX Premiere');
-mkdirSync(oldSettingsDir, { recursive: true });
-writeFileSync(
-  join(oldSettingsDir, 'settings.json'),
-  JSON.stringify({
-    favorites: ['videoEffect:Gaussian Blur', 'videoEffect:Ultra Key'],
-    favoriteCount: 3,
-    width: 440,
-    remembered: {
-      'videoEffect:Gaussian Blur': { id: 'videoEffect:Gaussian Blur', kind: 'videoEffect', name: 'Gaussian Blur', mediaType: 'video' },
-      'videoEffect:Ultra Key': { id: 'videoEffect:Ultra Key', kind: 'videoEffect', name: 'Ultra Key', mediaType: 'video' },
-    },
-  }),
-  'utf8',
-);
-const legacyHost = createHost({ hostScript, documentsRoot: join(oldStage, 'Documents') });
-const legacy = createCepWindow({ html: panelHtml, home: oldStage, evalScript: legacyHost.evalInHost, storage: {} });
-legacy.run(panelBundle);
-await settle(60);
-const legacySlots = [...legacy.window.document.querySelectorAll('.slots__row')];
-const legacyNames = [...legacySlots[0].querySelectorAll('.slot__name')].map((node) => node.textContent);
-check('the old favourites become one row', legacySlots.length === 1, String(legacySlots.length));
-check('in the order they were saved in', legacyNames.slice(0, 2).join('|') === 'Gaussian Blur|Ultra Key', legacyNames.join('|'));
-check('with as many numbers as favourites were being listed', legacyNames.length === 3, String(legacyNames.length));
-// 440 was the one width every profile carried, so it means "no width of my own" rather than a choice.
-check('and the width goes back to following the bar', legacy.window.innerWidth !== 440, String(legacy.window.innerWidth));
-legacy.close();
-rmSync(oldStage, { recursive: true, force: true });
-
 finish('panel');

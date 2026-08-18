@@ -12,8 +12,6 @@ export const check = (label, condition, detail = '') => {
   }
 };
 
-export const failureCount = () => failures;
-
 /** Prints the verdict and exits non-zero if anything failed. */
 export const finish = (suite) => {
   console.log(`\n${failures === 0 ? `All ${suite} tests passed` : `${failures} failing check(s)`}`);
