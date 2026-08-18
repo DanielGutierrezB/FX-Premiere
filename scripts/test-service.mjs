@@ -1,6 +1,6 @@
 // Runs the real invisible service bundle in jsdom against a fake hotkey helper, covering the
 // process supervision that only ever runs in the background: spawn, READY, TRIGGER, live
-// shortcut changes, disable, crash restart and shutdown.
+// shortcut changes, disable, a listener that will not answer, crash restart and shutdown.
 // Usage: node scripts/test-service.mjs
 
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -49,7 +49,10 @@ const ready = (spec) =>
   process.stdout.write('READY pid=' + process.pid + ' hotkey=' + spec + ' settings=' + settingsHotkey + '\\n');
 // One-shot markers: '.delay' makes the first confirmation slow, '.mute' makes the next shortcut
 // change land in the pipe without ever being acknowledged, which is the wedged helper the
-// service must never report as listening.
+// service must never report as listening, and '.deaf' answers neither QUIT nor SIGTERM, which is
+// what a helper stuck inside a system call does.
+const deaf = marker('.deaf') !== '';
+if (deaf) process.on('SIGTERM', () => {});
 const delay = Number(marker('.delay')) || 0;
 if (delay > 0) setTimeout(() => ready(hotkey), delay);
 else ready(hotkey);
@@ -64,7 +67,8 @@ process.stdin.on('data', (chunk) => {
     if (trimmed === '') continue;
     if (trimmed === 'QUIT') {
       process.stdout.write('GOT QUIT\\n');
-      process.exit(0);
+      if (!deaf) process.exit(0);
+      continue;
     }
     process.stdout.write('GOT ' + trimmed + '\\n');
     // The real helpers re-register and answer READY again; the service depends on that.
@@ -302,6 +306,18 @@ const stopped = await waitFor(() => /disabled/i.test(status()?.message ?? ''), {
 check('turning the shortcut off stops the helper', stopped && status()?.running === false, JSON.stringify(status()));
 const gone = await waitFor(() => !processAlive(pidBeforeDisable), { label: 'the helper process to exit' });
 check('the helper process is really gone', gone, String(pidBeforeDisable));
+// That exit is the service letting it go, and it lands after the shortcut has already been reported
+// as off. Watched rather than sampled once, because taken for a crash it says so for as long as it
+// takes the restart it queues to come round and find the shortcut disabled all over again.
+const messages = new Set();
+const watching = setInterval(() => messages.add(status()?.message ?? ''), 10);
+await new Promise((done) => setTimeout(done, 2000));
+clearInterval(watching);
+check(
+  'and the shortcut never reads as a listener that fell over',
+  [...messages].every((message) => /disabled/i.test(message)),
+  [...messages].join(' | '),
+);
 
 console.log('\nRe-enabling restarts it');
 writeSettings({ hotkeyEnabled: true });
@@ -311,6 +327,70 @@ check(
   're-enabling spawns a fresh helper',
   restarted && helperPid() !== pidBeforeDisable,
   `${pidBeforeDisable} -> ${helperPid()}`,
+);
+
+// The real listener sits in a run loop and holds the global shortcut for as long as it is alive. One
+// wedged inside a system call answers neither QUIT nor SIGTERM, and left behind it goes on eating the
+// keystroke after the shortcut was turned off, with the next one spawned never getting it.
+console.log('\nA listener that will not answer');
+writeFileSync(`${join(helperDir, helperName)}.deaf`, '1', 'utf8');
+const pidBeforeDeaf = helperPid();
+cep.emit(EVENT_SETTINGS, { restart: true });
+const wedged = await waitFor(() => status()?.running === true && helperPid() !== pidBeforeDeaf, {
+  label: 'the unresponsive helper to start',
+});
+const deafPid = helperPid();
+check('the unresponsive listener is up', wedged, `${pidBeforeDeaf} -> ${deafPid}`);
+// The listener it replaced exits a moment later. Taken for the live one, its exit leaves the service
+// holding nothing: the next disable has no process to send QUIT to and none to kill.
+const letGo = await waitFor(() => new RegExp(`let go exited \\(pid ${pidBeforeDeaf},`).test(log()), {
+  label: 'the old listener to be let go',
+});
+check(
+  'the listener it replaced does not take the live one\u2019s place when it exits',
+  letGo && status()?.running === true && helperPid() === deafPid,
+  JSON.stringify(status()),
+);
+// And the pointer to the live one is what proves it: a shortcut change goes to the process that is
+// up rather than spawning a second listener next to one nothing can be sent to any more.
+writeSettings({ hotkey: { key: 'g', ctrl: true, alt: false, shift: false, meta: false } });
+cep.emit(EVENT_SETTINGS, { restart: false });
+const stillTalking = await waitFor(() => /GOT HOTKEY ctrl\+g/.test(log()), {
+  label: 'the live listener to be talked to',
+});
+check(
+  'and the service still has the live one to talk to',
+  stillTalking && helperPid() === deafPid,
+  `${deafPid} -> ${helperPid()}`,
+);
+writeSettings({ hotkeyEnabled: false });
+cep.emit(EVENT_SETTINGS, { restart: true });
+const killed = await waitFor(() => !processAlive(deafPid), { timeout: 8000, label: 'the wedged helper to be killed' });
+check('a listener that answers neither QUIT nor SIGTERM is killed outright', killed, String(deafPid));
+
+writeSettings({ hotkeyEnabled: true });
+cep.emit(EVENT_SETTINGS, { restart: true });
+await waitFor(() => status()?.running === true && helperPid() !== deafPid, { label: 'a live listener again' });
+
+// A crash leaves a restart queued. Anything that brings a listener up before it is due — the Restart
+// button, the shortcut switched back on, Premiere closing — makes it a restart nobody is waiting for,
+// and the listener it stops on its way in is the live one.
+console.log('\nA restart nobody is waiting for any more');
+const pidBeforeQueued = helperPid();
+fireHelper('CRASH');
+await waitFor(() => /exited \(code 3\)/.test(status()?.message ?? ''), { label: 'the crash to be noticed' });
+cep.emit(EVENT_SETTINGS, { restart: true });
+const revived = await waitFor(() => status()?.running === true && helperPid() !== pidBeforeQueued, {
+  label: 'a listener to be brought up by hand',
+});
+const revivedPid = helperPid();
+check('a listener asked for by hand after a crash comes up', revived, `${pidBeforeQueued} -> ${revivedPid}`);
+// Past the moment the queued restart was due.
+await new Promise((done) => setTimeout(done, 2200));
+check(
+  'the restart queued for the crash does not come back and replace it',
+  helperPid() === revivedPid && processAlive(revivedPid) && status()?.running === true,
+  `${revivedPid} -> ${helperPid()}`,
 );
 
 console.log('\nCompass follows the project in the background');
@@ -374,6 +454,15 @@ check('closing Premiere stops the listener', status()?.running === false, JSON.s
 check('the shutdown is reported', /closing/i.test(status()?.message ?? ''), status()?.message ?? '');
 const cleanedUp = await waitFor(() => !processAlive(pidAtShutdown), { label: 'the helper to exit on shutdown' });
 check('no helper process is left behind', cleanedUp, String(pidAtShutdown));
+// The page is still alive for a moment after the handler has run, and a settings change landing in
+// that moment would start a listener that nothing is left to stop for the rest of the session.
+cep.emit(EVENT_SETTINGS, { restart: true });
+await new Promise((done) => setTimeout(done, 400));
+check(
+  'and nothing that arrives after it brings a listener back',
+  helperPid() === pidAtShutdown && /closing/i.test(status()?.message ?? ''),
+  `${pidAtShutdown} -> ${helperPid()}`,
+);
 
 cep.close();
 await settle(10);

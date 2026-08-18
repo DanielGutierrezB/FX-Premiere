@@ -496,7 +496,12 @@ cuesta abrir la paleta en un Premiere de verdad, y no en el navegador de las pru
   de atajo en caliente sin reiniciar el proceso, el reinicio tras una caída y que no quede
   ningún proceso vivo al cerrar Premiere. El helper falso puede tardar en confirmar o no
   confirmar nunca, porque el servicio solo debe reportar el atajo como activo cuando el helper
-  lo confirmó de verdad. También que el marcador de «la paleta está abierta» **caduque solo**: si lo
+  lo confirmó de verdad. También puede quedarse **sordo** e ignorar tanto `QUIT` como `SIGTERM`, que
+  es lo que hace uno atascado dentro de una llamada del sistema: ahí se comprueba que se lo mate a la
+  fuerza en vez de dejarlo comiéndose la tecla, que el listener al que acaba de reemplazar no ocupe
+  el sitio del que está vivo cuando termina de salir, y que un reinicio que ya no hace falta no se
+  lleve por delante al que sí está corriendo ni levante uno cuando Premiere ya se está cerrando.
+  También que el marcador de «la paleta está abierta» **caduque solo**: si lo
   dejó una sesión anterior de Premiere, el atajo abre la paleta en vez de gastarse en cerrar algo que
   ya no existe. Y que **Compass siga al proyecto con la paleta cerrada**, que es la única razón por
   la que vive ahí: encenderlo escribe la ruta, cambiar de secuencia activa la mueve con él y apagarlo

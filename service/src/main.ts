@@ -10,6 +10,7 @@ import {
 } from '@shared/cep';
 import { planCompass } from '@shared/compass';
 import { applyCompass, readContext, roundTripped } from '@shared/compass-run';
+import { HELPER_KILL_GRACE_MS } from '@shared/helper-run';
 import { nodeRequire } from '@shared/node';
 import { serializeHotkey } from '@shared/hotkey';
 import { appendLog, settingsFile } from '@shared/paths';
@@ -23,6 +24,7 @@ const RESTART_DELAY_MS = 1500;
 let settings: Settings = loadSettings();
 let child: ChildProcessWithoutNullStreams | null = null;
 let restarts = 0;
+let restartTimer: ReturnType<typeof setTimeout> | null = null;
 let stopping = false;
 
 const log = (message: string): void => appendLog('service', message);
@@ -46,6 +48,14 @@ const status = (running: boolean, message: string): void => {
 };
 
 const stopHelper = (): void => {
+  // Dropped before the listener is even looked at, because a crash leaves a restart queued whether or
+  // not there is still something to stop: due after the shortcut was turned off it spawns a listener
+  // nobody asked for, and due after Premiere told the service to close it spawns one that nothing is
+  // left to stop, which then holds the global shortcut for the rest of the session.
+  if (restartTimer) {
+    clearTimeout(restartTimer);
+    restartTimer = null;
+  }
   if (!child) {
     return;
   }
@@ -61,6 +71,17 @@ const stopHelper = (): void => {
   } catch {
     /* nothing else to do */
   }
+  // A listener that will not answer SIGTERM still owns the global shortcut, so a shortcut turned off
+  // in settings would go on swallowing the keystroke and the next one spawned would never get it.
+  const grace = setTimeout(() => {
+    log('the listener did not answer SIGTERM, killing it outright');
+    try {
+      current.kill('SIGKILL');
+    } catch {
+      /* already gone */
+    }
+  }, HELPER_KILL_GRACE_MS);
+  current.once('close', () => clearTimeout(grace));
 };
 
 /**
@@ -134,6 +155,11 @@ const handleLine = (line: string): void => {
 
 const startHelper = (): void => {
   stopHelper();
+  // Premiere is on its way out and the handler that stops the listener has already run. A settings
+  // write landing in the moment the page is still alive would otherwise leave a listener behind.
+  if (stopping) {
+    return;
+  }
   if (!settings.hotkeyEnabled) {
     status(false, 'The global shortcut is disabled in FX Premiere settings.');
     return;
@@ -171,20 +197,41 @@ const startHelper = (): void => {
     return;
   }
 
+  // A listener the service has let go — replaced by this one, or stopped because the shortcut was
+  // turned off — still exits, and its exit arrives once it is no longer the one in `child`. Whatever
+  // it has to say is about a process nobody is listening to any more: acted on, it takes the live
+  // one's place in `child`, and from then on there is nothing to send QUIT to and nothing to kill, so
+  // the one that was let go goes on holding the global shortcut. On a stop it also reads as a crash,
+  // which queues a restart for a shortcut that was just turned off.
+  const spawned = child;
+  const isCurrent = (): boolean => child === spawned;
   let buffer = '';
-  child.stdout.setEncoding('utf8');
-  child.stdout.on('data', (chunk: string) => {
+  spawned.stdout.setEncoding('utf8');
+  spawned.stdout.on('data', (chunk: string) => {
     buffer += chunk;
     const lines = buffer.split(/\r?\n/);
     buffer = lines.pop() ?? '';
+    if (!isCurrent()) {
+      return;
+    }
     for (const line of lines) {
       handleLine(line);
     }
   });
-  child.stderr.setEncoding('utf8');
-  child.stderr.on('data', (chunk: string) => log(`helper stderr: ${chunk.trim()}`));
-  child.on('error', (error: Error) => status(false, `Hotkey helper error: ${error.message}`));
-  child.on('exit', (code: number | null) => {
+  spawned.stderr.setEncoding('utf8');
+  spawned.stderr.on('data', (chunk: string) => log(`helper stderr: ${chunk.trim()}`));
+  spawned.on('error', (error: Error) => {
+    if (!isCurrent()) {
+      log(`a listener the service had let go failed (pid ${String(spawned.pid)}): ${error.message}`);
+      return;
+    }
+    status(false, `Hotkey helper error: ${error.message}`);
+  });
+  spawned.on('exit', (code: number | null) => {
+    if (!isCurrent()) {
+      log(`a listener the service had let go exited (pid ${String(spawned.pid)}, code ${String(code)})`);
+      return;
+    }
     child = null;
     if (stopping) {
       return;
@@ -192,7 +239,7 @@ const startHelper = (): void => {
     status(false, `Hotkey helper exited (code ${String(code)}).`);
     if (restarts < RESTART_LIMIT) {
       restarts += 1;
-      setTimeout(startHelper, RESTART_DELAY_MS * restarts);
+      restartTimer = setTimeout(startHelper, RESTART_DELAY_MS * restarts);
     }
   });
 
