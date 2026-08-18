@@ -12,33 +12,38 @@ permissions:
   contents: read
 
 jobs:
+  # Both helper jobs go through scripts/build-helper.sh, which comes back through
+  # scripts/build.mjs. The compilers, targets and libraries live there and nowhere else: a second
+  # copy of them here is how the helper CI ships ends up linked differently from the one a
+  # developer builds — an arm64-only macOS binary, or a Windows one missing GDI+.
   helper-mac:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
       - name: Compile the macOS hotkey helper
-        run: |
-          mkdir -p out
-          swiftc -O -framework AppKit -framework Carbon helper/mac/Hotkey.swift -o out/fxp-hotkey
-          chmod 755 out/fxp-hotkey
+        run: bash scripts/build-helper.sh
       - uses: actions/upload-artifact@v4
         with:
           name: helper-mac
-          path: out/fxp-hotkey
+          path: dist/helper/mac/fxp-hotkey
 
   helper-win:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
       - name: Compile the Windows hotkey helper
-        shell: cmd
-        run: |
-          mkdir out
-          g++ -O2 -std=c++17 -static helper/win/hotkey.cpp -o out/fxp-hotkey.exe -luser32
+        shell: bash
+        run: bash scripts/build-helper.sh
       - uses: actions/upload-artifact@v4
         with:
           name: helper-win
-          path: out/fxp-hotkey.exe
+          path: dist/helper/win/fxp-hotkey.exe
 
   checks:
     runs-on: ubuntu-latest

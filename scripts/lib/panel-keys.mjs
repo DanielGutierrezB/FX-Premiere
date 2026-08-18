@@ -102,7 +102,14 @@ export const createKeysFake = (world) => {
 export const realKeysBridge = async ({ panelHtml, panelBundle, distRoot, home, evalScript }) => {
   console.log('\nThe helper the panel actually spawns');
   if (!existsSync(join(distRoot, 'helper', 'mac', 'fxp-hotkey')) && !existsSync(join(distRoot, 'helper', 'win', 'fxp-hotkey.exe'))) {
-    check('there is a built helper to check the panel against', false, 'no helper in dist: run npm run build');
+    // On the two platforms this ships on, a build with no helper in it is the failure. Everywhere
+    // else — the Linux runner the rest of the suite is checked on — there is no helper to compile
+    // and none to check against, which is not the same thing as a broken build.
+    if (process.platform === 'darwin' || process.platform === 'win32') {
+      check('there is a built helper to check the panel against', false, 'no helper in dist: run npm run build');
+      return;
+    }
+    console.log('  note  this platform builds no native helper, so the panel was not run against one');
     return;
   }
   // The extension root is what the panel resolves the helper from, so pointing it at dist is what
