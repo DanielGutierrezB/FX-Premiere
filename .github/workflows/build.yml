@@ -23,6 +23,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+          cache: npm
+      # The build script is what knows the compiler flags, and it is a Node program.
+      - run: npm ci
       - name: Compile the macOS hotkey helper
         run: bash scripts/build-helper.sh
       - uses: actions/upload-artifact@v4
@@ -37,6 +40,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+          cache: npm
+      - run: npm ci
       - name: Compile the Windows hotkey helper
         shell: bash
         run: bash scripts/build-helper.sh
