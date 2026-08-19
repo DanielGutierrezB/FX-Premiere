@@ -25,8 +25,8 @@ globalThis.window = { __adobe_cep__: { getSystemPath: () => extensionRoot } };
 
 const runner = await loadShared('shared/helper-run.ts', [
   'HELPER_KILL_GRACE_MS',
+  'HELPER_TIMEOUT_MS',
   'helperFields',
-  'helperTimeoutMs',
   'runHelper',
 ]);
 
@@ -51,11 +51,10 @@ const runFake = (home, args) => {
 
 console.log('How long a helper run is given');
 {
-  const quick = runner.helperTimeoutMs(['whatever']);
-  const clipboard = runner.helperTimeoutMs(['clipboard', '--out', '/tmp/x.png']);
-  check('a clipboard encode is not held to the same budget as everything else', quick !== clipboard, `${quick} vs ${clipboard}`);
-  check('encoding a full-resolution still is given a long time', clipboard >= 20000, String(clipboard));
-  check('an unrecognised mode still gets a budget rather than running forever', quick > 0 && quick <= 8000, String(quick));
+  // Long, because it is a full-resolution still going through deflate, and finite, because a helper
+  // stuck inside a pasteboard call would otherwise hold the paste open for ever.
+  check('encoding a full-resolution still is given a long time', runner.HELPER_TIMEOUT_MS >= 20000, String(runner.HELPER_TIMEOUT_MS));
+  check('but it is given a limit at all', runner.HELPER_TIMEOUT_MS < 120000, String(runner.HELPER_TIMEOUT_MS));
 }
 
 console.log('\nA helper that misbehaves');
@@ -71,16 +70,14 @@ const deaf = fakeHelper(
 process.on('SIGTERM', () => {});
 setInterval(() => {}, 1000);`,
 );
-const slow = fakeHelper('slow', `setTimeout(() => process.stdout.write('FXP_OK=true\\n'), 8500);`);
 const slowClipboard = fakeHelper('slow-clip', `setTimeout(() => process.stdout.write('FXP_OK=true\\n'), 9000);`);
 
 const pidFile = join(stage, 'deaf.pid');
 process.env.FXP_PID_FILE = pidFile;
 
-const [flooded, ignored, dawdled, encoded] = await Promise.all([
+const [flooded, ignored, encoded] = await Promise.all([
   runFake(flood, ['clipboard', '--out', join(stage, 'flood.png')]),
   runFake(deaf, ['clipboard', '--out', join(stage, 'deaf.png')]),
-  runFake(slow, ['whatever']),
   runFake(slowClipboard, ['clipboard', '--out', join(stage, 'out.png')]),
 ]);
 
@@ -113,12 +110,7 @@ const [flooded, ignored, dawdled, encoded] = await Promise.all([
 
 {
   check(
-    'anything but an encode that has taken eight seconds has already gone wrong, so it is not waited out',
-    dawdled.error === 'helper-timeout',
-    JSON.stringify(dawdled),
-  );
-  check(
-    'while an encode that takes nine seconds is allowed to finish',
+    'an encode that takes nine seconds is allowed to finish rather than given up on',
     encoded.error === '' && runner.helperFields(encoded.text).OK === 'true',
     JSON.stringify(encoded).slice(0, 200),
   );

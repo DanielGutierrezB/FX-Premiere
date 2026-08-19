@@ -4,6 +4,7 @@ import { nodeRequire } from './node';
 import { helperStatusFile, panelOpenFile, pendingIntentFile, settingsDir, settingsFile } from './paths';
 import {
   TransitionAlignment,
+  VIEWS,
   type AnchorBoundsMode,
   type AnchorComponent,
   type AnchorOptions,
@@ -19,6 +20,7 @@ import {
   type UnnestMedia,
   type UnnestOptions,
   type UnnestOriginal,
+  type View,
   type WindowBox,
 } from './types';
 
@@ -28,6 +30,14 @@ const ACCENT = '#4fc3f7';
 const LEGACY_ACCENT = '#a48cff';
 /** The width every profile carried when the window had one fixed size. */
 const LEGACY_WIDTH = 440;
+
+/** The two shapes older settings files kept sizes in, both folded into `sizes` on reading. */
+interface LegacySizes {
+  sizes?: unknown;
+  width?: number | null;
+  height?: number | null;
+  sheetSizes?: Record<string, unknown>;
+}
 
 /** Slots are fired by 1 through 9, so nine is as many as a row can have. */
 export const MAX_FAVORITE_SLOTS = 9;
@@ -118,9 +128,7 @@ export const defaultSettings = (): Settings => ({
   keepLoaded: true,
   recentCount: 6,
   favoriteSlots: 4,
-  width: null,
-  height: null,
-  sheetSizes: {},
+  sizes: {},
 });
 
 /** Choices offered in the settings sheet. Anything else in the file is pulled back into range. */
@@ -253,33 +261,50 @@ const mergeSettings = (raw: Partial<Settings> | null): Settings => {
     // Nobody chose the old purple on purpose, so carry them over to the new default.
     accent: raw.accent === LEGACY_ACCENT || !raw.accent ? base.accent : raw.accent,
     recentCount: inRange(raw.recentCount, base.recentCount, 0, 12),
-    // 440 was the fixed default before the width followed the slots, so it reads as "no width of my
-    // own"; anything else was picked or dragged and stays.
-    width: raw.width && raw.width !== LEGACY_WIDTH ? inRange(raw.width, 440, 320, 1400) : null,
-    // Zero was how an earlier release wrote "follow the resting list"; it reads as null now.
-    height: raw.height ? inRange(raw.height, 400, 120, 1400) : null,
-    sheetSizes: sheetSizesFrom(raw.sheetSizes),
+    sizes: sizesFrom(raw),
   };
 };
 
 /**
- * Sizes are read one entry at a time and anything unreadable is dropped, rather than a bad file
- * being handed to the resize call: a sheet that opened at NaN by NaN is a window nobody can find.
+ * The size each view was last left at. Anything unreadable is dropped rather than handed to the
+ * resize call — a window that opened at NaN by NaN is one nobody can find — and no range is imposed
+ * here: `window-size.ts` clamps at the point of use, which is where the screen is known.
  */
-const sheetSizesFrom = (raw: unknown): Record<string, WindowBox> => {
-  const sizes: Record<string, WindowBox> = {};
-  if (!raw || typeof raw !== 'object') {
-    return sizes;
-  }
-  for (const [view, box] of Object.entries(raw as Record<string, unknown>)) {
+const sizesFrom = (raw: LegacySizes): Partial<Record<View, WindowBox>> => {
+  const sizes: Partial<Record<View, WindowBox>> = {};
+  const entries = raw.sizes && typeof raw.sizes === 'object' ? (raw.sizes as Record<string, unknown>) : {};
+  for (const [view, box] of Object.entries(entries)) {
     const size = (box ?? {}) as Partial<WindowBox>;
-    if (typeof size.width !== 'number' || typeof size.height !== 'number') {
-      continue;
-    }
     if (!Number.isFinite(size.width) || !Number.isFinite(size.height)) {
       continue;
     }
-    sizes[view] = { width: inRange(size.width, 440, 320, 2400), height: inRange(size.height, 400, 120, 2000) };
+    if (VIEWS.includes(view as View)) {
+      sizes[view as View] = { width: Math.round(size.width as number), height: Math.round(size.height as number) };
+    }
+  }
+  return { ...legacySizes(raw), ...sizes };
+};
+
+/**
+ * Two releases kept the palette's own size in `width`/`height` and every sheet's in `sheetSizes`,
+ * which was one rule written twice. They fold into the one map, and the two sentinels they used for
+ * "work it out yourself" fold into simply not being in it.
+ */
+const legacySizes = (raw: LegacySizes): Partial<Record<View, WindowBox>> => {
+  const sizes: Partial<Record<View, WindowBox>> = {};
+  for (const [view, box] of Object.entries(raw.sheetSizes ?? {})) {
+    const size = (box ?? {}) as Partial<WindowBox>;
+    if (VIEWS.includes(view as View) && Number.isFinite(size.width) && Number.isFinite(size.height)) {
+      sizes[view as View] = { width: Math.round(size.width as number), height: Math.round(size.height as number) };
+    }
+  }
+  // Only a pair, because only a pair was ever a window: dragging one wrote both. A width on its own
+  // came from the three on offer in settings, and 440 was the width every profile carried before the
+  // bar decided it, so neither of those is a box to reopen at.
+  const width = raw.width && raw.width !== LEGACY_WIDTH ? raw.width : 0;
+  const height = raw.height || 0;
+  if (width > 0 && height > 0) {
+    sizes.search = { width: Math.round(width), height: Math.round(height) };
   }
   return sizes;
 };

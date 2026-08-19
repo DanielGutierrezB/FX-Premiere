@@ -1,10 +1,6 @@
 import { resizeSelf } from '@shared/cep';
 import { saveSettings } from '@shared/settings';
-import type { QuickGroup, Settings, WindowBox } from '@shared/types';
-import type { View } from './sheets';
-
-/** What the window is holding: the search list, or whichever sheet is on top of it. */
-export type Box = View;
+import type { QuickGroup, Settings, View, WindowBox } from '@shared/types';
 
 /** Bounds for the window Premiere draws around us, in content pixels. */
 const MIN_HEIGHT = 120;
@@ -20,7 +16,7 @@ const MAX_WIDTH = 1400;
  * the palette uses for a list of names is what makes them unreadable. Whatever anybody drags a sheet
  * to is kept for that sheet alone, and these are only where each one starts.
  */
-const SHEET_PLAN: Record<Exclude<Box, 'search'>, WindowBox> = {
+const SHEET_PLAN: Record<Exclude<View, 'search'>, WindowBox> = {
   transition: { width: 460, height: 300 },
   unnest: { width: 540, height: 380 },
   ease: { width: 500, height: 360 },
@@ -77,16 +73,16 @@ export class WindowSize {
   private saveTimer = 0;
 
   /** What is on screen, so a drag is remembered against the view it was made in. */
-  private box: Box = 'search';
+  private view: View = 'search';
 
   constructor(
     private readonly settings: () => Settings,
     private readonly groups: () => QuickGroup[],
   ) {}
 
-  apply(box: Box): void {
-    this.box = box;
-    const planned = this.plannedFor(box);
+  apply(view: View): void {
+    this.view = view;
+    const planned = this.plannedFor(view);
     const height = planned.height;
     const width = planned.width;
     // Within the slack the host would round away, the window is already the right size: asking for
@@ -101,6 +97,31 @@ export class WindowSize {
     this.height = height;
     this.width = width;
     resizeSelf(width, height);
+  }
+
+  /** The width the palette is pinned to, or null while it still follows what is on screen. */
+  chosenWidth(): number | null {
+    return this.settings().sizes.search?.width ?? null;
+  }
+
+  /** Whether any view has a size of its own, so there is something for "fit the list" to undo. */
+  sizedByHand(): boolean {
+    return Object.keys(this.settings().sizes).length > 0;
+  }
+
+  /**
+   * Pins the palette to one width, or forgets every size so each view works its own out again.
+   *
+   * The height is pinned with it, because a remembered size is a box: a width on its own would be a
+   * second kind of remembered size, which is the thing this file stopped having.
+   */
+  chooseWidth(width: number | null): void {
+    const settings = this.settings();
+    if (width === null) {
+      settings.sizes = {};
+      return;
+    }
+    settings.sizes.search = { width, height: settings.sizes.search?.height ?? this.plannedHeight() };
   }
 
   /** How many rows are worth building for a window this tall, plus enough to arrow into. */
@@ -128,12 +149,7 @@ export class WindowSize {
     // Recorded at once, so nothing that repaints mid-drag can read the old size and snap back to
     // it. Only the trip to disk waits for the dragging to stop.
     const settings = this.settings();
-    if (this.box === 'search') {
-      settings.width = width;
-      settings.height = height;
-    } else {
-      settings.sheetSizes[this.box] = { width, height };
-    }
+    settings.sizes[this.view] = { width, height };
     window.clearTimeout(this.saveTimer);
     this.saveTimer = window.setTimeout(() => saveSettings(settings), SIZE_SAVE_DELAY_MS);
   }
@@ -142,19 +158,19 @@ export class WindowSize {
    * The size a view opens at: whatever it was last dragged to, or what it asks for. Clamped to the
    * screen as well as to our own bounds, because the widest sheet is wider than a laptop.
    */
-  private plannedFor(box: Box): WindowBox {
-    const settings = this.settings();
-    if (box === 'search') {
-      return this.fit({
-        width: settings.width ?? this.plannedWidth(),
-        height: settings.height ?? this.plannedHeight(),
-      });
-    }
-    return this.fit(settings.sheetSizes[box] ?? SHEET_PLAN[box]);
+  private plannedFor(view: View): WindowBox {
+    return this.fit(this.settings().sizes[view] ?? this.computedFor(view));
+  }
+
+  /** What a view asks for when nobody has dragged it: a sheet its own plan, the palette its list. */
+  private computedFor(view: View): WindowBox {
+    return view === 'search'
+      ? { width: this.plannedWidth(), height: this.plannedHeight() }
+      : SHEET_PLAN[view];
   }
 
   private fit(box: WindowBox): WindowBox {
-    const room = window.screen ?? { availWidth: MAX_WIDTH, availHeight: MAX_HEIGHT };
+    const room = window.screen;
     const across = room.availWidth > 0 ? room.availWidth - 80 : MAX_WIDTH;
     const down = room.availHeight > 0 ? room.availHeight - 120 : MAX_HEIGHT;
     return {

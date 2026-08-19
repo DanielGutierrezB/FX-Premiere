@@ -24,25 +24,25 @@ interface UnnestHost {
 }
 
 /**
- * What the survey found, worth saying only when there is something to say about it. The contents are
- * rebuilt clip by clip, so what cannot be rebuilt is named before Enter: a transition is not a clip
- * and no API makes one, and no API says which angle of a multicam clip was showing.
+ * What the contents hold that a rebuild cannot carry across, in the order it is said. A title made in
+ * the timeline may have no project item behind it and a placement is made from a project item; a
+ * transition is not a clip and no API makes one; and no API says which angle of a multicam was showing.
  */
+const RISKS: Array<{ count: (survey: UnnestSurvey) => number; one: string; many: string; note: string }> = [
+  { count: (s) => s.titles, one: 'title', many: 'titles', note: ' made here, which Premiere may not describe' },
+  { count: (s) => s.transitions, one: 'transition', many: 'transitions', note: ' will not come out' },
+  { count: (s) => s.multicam, one: 'multicam clip', many: 'multicam clips', note: ': those nests are refused' },
+  { count: (s) => s.speedChanges, one: 'retimed clip', many: 'retimed clips', note: '' },
+];
+
+/** What the survey found, worth saying only when there is something to say about it. */
 const surveyLine = (survey: UnnestSurvey): string => {
   const parts = [`${survey.clips} clip${survey.clips === 1 ? '' : 's'} inside`];
-  // A graphic made in the timeline may have no project item behind it, and a placement is made from
-  // a project item: the nest is refused by name when Premiere will not describe one.
-  if (survey.titles > 0) {
-    parts.push(`${survey.titles} title${survey.titles === 1 ? '' : 's'} made here, which Premiere may not describe`);
-  }
-  if (survey.transitions > 0) {
-    parts.push(`${survey.transitions} transition${survey.transitions === 1 ? '' : 's'} will not come out`);
-  }
-  if (survey.multicam > 0) {
-    parts.push(`${survey.multicam} multicam clip${survey.multicam === 1 ? '' : 's'}: those nests are refused`);
-  }
-  if (survey.speedChanges > 0) {
-    parts.push(`${survey.speedChanges} retimed clip${survey.speedChanges === 1 ? '' : 's'}`);
+  for (const risk of RISKS) {
+    const found = risk.count(survey);
+    if (found > 0) {
+      parts.push(`${found} ${found === 1 ? risk.one : risk.many}${risk.note}`);
+    }
   }
   return parts.join(' \u00b7 ');
 };

@@ -1,7 +1,7 @@
 /**
  * The seam the clipboard goes through. Reading an image out of the system clipboard needs the native
- * helper, which needs a real desktop with something on the pasteboard, so it is a named interface
- * with one implementation behind it — the same shape `keys-bridge` has, and for the same reason.
+ * helper, which needs a real desktop with something on the pasteboard, so it is a named interface with
+ * one implementation behind it rather than a call the tests would have no way around.
  *
  * `window.__fxpClipboard` replaces it, which is what lets the panel test suite drive the dialog
  * against a PNG it wrote itself and check what the panel says about transparency it does not have.

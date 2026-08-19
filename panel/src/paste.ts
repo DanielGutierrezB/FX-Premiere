@@ -30,7 +30,7 @@ import { clipboardBridge } from './clipboard-bridge';
 interface PasteTarget {
   grab: ClipboardGrab;
   context: ProjectContext;
-  /** Where the file will live, with its trailing separator. Empty when the folder cannot be worked out. */
+  /** Where it will live, with its trailing separator. Empty when the folder cannot be worked out. */
   folder: string;
   /** The name it will be given, before any collision suffix. */
   fileName: string;

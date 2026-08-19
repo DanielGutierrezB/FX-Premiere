@@ -45,6 +45,12 @@ interface SettingsHost {
   applyTheme(): void;
   /** Asks the palette to size the window again, for the settings that change how big it is. */
   refit(): void;
+  /** The width the palette is pinned to, null while it follows the numbered bar. */
+  chosenWidth(): number | null;
+  /** Pins the palette to a width, or forgets every remembered size when given null. */
+  chooseWidth(width: number | null): void;
+  /** Whether anything has a size of its own, which is what "fit the list" has to undo. */
+  sizedByHand(): boolean;
   toast(message: string, kind?: 'info' | 'error'): void;
   reindex(): Promise<void>;
   refreshPresets(): Promise<void>;
@@ -361,9 +367,8 @@ export class SettingsSheet {
   }
 
   private appearanceRows(settings: Settings): HTMLElement[] {
-    // A window that decides its own width, or was dragged to one, matches none of the offered widths.
-    const sizedByHand =
-      settings.width !== null || settings.height !== null || Object.keys(settings.sheetSizes).length > 0;
+    // A window that decides its own size, or was dragged to one, matches none of the offered widths.
+    const sizedByHand = this.host.sizedByHand();
     return [
       fieldRow(
         'Accent colour',
@@ -382,9 +387,9 @@ export class SettingsSheet {
         el('div', { class: 'field__control' }, [
           segmented(
             WIDTHS.map((width) => ({ value: width, label: `${width}` })),
-            settings.width,
+            this.host.chosenWidth(),
             (value) => {
-              settings.width = value;
+              this.host.chooseWidth(value);
               this.save(false);
             },
           ),
@@ -394,9 +399,7 @@ export class SettingsSheet {
                 text: 'Fit the list',
                 title: 'Go back to a size that follows what is being shown',
                 onclick: () => {
-                  settings.width = null;
-                  settings.height = null;
-                  settings.sheetSizes = {};
+                  this.host.chooseWidth(null);
                   this.save(false);
                 },
               })

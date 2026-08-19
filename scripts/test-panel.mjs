@@ -149,8 +149,8 @@ await settle(40);
 check('nor does a long one: the list scrolls instead', resizes().length === 1, JSON.stringify(resizes()));
 check(
   'and the palette does not take its own resize for somebody dragging the window',
-  (savedSettings().height ?? null) === null,
-  String(savedSettings().height),
+  savedSettings().sizes?.search === undefined,
+  JSON.stringify(savedSettings().sizes),
 );
 
 // The window has a grip on its corner. A palette that snapped back to its own idea of the right
@@ -168,7 +168,11 @@ check(
 );
 await type('');
 await settle(500);
-check('a window dragged by hand is remembered', savedSettings().height === 500 && savedSettings().width === 620, JSON.stringify([savedSettings().width, savedSettings().height]));
+check(
+  'a window dragged by hand is remembered',
+  savedSettings().sizes?.search?.width === 620 && savedSettings().sizes?.search?.height === 500,
+  JSON.stringify(savedSettings().sizes),
+);
 const afterDrag = resizes().length;
 await type('gaussian');
 await type('');
@@ -194,13 +198,13 @@ cep.dragWindow(900, 700);
 await settle(500);
 check(
   'dragging a sheet is remembered against that sheet',
-  savedSettings().sheetSizes?.compass?.width === 900 && savedSettings().sheetSizes?.compass?.height === 700,
-  JSON.stringify(savedSettings().sheetSizes),
+  savedSettings().sizes?.compass?.width === 900 && savedSettings().sizes?.compass?.height === 700,
+  JSON.stringify(savedSettings().sizes),
 );
 check(
   'and not as the size of the palette',
-  savedSettings().width === 620 && savedSettings().height === 500,
-  JSON.stringify([savedSettings().width, savedSettings().height]),
+  savedSettings().sizes?.search?.width === 620 && savedSettings().sizes?.search?.height === 500,
+  JSON.stringify(savedSettings().sizes),
 );
 await press('Escape');
 await settle(30);
@@ -304,7 +308,8 @@ check('and disk agrees', savedSlots()[1] === null, JSON.stringify(savedSlots()))
 console.log('\nA second row of favourites');
 const withSecondRow = savedSettings();
 const blurId = Object.keys(withSecondRow.remembered).find((id) => /Gaussian Blur/.test(id));
-withSecondRow.height = null;
+// Back to a palette that works its own size out, so adding a row is what moves the window.
+withSecondRow.sizes = {};
 withSecondRow.favoriteRows = [
   { modifiers: { ctrl: false, alt: false, shift: false, meta: false }, slots: [null, null, null, null] },
   { modifiers: { ctrl: true, alt: false, shift: true, meta: false }, slots: [blurId, null, null, null] },
@@ -615,7 +620,7 @@ check('picking a swatch changes the accent', savedSettings().accent !== '#4fc3f7
 const widthButton = seg('Window width').find((node) => node.textContent === '380');
 widthButton.click();
 await settle(40);
-check('choosing a width saves it', savedSettings().width === 380, String(savedSettings().width));
+check('choosing a width saves it', savedSettings().sizes?.search?.width === 380, JSON.stringify(savedSettings().sizes));
 // The width is the palette's, and the settings sheet is not the palette: resizing the sheet under
 // the click would shrink the page being read to the size of a list of effect names.
 check(
@@ -628,7 +633,7 @@ const fitButton = [...window.document.querySelectorAll('.sheet .button')].find((
 check('a window sized by hand offers a way back to a height that follows the list', Boolean(fitButton), '');
 fitButton.click();
 await settle(20);
-check('taking it puts the height back under the palette', savedSettings().height === null, String(savedSettings().height));
+check('taking it puts every size back under the palette', savedSettings().sizes && Object.keys(savedSettings().sizes).length === 0, JSON.stringify(savedSettings().sizes));
 
 const recentsButton = seg('Recents to show').find((node) => node.textContent === '3');
 recentsButton.click();

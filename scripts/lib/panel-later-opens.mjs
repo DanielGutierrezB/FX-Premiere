@@ -151,6 +151,33 @@ export const laterOpens = async ({ hostScript, panelHtml, panelBundle, stage, st
   legacy.close();
   rmSync(oldStage, { recursive: true, force: true });
 
+  // The palette's size and each sheet's were the same rule — absent means work it out — kept in two
+  // places. They fold into one map, and a window somebody dragged has to survive the fold.
+  console.log('\nA profile from when sizes were kept in two places');
+  const sizedStage = mkdtempSync(join(tmpdir(), 'fxp-sizes-'));
+  const sizedSettingsDir = join(sizedStage, 'Library', 'Application Support', 'FX Premiere');
+  mkdirSync(sizedSettingsDir, { recursive: true });
+  writeFileSync(
+    join(sizedSettingsDir, 'settings.json'),
+    JSON.stringify({
+      width: 720,
+      height: 460,
+      sheetSizes: { compass: { width: 880, height: 660 }, nonsense: { width: 10, height: 10 } },
+    }),
+    'utf8',
+  );
+  const sizedHost = createHost({ hostScript, documentsRoot: join(sizedStage, 'Documents') });
+  const sized = createCepWindow({ html: panelHtml, home: sizedStage, evalScript: sizedHost.evalInHost, storage: {} });
+  sized.run(panelBundle);
+  await settle(60);
+  check(
+    'the window opens at the size it was dragged to before the two stores became one',
+    sized.window.innerWidth === 720 && sized.window.innerHeight === 460,
+    `${sized.window.innerWidth}x${sized.window.innerHeight}`,
+  );
+  sized.close();
+  rmSync(sizedStage, { recursive: true, force: true });
+
   // A settings file can be edited by hand, and an un-nest choice the host has no branch for would
   // otherwise travel straight to the timeline.
   console.log('\nA profile with un-nest settings that make no sense');

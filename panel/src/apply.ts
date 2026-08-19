@@ -62,7 +62,7 @@ interface ApplyHost {
   unnest(): Promise<HostResponse<ApplyOutcome>>;
   openPaste(item: CatalogItem): Promise<void>;
   openCompass(): Promise<void>;
-  /** Writes the scratch PNG where it belongs and asks Premiere to place it. */
+  /** Puts what was on the clipboard where it belongs and asks Premiere to place it. */
   paste(): Promise<HostResponse<ApplyOutcome>>;
   /** Queues the sequence to Media Encoder at the path Compass resolved. */
   compassExport(): Promise<HostResponse<ApplyOutcome>>;

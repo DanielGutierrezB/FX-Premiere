@@ -166,6 +166,9 @@ export class PaletteApp {
     applyCompass: () => this.runCompass(),
     storeCaptured: (preset) => this.storeCaptured(preset),
     viewChanged: (view) => this.viewChanged(view),
+    chosenWidth: () => this.size.chosenWidth(),
+    chooseWidth: (width) => this.size.chooseWidth(width),
+    sizedByHand: () => this.size.sizedByHand(),
     back: () => this.backToSearch(),
   });
 

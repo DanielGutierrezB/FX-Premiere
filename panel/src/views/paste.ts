@@ -40,8 +40,8 @@ interface PasteHost {
 
 /**
  * What is on the clipboard, where it is about to go, and how long it will last. It is a confirmation
- * rather than a form: the clipboard has already been read into a scratch file by the time this
- * appears, which is the only way it can say whether transparency survived before anything is made.
+ * rather than a form: the clipboard has already been read by the time this appears, which is the only
+ * way a picture's transparency can be reported before anything has been made.
  */
 export class PasteDialog {
   private item: CatalogItem | null = null;

@@ -12,6 +12,7 @@ import {
   type TransitionOptions,
   type UnnestMedia,
   type UnnestSurvey,
+  type View,
 } from '@shared/types';
 import { EMPTY_CONTEXT, readContext } from '@shared/compass-run';
 import { probePaste, type PasteProbe } from './paste';
@@ -24,17 +25,8 @@ import { SettingsSheet } from './views/settings';
 import { TransitionDialog } from './views/transition';
 import { UnnestDialog } from './views/unnest';
 
-/** Which screen the palette is on. Everything that is not `search` is a sheet owned by this file. */
-export type View =
-  | 'search'
-  | 'transition'
-  | 'unnest'
-  | 'ease'
-  | 'anchor'
-  | 'paste'
-  | 'compass'
-  | 'settings'
-  | 'inspect';
+/** The sheets are owned by this file; the list of them is in shared, where a size is kept per view. */
+export type { View } from '@shared/types';
 
 /** One entry of the footer line. Every hint names a key and does what that key does when clicked. */
 export interface Hint {
@@ -65,13 +57,16 @@ interface SheetsHost {
   applyUnnest(item: CatalogItem, media: UnnestMedia): void;
   applyEase(item: CatalogItem, options: EaseOptions): void;
   applyAnchor(item: CatalogItem, options: AnchorOptions): void;
-  /** The scratch PNG and where it goes are already worked out; this is Enter on the dialog. */
+  /** The clipboard has been read and where it goes is worked out; this is Enter on the dialog. */
   applyPaste(item: CatalogItem, seconds: number): void;
   /** Resolves the paths, makes the folders and tries the properties, reporting what came back. */
   applyCompass(): Promise<void>;
   storeCaptured(preset: CapturedPreset): void;
   /** The view and the size of the window are the same decision, so the palette makes both. */
   viewChanged(view: View): void;
+  chosenWidth(): number | null;
+  chooseWidth(width: number | null): void;
+  sizedByHand(): boolean;
   back(): void;
 }
 
@@ -164,6 +159,9 @@ export class Sheets {
       indexedItems: () => host.indexedItems(),
       applyTheme: () => host.applyTheme(),
       refit: () => host.viewChanged(this.view),
+      chosenWidth: () => host.chosenWidth(),
+      chooseWidth: (width) => host.chooseWidth(width),
+      sizedByHand: () => host.sizedByHand(),
       toast: (message, kind) => host.toast(message, kind),
       reindex: () => host.reindex(),
       refreshPresets: () => host.refreshPresets(),

@@ -496,18 +496,34 @@ export interface Settings {
   /** Slots in every favourite row, which is also the highest digit that fires one. */
   favoriteSlots: number;
   /**
-   * Content size asked of the host for the palette itself. Null means it follows what is being
-   * shown: the width follows the favourite slots, the height follows the resting list.
+   * The size each view was last dragged to, by the name of the view — the palette's own 'search'
+   * among them. A view that is not in here has never been dragged and opens at the size it works out
+   * for itself, which is why absence is the whole of that story and there is no other place to look.
+   *
+   * One size for every view would be the wrong idea rather than a simpler one: Compass is a page of
+   * paths and the palette is a list of names, and sharing a box is what made the dense ones unreadable.
    */
-  width: number | null;
-  height: number | null;
-  /**
-   * The size each sheet was last dragged to, by the name of the view. Kept apart from the palette's
-   * own size because they are different windows to work in: Compass is a page of paths and the
-   * palette is a list of names, and one size for both is what makes the dense ones unreadable.
-   */
-  sheetSizes: Record<string, WindowBox>;
+  sizes: Partial<Record<View, WindowBox>>;
 }
+
+/**
+ * Which screen the palette is on. Everything that is not `search` is a sheet. It lives here rather
+ * than in the panel because a settings file on disk names one of these to hang a size off, and it is
+ * a list rather than a bare union so that reading such a file can tell a view from a typo.
+ */
+export const VIEWS = [
+  'search',
+  'transition',
+  'unnest',
+  'ease',
+  'anchor',
+  'paste',
+  'compass',
+  'settings',
+  'inspect',
+] as const;
+
+export type View = (typeof VIEWS)[number];
 
 export interface WindowBox {
   width: number;

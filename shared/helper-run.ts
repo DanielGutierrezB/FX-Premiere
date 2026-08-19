@@ -1,49 +1,26 @@
 /**
  * Running the native helper once and reading what it says.
  *
- * The helper answers in `FXP_NAME=value` lines on stdout whatever mode it was asked for, so the
- * spawning and the parsing are the same whichever it was. How long a mode may take is not, and
- * neither is what its fields mean, which is why this stops at the field list.
+ * The helper does one job — hand the clipboard over as a PNG — and answers in `FXP_NAME=value` lines
+ * on stdout. What those fields mean is the clipboard's business, which is why this stops at the
+ * field list.
  */
 import { systemPath } from './cep';
 import { nodeRequire } from './node';
 import { appendLog } from './paths';
 
-/** The one-shot modes both platforms' helpers answer to. */
-export type HelperMode = 'clipboard';
-
-/** Anything that is not the clipboard is a question about this machine, answered immediately. */
-export const HELPER_QUICK_TIMEOUT_MS = 4000;
-
 /**
- * The clipboard can hold a full-resolution still, and turning one into a PNG is real compression
- * work: an 8K frame is well over a hundred megabytes of pixels before deflate touches it.
+ * What a run is allowed to take. The clipboard can hold a full-resolution still and turning one into
+ * a PNG is real compression work: an 8K frame is well over a hundred megabytes of pixels before
+ * deflate touches it.
  */
-export const HELPER_CLIPBOARD_TIMEOUT_MS = 30000;
+export const HELPER_TIMEOUT_MS = 30000;
 
 /** How long a helper that ignored SIGTERM is left before it is killed outright. */
 export const HELPER_KILL_GRACE_MS = 1000;
 
 /** How much of a helper's stderr is worth keeping for the log; the rest is drained and dropped. */
 const HELPER_STDERR_KEPT = 2000;
-
-const HELPER_MODES: readonly HelperMode[] = ['clipboard'];
-
-/** What the run is allowed to take, which depends entirely on what the mode actually does. */
-export const helperTimeoutMs = (args: string[]): number => {
-  const mode = HELPER_MODES.find((candidate) => candidate === args[0]);
-  if (mode === undefined) {
-    return HELPER_QUICK_TIMEOUT_MS;
-  }
-  switch (mode) {
-    case 'clipboard':
-      return HELPER_CLIPBOARD_TIMEOUT_MS;
-    default: {
-      const exhaustive: never = mode;
-      throw new Error(`Unhandled helper mode: ${String(exhaustive)}`);
-    }
-  }
-};
 
 export const isWindows = (): boolean => process.platform === 'win32';
 
@@ -123,7 +100,7 @@ export const runHelper = (scope: string, args: string[]): Promise<HelperRun> =>
       }, HELPER_KILL_GRACE_MS);
       child.once('close', () => clearTimeout(grace));
       finish({ text: output, error: 'helper-timeout' });
-    }, helperTimeoutMs(args));
+    }, HELPER_TIMEOUT_MS);
 
     child.stdout?.on('data', (chunk: Buffer | string) => {
       output += String(chunk);
