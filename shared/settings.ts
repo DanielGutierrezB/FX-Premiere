@@ -31,6 +31,20 @@ const LEGACY_ACCENT = '#a48cff';
 /** The width every profile carried when the window had one fixed size. */
 const LEGACY_WIDTH = 440;
 
+/**
+ * The box the manifest opens the palette at, and the only box the window could be until 1.7.2.
+ *
+ * CEP clamps a resize to the maximum the manifest declares, and no maximum was declared, so every
+ * size the panel asked for came back as this one. The panel read that refusal as a window somebody
+ * had dragged, and stored it. A stored size equal to it is therefore that bug rather than a choice,
+ * and keeping it would pin the palette to the one box it used to be unable to leave — so it is
+ * dropped and the view works its size out again. Held to CSXS/manifest.xml by scripts/test-panel.mjs.
+ */
+export const WINDOW_OPENS_AT: WindowBox = { width: 534, height: 332 };
+
+const isOpeningBox = (box: WindowBox): boolean =>
+  box.width === WINDOW_OPENS_AT.width && box.height === WINDOW_OPENS_AT.height;
+
 /** The two shapes older settings files kept sizes in, both folded into `sizes` on reading. */
 interface LegacySizes {
   sizes?: unknown;
@@ -282,7 +296,13 @@ const sizesFrom = (raw: LegacySizes): Partial<Record<View, WindowBox>> => {
       sizes[view as View] = { width: Math.round(size.width as number), height: Math.round(size.height as number) };
     }
   }
-  return { ...legacySizes(raw), ...sizes };
+  const kept = { ...legacySizes(raw), ...sizes };
+  for (const [view, box] of Object.entries(kept)) {
+    if (isOpeningBox(box)) {
+      delete kept[view as View];
+    }
+  }
+  return kept;
 };
 
 /**

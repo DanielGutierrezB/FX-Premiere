@@ -66,6 +66,7 @@ const ROW_OVERSCAN = 8;
 const SIZE_SLACK = 3;
 const SIZE_SAVE_DELAY_MS = 400;
 
+
 /**
  * The size of the window, which has exactly two possible authors: the palette, which works out how
  * tall its resting list wants to be, and you, dragging the corner. Dragging wins from then on.
@@ -75,10 +76,16 @@ const SIZE_SAVE_DELAY_MS = 400;
  * you type: a box that resizes under every keystroke is impossible to aim at.
  */
 export class WindowSize {
-  /** The size the host opened us at. Starting from it leaves a correct window alone. */
+  /** The size the host last reported, which is the only size the window has ever really been. */
   private width = window.innerWidth;
   private height = window.innerHeight;
   private saveTimer = 0;
+
+  /**
+   * The last size asked of the host: what its answer will look like when it arrives, and what an
+   * unchanged plan does not need asking for a second time.
+   */
+  private wanted: WindowBox | null = null;
 
   /** What is on screen, so a drag is remembered against the view it was made in. */
   private view: View = 'search';
@@ -91,20 +98,14 @@ export class WindowSize {
   apply(view: View): void {
     this.view = view;
     const planned = this.plannedFor(view);
-    const height = planned.height;
-    const width = planned.width;
-    // Within the slack the host would round away, the window is already the right size: asking for
-    // it again would be a second sizing before the first paint, which is the flicker this whole
-    // file exists to avoid. The manifest opens the palette at the size a fresh profile asks for, so
-    // on that path there is nothing left to do here.
-    if (Math.abs(height - this.height) <= SIZE_SLACK && Math.abs(width - this.width) <= SIZE_SLACK) {
-      this.height = height;
-      this.width = width;
+    // Already this size, or already asked for it: a second request before the first is answered is
+    // the flicker this whole file exists to avoid. The manifest opens the palette at the size a
+    // fresh profile asks for, so on that path there is nothing left to do here.
+    if (this.near(planned, { width: this.width, height: this.height }) || this.near(planned, this.wanted)) {
       return;
     }
-    this.height = height;
-    this.width = width;
-    resizeSelf(width, height);
+    this.wanted = planned;
+    resizeSelf(planned.width, planned.height);
   }
 
   /** The width the palette is pinned to, or null while it still follows what is on screen. */
@@ -132,16 +133,21 @@ export class WindowSize {
     settings.sizes.search = { width, height: settings.sizes.search?.height ?? this.plannedHeight() };
   }
 
-  /** How many rows are worth building for a window this tall, plus enough to arrow into. */
+  /**
+   * How many rows are worth building for a window this tall, plus enough to arrow into. Measured
+   * against the height asked for rather than the one on screen, so the list is already built for
+   * the window by the time the host has finished growing it.
+   */
   rowsThatFit(): number {
-    const rows = Math.ceil(this.height / (ROW_HEIGHT * this.settings().fontScale));
+    const height = this.wanted?.height ?? this.height;
+    const rows = Math.ceil(height / (ROW_HEIGHT * this.settings().fontScale));
     return rows + ROW_OVERSCAN;
   }
 
   /**
    * The window has a grip on its corner, and a palette that snapped back to its own idea of the
-   * right size on the next repaint would make that grip a lie. Anything the host reports that is
-   * not the size we asked for was done by hand, and from then on it is the size.
+   * right size on the next repaint would make that grip a lie. So a size the host reports that
+   * nobody asked for is one you dragged it to, and from then on it is the size of this view.
    */
   noteHostResize(): void {
     const width = window.innerWidth;
@@ -149,17 +155,35 @@ export class WindowSize {
     if (width === 0 || height === 0) {
       return;
     }
-    if (Math.abs(width - this.width) <= SIZE_SLACK && Math.abs(height - this.height) <= SIZE_SLACK) {
+    const box = { width, height };
+    // A host that will not resize the window answers with the size already on screen. Nothing moved,
+    // so there is nothing here to remember — and remembering it anyway is what used to pin the
+    // palette to the only box a manifest without a maximum would let it have.
+    if (this.near(box, { width: this.width, height: this.height })) {
       return;
     }
     this.width = width;
     this.height = height;
+    // The other thing a host answers with is the size it was asked for, which is just as much not a
+    // size anybody chose. Anything else that moves the window, you moved.
+    if (this.near(box, this.wanted)) {
+      this.wanted = null;
+      return;
+    }
     // Recorded at once, so nothing that repaints mid-drag can read the old size and snap back to
     // it. Only the trip to disk waits for the dragging to stop.
+    this.wanted = box;
     const settings = this.settings();
     settings.sizes[this.view] = { width, height };
     window.clearTimeout(this.saveTimer);
     this.saveTimer = window.setTimeout(() => saveSettings(settings), SIZE_SAVE_DELAY_MS);
+  }
+
+  /** Two boxes the same, give or take the pixel or two a host rounds a window by. */
+  private near(box: WindowBox, other: WindowBox | null): boolean {
+    return (
+      other !== null && Math.abs(box.width - other.width) <= SIZE_SLACK && Math.abs(box.height - other.height) <= SIZE_SLACK
+    );
   }
 
   /**

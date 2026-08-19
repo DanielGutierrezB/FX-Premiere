@@ -140,6 +140,7 @@ const savedSettings = () => JSON.parse(readFileSync(join(settingsDir, 'settings.
 // minimum. A panel asking for sizes its own manifest forbids fails silently, so it is checked here.
 {
   const { WINDOW_BOUNDS } = await loadShared('panel/src/window-size.ts', ['WINDOW_BOUNDS']);
+  const { WINDOW_OPENS_AT } = await loadShared('shared/settings.ts', ['WINDOW_OPENS_AT']);
   const manifest = readFileSync(join(root, 'CSXS', 'manifest.xml'), 'utf8');
   const geometry = /<Geometry>([\s\S]*?)<\/Geometry>/.exec(manifest)?.[1] ?? '';
   const box = (tag) => {
@@ -165,6 +166,13 @@ const savedSettings = () => JSON.parse(readFileSync(join(settingsDir, 'settings.
       min.width <= WINDOW_BOUNDS.minWidth &&
       min.height <= WINDOW_BOUNDS.minHeight,
     JSON.stringify({ max, min, WINDOW_BOUNDS }),
+  );
+  // Settings drops a remembered size equal to the one the window opens at, because that is what a
+  // refused resize used to leave behind. It can only recognise it if it holds the same number.
+  check(
+    'and the size it opens at is the one settings knows to distrust',
+    box('Size')?.width === WINDOW_OPENS_AT.width && box('Size')?.height === WINDOW_OPENS_AT.height,
+    JSON.stringify({ manifest: box('Size'), settings: WINDOW_OPENS_AT }),
   );
 }
 

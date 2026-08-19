@@ -178,6 +178,76 @@ export const laterOpens = async ({ hostScript, panelHtml, panelBundle, stage, st
   sized.close();
   rmSync(sizedStage, { recursive: true, force: true });
 
+  // A host that will not grow the window says so by handing back the size it already had. That is not
+  // a size anybody chose, and recording it as one is what left the palette pinned to the only box the
+  // manifest used to allow — every summon after it, in a window nothing could widen.
+  console.log('\nA host that refuses to resize the window');
+  const heldStage = mkdtempSync(join(tmpdir(), 'fxp-held-'));
+  const heldSettingsDir = join(heldStage, 'Library', 'Application Support', 'FX Premiere');
+  mkdirSync(heldSettingsDir, { recursive: true });
+  // Five slots, so the bar wants a wider window than the host is willing to give: the palette asking
+  // for something it cannot have is the whole situation being tested.
+  writeFileSync(join(heldSettingsDir, 'settings.json'), JSON.stringify({ favoriteSlots: 5 }), 'utf8');
+  const heldHost = createHost({ hostScript, documentsRoot: join(heldStage, 'Documents') });
+  const held = createCepWindow({ html: panelHtml, home: heldStage, evalScript: heldHost.evalInHost, storage: {} });
+  held.refuseAbove(534, 332);
+  held.dragWindow(534, 332);
+  held.run(panelBundle);
+  await settle(80);
+  const heldSaved = () => JSON.parse(readFileSync(join(heldSettingsDir, 'settings.json'), 'utf8'));
+  check(
+    'the palette asks for the width its slots need',
+    (held.calls.resizes.at(-1) ?? [0])[0] > 534,
+    JSON.stringify(held.calls.resizes),
+  );
+  check('the window stays where the host held it', held.window.innerWidth === 534, String(held.window.innerWidth));
+  check(
+    'and the refusal is not written down as a size somebody wanted',
+    Object.keys(heldSaved().sizes ?? {}).length === 0,
+    JSON.stringify(heldSaved().sizes),
+  );
+  // The grip still works on a host like this: what it will not do on its own it will do when dragged.
+  // Long enough after opening that the size cannot be the answer to what the palette asked for, which
+  // is the only thing telling the two apart.
+  await settle(560);
+  held.dragWindow(700, 480);
+  await settle(500);
+  check(
+    'a corner dragged on the same host is still remembered',
+    heldSaved().sizes?.search?.width === 700 && heldSaved().sizes?.search?.height === 480,
+    JSON.stringify(heldSaved().sizes),
+  );
+  held.close();
+  rmSync(heldStage, { recursive: true, force: true });
+
+  // Profiles in the wild already carry that refusal as if it were a choice. It has to be let go of, or
+  // the release that lets the window grow opens it in the box that could not.
+  console.log('\nA profile pinned to the size the window used to be stuck at');
+  const pinnedStage = mkdtempSync(join(tmpdir(), 'fxp-pinned-'));
+  const pinnedSettingsDir = join(pinnedStage, 'Library', 'Application Support', 'FX Premiere');
+  mkdirSync(pinnedSettingsDir, { recursive: true });
+  writeFileSync(
+    join(pinnedSettingsDir, 'settings.json'),
+    JSON.stringify({ favoriteSlots: 5, sizes: { search: { width: 534, height: 332 }, compass: { width: 900, height: 700 } } }),
+    'utf8',
+  );
+  const pinnedHost = createHost({ hostScript, documentsRoot: join(pinnedStage, 'Documents') });
+  const pinned = createCepWindow({ html: panelHtml, home: pinnedStage, evalScript: pinnedHost.evalInHost, storage: {} });
+  pinned.run(panelBundle);
+  await settle(80);
+  check(
+    'the palette widens to fit its five slots instead of reopening in the old box',
+    pinned.window.innerWidth > 534,
+    `${pinned.window.innerWidth}x${pinned.window.innerHeight}`,
+  );
+  check(
+    'and a sheet dragged to a size the window could really take is left alone',
+    JSON.parse(readFileSync(join(pinnedSettingsDir, 'settings.json'), 'utf8')).sizes?.compass?.width === 900,
+    JSON.stringify(JSON.parse(readFileSync(join(pinnedSettingsDir, 'settings.json'), 'utf8')).sizes),
+  );
+  pinned.close();
+  rmSync(pinnedStage, { recursive: true, force: true });
+
   // A settings file can be edited by hand, and an un-nest choice the host has no branch for would
   // otherwise travel straight to the timeline.
   console.log('\nA profile with un-nest settings that make no sense');

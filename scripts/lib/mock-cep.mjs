@@ -58,6 +58,9 @@ export const createCepWindow = ({ html, home, extensionRoot = home, evalScript, 
     window.dispatchEvent(new window.Event('resize'));
   };
 
+  /** The largest the host will go, as the manifest's maximum is to the real one. */
+  let ceiling = { width: Infinity, height: Infinity };
+
   // jsdom has no layout, so anything that measures itself reads zero. The panel plans its window
   // instead of measuring it; the one height still read is a row's, to keep the selection in view.
   Object.defineProperty(window.HTMLElement.prototype, 'offsetHeight', {
@@ -115,8 +118,11 @@ export const createCepWindow = ({ html, home, extensionRoot = home, evalScript, 
     },
     resizeContent(width, height) {
       calls.resizes.push([width, height]);
-      // Premiere really does resize the window, and the page hears about it like any other resize.
-      setSize(width, height);
+      // Premiere really does resize the window, and the page hears about it like any other resize —
+      // but only up to what the manifest allows. Past that it hands back the size already on screen,
+      // which is the refusal the panel spent a release reading as a window somebody had dragged.
+      const allowed = width <= ceiling.width && height <= ceiling.height;
+      setSize(allowed ? width : size.width, allowed ? height : size.height);
     },
   };
 
@@ -142,6 +148,10 @@ export const createCepWindow = ({ html, home, extensionRoot = home, evalScript, 
     dialog,
     /** Somebody dragging the window by its corner, which the panel must not mistake for its own. */
     dragWindow: (width, height) => setSize(width, height),
+    /** A host that will not grow past this, the way one reading a manifest with no maximum would. */
+    refuseAbove: (width, height) => {
+      ceiling = { width, height };
+    },
     run: (bundle) => window.eval(readFileSync(bundle, 'utf8')),
     emit: (type, data) =>
       window.__adobe_cep__.dispatchEvent({

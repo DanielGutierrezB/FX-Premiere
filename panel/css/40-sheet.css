@@ -51,6 +51,12 @@
   flex-shrink: 0;
 }
 
+/* Takes the room the label is not using, for a control holding something as long as a path. */
+.field__control--wide {
+  flex: 1;
+  min-width: 0;
+}
+
 .section-title {
   margin: 22px 0 6px;
   font-size: calc(10px * var(--font-scale));
@@ -59,17 +65,13 @@
   color: var(--text-faint);
 }
 
-/* Sheet fields only: the search line is bare on purpose and must not grow a box. */
+/*
+ * Sheet fields and buttons share a box. The field has it at rest as much as when it is focused: one
+ * drawn only once the caret is already inside is a field nobody could see to click in the first
+ * place. The search line is bare on purpose and must not grow one at all.
+ */
 input[type="text"]:not(.search__input),
 input[type="number"],
-input[type="number"] {
-  width: 74px;
-  font-family: var(--mono);
-  text-align: right;
-}
-
-input[type="text"]:not(.search__input):focus,
-input[type="number"]:focus,
 .button {
   border: 1px solid var(--border-strong);
   background: var(--bg-raised);
@@ -78,6 +80,33 @@ input[type="number"]:focus,
   padding: 6px 12px;
   font-size: calc(12px * var(--font-scale));
   cursor: default;
+}
+
+input[type="text"]:not(.search__input),
+input[type="number"] {
+  width: 74px;
+  font-family: var(--mono);
+  text-align: right;
+  user-select: text;
+  cursor: text;
+}
+
+input[type="text"]:not(.search__input):focus,
+input[type="number"]:focus {
+  border-color: var(--accent);
+  outline: 0;
+}
+
+/*
+ * A field holding a path, as against the numbers the width above was chosen for: it is read from its
+ * left end, and 74px of it is not a path anybody could check. The type is in the selector because
+ * the rule it is overriding has one too.
+ */
+input[type="text"].path-field {
+  flex: 1;
+  width: auto;
+  min-width: 0;
+  text-align: left;
 }
 
 .button:hover {

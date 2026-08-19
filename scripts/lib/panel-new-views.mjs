@@ -246,18 +246,50 @@ export const pasteAndCompassViews = async ({ window, world, cep, cepCalls, stage
   check('the media path previews as a real folder', /\/project\/EXPORT\/\d{8}\/$/.test(previews()[0]), previews()[0]);
   check('and so does the frame path', previews()[1].endsWith('/project/EXPORT/Frames/'), previews()[1]);
 
-  const wildcards = () => [...window.document.querySelectorAll('.chip--wildcard')];
-  check('every wildcard is offered as its own chip', wildcards().length === 10, String(wildcards().length));
+  // A path is written by typing, so the wildcards are offered there rather than as a legend to copy
+  // from: `#` asks what can go here, and the letters after it narrow the list down.
+  const options = () => [...window.document.querySelectorAll('.compass__suggest--open .compass__option')];
+  const optionText = () => options().map((node) => node.textContent ?? '');
   const media = inputs()[0];
-  media.focus();
-  media.value = 'EXPORT/';
-  media.dispatchEvent(new window.Event('input', { bubbles: true }));
-  media.selectionStart = 7;
-  media.selectionEnd = 7;
-  media.dispatchEvent(new window.KeyboardEvent('keyup', { bubbles: true }));
+  const typeInto = async (input, value) => {
+    input.focus();
+    input.value = value;
+    input.selectionStart = value.length;
+    input.selectionEnd = value.length;
+    input.dispatchEvent(new window.Event('input', { bubbles: true }));
+    await settle(4);
+  };
+  check('nothing is offered before a # is typed', options().length === 0, String(options().length));
+  await typeInto(media, 'EXPORT/');
+  check('a path with no wildcard in it offers none', options().length === 0, String(options().length));
+  await typeInto(media, 'EXPORT/#');
+  check('a bare # offers all ten', options().length === 10, String(options().length));
+  check('each one says what it stands for', optionText()[0].includes('#PROD') && optionText()[0].includes('Production'), optionText()[0]);
+  await typeInto(media, 'EXPORT/#S');
+  check('a letter narrows it to one', optionText().length === 1 && optionText()[0].includes('#SEQ'), optionText().join(' | '));
+  // On the way down, which is how the real one keeps the caret in the field it is typing into.
+  options()[0].dispatchEvent(new window.MouseEvent('mousedown', { bubbles: true, cancelable: true }));
   await settle(4);
-  await click(wildcards().find((chip) => chip.textContent === '#SEQ'));
-  check('clicking one inserts it at the caret', inputs()[0].value === 'EXPORT/#SEQ', inputs()[0].value);
+  check('clicking it replaces the # that was being typed', inputs()[0].value === 'EXPORT/#SEQ', inputs()[0].value);
+  check('and the list goes away', options().length === 0, String(options().length));
+
+  // The list is answered from the keyboard too, and while it is up it owns the keys the sheet uses:
+  // Enter means the wildcard being pointed at, not "apply the paths now".
+  await typeInto(media, 'EXPORT/#Y');
+  check('#Y offers both years', optionText().length === 2, optionText().join(' | '));
+  await press('ArrowDown');
+  const pointed = () => window.document.querySelector('.compass__option--active')?.textContent ?? '';
+  check('the arrow moves down the list', pointed().includes('#YY') && !pointed().includes('#YYYY'), pointed());
+  await press('Enter');
+  check('Enter takes the one it was pointing at', inputs()[0].value === 'EXPORT/#YY', inputs()[0].value);
+  check('and stays on the sheet rather than applying', Boolean(window.document.querySelector('.compass')));
+  await typeInto(media, 'EXPORT/#');
+  await press('Escape');
+  check('Escape puts the list away', options().length === 0, String(options().length));
+  check('without leaving the sheet, which is what Escape does otherwise', Boolean(window.document.querySelector('.compass')));
+  await typeInto(media, 'EXPORT/#SEQ');
+  media.dispatchEvent(new window.Event('change', { bubbles: true }));
+  await settle(6);
   check('and the preview shows what it turns into', previews()[0].endsWith('/project/EXPORT/Mock Sequence/'), previews()[0]);
   check('which is what gets saved', savedSettings().compass.media.template === 'EXPORT/#SEQ', savedSettings().compass.media.template);
 

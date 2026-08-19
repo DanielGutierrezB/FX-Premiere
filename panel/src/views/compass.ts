@@ -8,7 +8,7 @@ import {
   type ProjectContext,
   type Settings,
 } from '@shared/types';
-import { WILDCARDS, insertWildcard, type WildcardToken } from '@shared/wildcards';
+import { insertWildcard, wildcardsAt, type WildcardHint, type WildcardToken } from '@shared/wildcards';
 import { clear, el } from '../dom';
 import { buttonRow, switchNode } from '../widgets';
 
@@ -40,8 +40,8 @@ export class CompassSheet {
 
   private container: HTMLElement | null = null;
 
-  /** Where the caret was in the field last touched, so a clicked wildcard lands where it was left. */
-  private caret = { start: 0, end: 0 };
+  /** The wildcard being typed and where, or nothing when no field is offering any. */
+  private hint: (WildcardHint & { slot: Field; active: number }) | null = null;
 
   constructor(private readonly host: CompassHost) {}
 
@@ -97,7 +97,12 @@ export class CompassSheet {
       container.appendChild(this.pathRow(entry, paths[entry.key], plan[entry.key]));
     }
 
-    container.appendChild(this.wildcardRow());
+    container.appendChild(
+      el('div', { class: 'compass__tip' }, [
+        el('span', { class: 'compass__token', text: '#' }),
+        ' in a path names the production, the project, the sequence, its bin, and the date and time.',
+      ]),
+    );
 
     if (context.projectFile !== '') {
       container.appendChild(
@@ -121,7 +126,7 @@ export class CompassSheet {
         ]),
         el('div', { class: 'compass__entry' }, [
           el('input', {
-            class: 'compass__input',
+            class: 'path-field compass__input',
             type: 'text',
             value: compass.presetFile,
             placeholder: '/path/to/preset.epr',
@@ -158,6 +163,9 @@ export class CompassSheet {
         el('button', { class: 'button button--primary', text: 'Apply now', onclick: () => this.host.applyNow() }),
       ]),
     );
+
+    // The rows are new nodes, so anything the field was offering has to be put back on them.
+    this.paintHint();
   }
 
   private pathRow(
@@ -172,28 +180,31 @@ export class CompassSheet {
         el('span', { class: 'field__hint', text: entry.hint }),
       ]),
       el('div', { class: 'compass__entry' }, [
-        el('input', {
-          class: 'compass__input',
-          type: 'text',
-          'data-slot': entry.key,
-          value: path.template,
-          placeholder: path.relative ? 'EXPORT/#YYYY#MM#DD' : '/Users/me/EXPORT/#PRJ',
-          onfocus: () => {
-            this.field = entry.key;
-            this.rerender();
-          },
-          oninput: (event: Event) => {
-            const input = event.target as HTMLInputElement;
-            path.template = input.value;
-            this.caret = { start: input.selectionStart ?? 0, end: input.selectionEnd ?? 0 };
-            this.previewOnly(entry.key);
-          },
-          onkeyup: (event: Event) => {
-            const input = event.target as HTMLInputElement;
-            this.caret = { start: input.selectionStart ?? 0, end: input.selectionEnd ?? 0 };
-          },
-          onchange: () => this.host.save(),
-        }),
+        el('div', { class: 'compass__field' }, [
+          el('input', {
+            class: 'path-field compass__input',
+            type: 'text',
+            'data-slot': entry.key,
+            value: path.template,
+            placeholder: path.relative ? 'EXPORT/#YYYY#MM#DD' : '/Users/me/EXPORT/#PRJ',
+            onfocus: () => {
+              this.field = entry.key;
+              this.rerender();
+            },
+            oninput: (event: Event) => {
+              const input = event.target as HTMLInputElement;
+              path.template = input.value;
+              this.previewOnly(entry.key);
+              this.offer(entry.key, input);
+            },
+            // The caret moved without anything being typed, so whatever was being offered is about a
+            // `#` that is no longer under it.
+            onclick: () => this.stopOffering(),
+            onblur: () => this.stopOffering(),
+            onchange: () => this.host.save(),
+          }),
+          el('div', { class: 'compass__suggest', 'data-suggest': entry.key }),
+        ]),
         el('button', {
           class: `compass__relative${path.relative ? ' compass__relative--on' : ''}`,
           text: 'R',
@@ -235,33 +246,127 @@ export class CompassSheet {
     this.rerender();
   }
 
-  /** Clicking a wildcard puts it where the caret was, which is what makes them worth clicking. */
-  private wildcardRow(): HTMLElement {
-    return el(
-      'div',
-      { class: 'compass__wildcards' },
-      WILDCARDS.map((wildcard) =>
-        el('button', {
-          class: 'chip chip--wildcard',
-          text: wildcard.token,
-          title: wildcard.label,
-          onclick: () => this.insert(wildcard.token),
-        }),
-      ),
-    );
+  /**
+   * Offers the wildcards that fit what is being typed, under the field it is being typed in.
+   *
+   * Typing is how a path gets written, so this is where the wildcards belong: `#` brings up the list
+   * and every letter after it narrows the list down, which is the difference between reading a legend
+   * and being told the answer in the place the answer goes.
+   */
+  private offer(slot: Field, input: HTMLInputElement): void {
+    const found = wildcardsAt(input.value, input.selectionStart ?? input.value.length);
+    this.hint = found === null ? null : { ...found, slot, active: 0 };
+    this.paintHint();
   }
 
-  private insert(token: WildcardToken): void {
-    const path = this.paths()[this.field];
-    const next = insertWildcard(path.template, this.caret.start, this.caret.end, token);
+  private stopOffering(): void {
+    if (this.hint === null) {
+      return;
+    }
+    this.hint = null;
+    this.paintHint();
+  }
+
+  /** Only the list is redrawn: rebuilding the row would take the caret out of the field. */
+  private paintHint(): void {
+    for (const entry of FIELDS) {
+      const box = this.container?.querySelector<HTMLElement>(`[data-suggest="${entry.key}"]`);
+      if (!box) {
+        continue;
+      }
+      clear(box);
+      const hint = this.hint?.slot === entry.key ? this.hint : null;
+      box.className = `compass__suggest${hint ? ' compass__suggest--open' : ''}`;
+      if (!hint) {
+        continue;
+      }
+      hint.matches.forEach((wildcard, index) => {
+        box.appendChild(
+          el(
+            'button',
+            {
+              class: `compass__option${index === hint.active ? ' compass__option--active' : ''}`,
+              // Taken on the way down, before the field can lose the caret to the click.
+              onmousedown: (event: Event) => {
+                event.preventDefault();
+                this.take(wildcard.token);
+              },
+            },
+            [
+              el('span', { class: 'compass__token', text: wildcard.token }),
+              el('span', { class: 'compass__label', text: wildcard.label }),
+            ],
+          ),
+        );
+      });
+      if (this.roomBelow(entry.key) < box.offsetHeight) {
+        box.className += ' compass__suggest--above';
+      }
+    }
+  }
+
+  /**
+   * How much of the sheet is left under the field, which is what decides whether the list hangs below
+   * it or above it. The sheet scrolls, so a list that does not fit is clipped rather than shown.
+   */
+  private roomBelow(slot: Field): number {
+    const input = this.container?.querySelector<HTMLInputElement>(`input[data-slot="${slot}"]`);
+    if (!this.container || !input) {
+      return 0;
+    }
+    return this.container.getBoundingClientRect().bottom - input.getBoundingClientRect().bottom;
+  }
+
+  /** Puts the chosen wildcard over the `#…` that summoned the list, and types on from there. */
+  private take(token: WildcardToken): void {
+    const hint = this.hint;
+    if (hint === null) {
+      return;
+    }
+    const path = this.paths()[hint.slot];
+    const next = insertWildcard(path.template, hint.from, hint.to, token);
     path.template = next.value;
-    this.caret = { start: next.caret, end: next.caret };
+    this.hint = null;
     this.host.save();
-    this.rerender();
-    const input = this.container?.querySelector<HTMLInputElement>(`input[data-slot="${this.field}"]`);
+    const input = this.container?.querySelector<HTMLInputElement>(`input[data-slot="${hint.slot}"]`);
     if (input) {
+      input.value = next.value;
       input.focus();
       input.setSelectionRange(next.caret, next.caret);
+    }
+    this.previewOnly(hint.slot);
+    this.paintHint();
+  }
+
+  /**
+   * The keys the list owns while it is open, and whether it took the one it was given.
+   *
+   * Enter and Tab mean the wildcard here, not "apply now" and not the next field: a list on screen is
+   * something to answer before anything else, and Escape puts it away without leaving the sheet.
+   */
+  private hintKey(event: KeyboardEvent): boolean {
+    const hint = this.hint;
+    if (hint === null) {
+      return false;
+    }
+    switch (event.key) {
+      case 'ArrowDown':
+      case 'ArrowUp': {
+        const delta = event.key === 'ArrowDown' ? 1 : -1;
+        const count = hint.matches.length;
+        hint.active = (hint.active + delta + count) % count;
+        this.paintHint();
+        return true;
+      }
+      case 'Enter':
+      case 'Tab':
+        this.take(hint.matches[hint.active].token);
+        return true;
+      case 'Escape':
+        this.stopOffering();
+        return true;
+      default:
+        return false;
     }
   }
 
@@ -304,6 +409,10 @@ export class CompassSheet {
   }
 
   handleKey(event: KeyboardEvent): void {
+    if (this.hintKey(event)) {
+      event.preventDefault();
+      return;
+    }
     switch (event.key) {
       case 'Escape':
         event.preventDefault();

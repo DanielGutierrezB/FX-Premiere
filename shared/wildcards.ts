@@ -141,9 +141,43 @@ export const expandWildcards = (template: string, context: WildcardContext): Exp
   return { text, missing };
 };
 
+/** A wildcard being typed, and the ones it could still turn into. */
+export interface WildcardHint {
+  /** The `#…` under the caret, as a range in the value: what accepting one of these replaces. */
+  from: number;
+  to: number;
+  matches: Wildcard[];
+}
+
+/** A `#` and the letters after it, at the very end of what has been typed so far. */
+const TYPING = /#([A-Za-z]*)$/;
+
 /**
- * Puts a wildcard where the caret is, replacing whatever was selected, and says where the caret
- * belongs afterwards: just past what was inserted, so several can be clicked in a row.
+ * The wildcards a field can offer for what is being typed at `caret`, or nothing when the caret is
+ * not in the middle of one.
+ *
+ * This is what makes the wildcards typeable rather than only clickable: `#` on its own offers all of
+ * them, and every letter after it narrows the list. Matching ignores case so that `#m` still reaches
+ * both `#MM` and `#mm`, which differ only by it — and offering a wildcard already typed in full,
+ * spelled exactly as it is spelled here, is the one case with nothing left to say.
+ */
+export const wildcardsAt = (value: string, caret: number): WildcardHint | null => {
+  const at = Math.max(0, Math.min(value.length, caret));
+  const typed = TYPING.exec(value.slice(0, at));
+  if (typed === null) {
+    return null;
+  }
+  const prefix = typed[1].toLowerCase();
+  const matches = WILDCARDS.filter((wildcard) => wildcard.token.slice(1).toLowerCase().startsWith(prefix));
+  if (matches.length === 0 || (matches.length === 1 && matches[0].token === typed[0])) {
+    return null;
+  }
+  return { from: typed.index, to: at, matches };
+};
+
+/**
+ * Puts a wildcard over the range given, which is the selection or the `#…` that was being typed, and
+ * says where the caret belongs afterwards: just past what was inserted, so typing carries on.
  */
 export const insertWildcard = (
   value: string,

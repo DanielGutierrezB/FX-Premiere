@@ -1,11 +1,13 @@
 // FX Premiere hotkey listener (Windows), plus the one-shot mode that reads the clipboard.
 //
 // Premiere cannot bind a keyboard shortcut to a CEP panel, so this agent owns the shortcut.
-// The combo is only registered while Premiere is the foreground application, which keeps the
-// key available to every other program.
+// The combo is only registered while Premiere is the foreground application — or the palette it
+// opened is, which is the same thing wearing another name — and that keeps the key available to
+// every other program.
 //
 // Protocol: reads `HOTKEY <spec>`, `SETTINGS_HOTKEY <spec>` and `QUIT` on stdin,
-// writes `READY <spec>`, `TRIGGER`, `TRIGGER_SETTINGS` and `ERROR <message>` on stdout.
+// writes `READY <spec>`, `IDLE <reason>`, `TRIGGER`, `TRIGGER_SETTINGS` and `ERROR <message>`
+// on stdout.
 //
 // The one-shot `clipboard` mode runs instead of the listener, prints `FXP_NAME=value` lines and
 // exits. It is there because Premiere cannot read an image back off the clipboard: the helper reads
@@ -45,6 +47,19 @@ struct Binding {
 };
 
 std::string g_targetProcess = "adobe premiere pro.exe";
+
+/**
+ * Adobe's own browser, which every CEP window is drawn by.
+ *
+ * A panel window belongs to this rather than to Premiere, so focusing our own palette looks exactly
+ * like leaving Premiere for another program — and giving the shortcut up then is giving it up at
+ * the one moment it is meant to close the palette again. Which host the engine is drawing for is not
+ * in its name, since every Adobe application shares it, so the program that had the foreground
+ * before it is what says.
+ */
+const std::string kCepEngine = "cephtmlengine.exe";
+std::string g_lastForeground;
+
 Binding g_palette;
 Binding g_settings;
 bool g_targetActive = false;
@@ -201,6 +216,10 @@ void registerBinding(const Binding& binding, int id, const char* label, bool* fl
 void refreshRegistration() {
   unregisterAll();
   if (!g_targetActive) {
+    // Said out loud because a released shortcut is otherwise indistinguishable from one that is
+    // held and never pressed: the log is the only place it can be seen at all.
+    emit("IDLE the shortcut is released while " +
+         (g_lastForeground.empty() ? std::string("another program") : g_lastForeground) + " is in front");
     return;
   }
   registerBinding(g_palette, kPaletteId, "palette", &g_paletteRegistered);
@@ -209,7 +228,12 @@ void refreshRegistration() {
 
 void checkForeground() {
   const std::string process = foregroundProcessName();
-  const bool active = !process.empty() && process.find(g_targetProcess) != std::string::npos;
+  const bool isEngine = !process.empty() && process.find(kCepEngine) != std::string::npos;
+  if (!isEngine && !process.empty()) {
+    g_lastForeground = process;
+  }
+  const std::string owner = isEngine ? g_lastForeground : process;
+  const bool active = !owner.empty() && owner.find(g_targetProcess) != std::string::npos;
   if (active != g_targetActive) {
     g_targetActive = active;
     refreshRegistration();

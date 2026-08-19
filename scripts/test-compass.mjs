@@ -26,6 +26,7 @@ const wild = await loadShared('shared/wildcards.ts', [
   'WILDCARDS',
   'expandWildcards',
   'insertWildcard',
+  'wildcardsAt',
   'isAbsolutePath',
   'parentFolder',
   'resolveExportPath',
@@ -248,6 +249,31 @@ console.log('\nInserting a wildcard where the caret is');
   check('a selection is replaced rather than pushed aside', replaced.value === 'EXPORT/#SEQ', replaced.value);
   const clamped = wild.insertWildcard('AB', 99, 99, '#DD');
   check('a caret past the end is pulled back into range', clamped.value === 'AB#DD', clamped.value);
+}
+
+// Typing is how a path gets written, so the wildcards have to be reachable from the keyboard: a `#`
+// asks what can go there, and the letters after it are the answer being narrowed down.
+console.log('\nOffering wildcards for what is being typed');
+{
+  const tokens = (hint) => (hint === null ? 'nothing' : hint.matches.map((entry) => entry.token).join(' '));
+  const all = wild.wildcardsAt('EXPORT/#', 8);
+  check('a bare # offers every wildcard', tokens(all) === wild.WILDCARDS.map((entry) => entry.token).join(' '), tokens(all));
+  check('and points at the # itself, so accepting one replaces it', all.from === 7 && all.to === 8, `${all.from}-${all.to}`);
+
+  check('a letter narrows the list', tokens(wild.wildcardsAt('#PR', 3)) === '#PROD #PRJ', tokens(wild.wildcardsAt('#PR', 3)));
+  check('case is ignored, so #m reaches the month and the minute', tokens(wild.wildcardsAt('#m', 2)) === '#MM #mm', tokens(wild.wildcardsAt('#m', 2)));
+  check('a token typed in full has nothing left to offer', wild.wildcardsAt('EXPORT/#PROD', 12) === null);
+  check('but #YY still offers #YYYY, which it is the start of', tokens(wild.wildcardsAt('#YY', 3)) === '#YYYY #YY', tokens(wild.wildcardsAt('#YY', 3)));
+  check('one typed in the wrong case is offered, so it can be corrected', tokens(wild.wildcardsAt('#prod', 5)) === '#PROD', tokens(wild.wildcardsAt('#prod', 5)));
+  check('letters that match nothing offer nothing', wild.wildcardsAt('#ZZ', 3) === null);
+  check('a path with no # at all offers nothing', wild.wildcardsAt('EXPORT/2026', 11) === null);
+  check('a # behind the caret is not the one being typed', wild.wildcardsAt('#PRJ/EXPORT', 11) === null);
+
+  // The caret in the middle of a path is still typing a wildcard, and what follows is not part of it.
+  const midway = wild.wildcardsAt('EXPORT/#S/RENDER', 9);
+  check('a # under the caret mid-path is offered', tokens(midway) === '#SEQ', tokens(midway));
+  const taken = wild.insertWildcard('EXPORT/#S/RENDER', midway.from, midway.to, '#SEQ');
+  check('and accepting it leaves the rest of the path alone', taken.value === 'EXPORT/#SEQ/RENDER', taken.value);
 }
 
 console.log('\nNames that have to survive a file system');

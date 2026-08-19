@@ -32,12 +32,9 @@
   margin: 6px 0 4px;
 }
 
-/* Overrides the sheet's own narrow, right-aligned text field: a path is read from its left end. */
-.compass__input {
-  flex: 1;
-  font-family: var(--mono);
+/* The shape of a path field is `path-field`; here it is only a little smaller, since paths are long. */
+input[type="text"].compass__input {
   font-size: calc(11.5px * var(--font-scale));
-  text-align: left;
 }
 
 .compass__relative,
@@ -66,15 +63,73 @@
   overflow-wrap: anywhere;
 }
 
-.compass__wildcards {
+/* Holds the list of wildcards under the field it belongs to, which is what it is positioned against. */
+.compass__field {
+  position: relative;
+  flex: 1;
   display: flex;
-  gap: 5px;
-  flex-wrap: wrap;
-  margin: 8px 0 14px;
+  min-width: 0;
 }
 
-.chip--wildcard {
+.compass__suggest {
+  display: none;
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 3px);
+  left: 0;
+  min-width: 240px;
+  max-height: 190px;
+  overflow-y: auto;
+  padding: 4px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.5);
+}
+
+.compass__suggest--open {
+  display: block;
+}
+
+/* For the field low enough in a short window that the list would be clipped under it. */
+.compass__suggest--above {
+  top: auto;
+  bottom: calc(100% + 3px);
+}
+
+.compass__option {
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+  width: 100%;
+  appearance: none;
+  border: 0;
+  background: none;
+  padding: 5px 8px;
+  border-radius: 5px;
+  color: var(--text);
+  font: inherit;
+  font-size: calc(11.5px * var(--font-scale));
+  text-align: left;
+  cursor: pointer;
+}
+
+.compass__option--active,
+.compass__option:hover {
+  background: var(--accent-dim);
+}
+
+.compass__token {
   font-family: var(--mono);
+  color: var(--accent);
+}
+
+.compass__label {
+  color: var(--text-dim);
+}
+
+.compass__tip {
+  margin: 8px 0 14px;
+  color: var(--text-faint);
   font-size: calc(10.5px * var(--font-scale));
-  padding: 3px 7px;
 }

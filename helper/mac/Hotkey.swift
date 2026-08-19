@@ -6,11 +6,13 @@ import Darwin
 // FX Premiere hotkey listener (macOS), plus the one-shot modes un-nesting needs.
 //
 // Premiere cannot bind a keyboard shortcut to a CEP panel, so this tiny agent owns the
-// shortcut instead. It registers the combo only while Premiere is the front application,
-// which keeps the key usable in every other app.
+// shortcut instead. It registers the combo only while Premiere is the front application —
+// or the palette it opened is, which is the same thing wearing another name — and that is
+// what keeps the key usable in every other app.
 //
 // Protocol: reads `HOTKEY <spec>`, `SETTINGS_HOTKEY <spec>` and `QUIT` on stdin,
-// writes `READY <spec>`, `TRIGGER`, `TRIGGER_SETTINGS` and `ERROR <message>` on stdout.
+// writes `READY <spec>`, `IDLE <reason>`, `TRIGGER`, `TRIGGER_SETTINGS` and `ERROR <message>`
+// on stdout.
 //
 // The one-shot `clipboard` mode runs instead of the listener, prints `FXP_NAME=value` lines and
 // exits. It asks macOS for no permission at all: it reads the pasteboard rather than driving it,
@@ -240,6 +242,15 @@ func parseBinding(_ spec: String) -> Binding? {
     return Binding(spec: spec, keyCode: code, modifiers: modifiers)
 }
 
+/**
+ * Adobe's own browser, which every CEP window on this machine is drawn by.
+ *
+ * A panel window belongs to this rather than to Premiere, so focusing our own palette looks from
+ * the outside exactly like leaving Premiere for another application — and taking the shortcut away
+ * at that moment is taking it away at the one moment it is meant to close the palette again.
+ */
+let cepEnginePrefix = "com.adobe.cep."
+
 final class Listener {
     static let shared = Listener()
 
@@ -248,6 +259,9 @@ final class Listener {
     private var registered: [UInt32: EventHotKeyRef] = [:]
     private var bundlePrefix = "com.adobe.PremierePro"
     private var isTargetActive = false
+
+    /** The last application in front that was not the engine: which host it is drawing for. */
+    private var lastFront = ""
 
     private let paletteID: UInt32 = 1
     private let settingsID: UInt32 = 2
@@ -270,7 +284,14 @@ final class Listener {
     }
 
     func frontmostChanged(bundleID: String?) {
-        let active = bundleID?.hasPrefix(bundlePrefix) ?? false
+        let front = bundleID ?? ""
+        // The engine is shared by every Adobe application and its bundle id says nothing about which
+        // one it is drawing for, so the application that had the front before it is what tells us.
+        let isEngine = front.hasPrefix(cepEnginePrefix)
+        if !isEngine {
+            lastFront = front
+        }
+        let active = (isEngine ? lastFront : front).hasPrefix(bundlePrefix)
         if active == isTargetActive {
             return
         }
@@ -289,6 +310,9 @@ final class Listener {
     private func refresh() {
         unregisterAll()
         guard isTargetActive else {
+            // Said out loud because the silence is indistinguishable from a shortcut that is held
+            // and never pressed: the log is the only place a released one can be seen at all.
+            emit("IDLE the shortcut is released while \(lastFront.isEmpty ? "another application" : lastFront) is in front")
             return
         }
         if let palette = paletteBinding {

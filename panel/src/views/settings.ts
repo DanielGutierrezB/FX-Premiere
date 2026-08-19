@@ -308,6 +308,7 @@ export class SettingsSheet {
 
   private presetRows(settings: Settings): (HTMLElement | null)[] {
     const folderInput = el('input', {
+      class: 'path-field',
       type: 'text',
       placeholder: navigator.platform.startsWith('Win') ? 'C:\\Users\\you\\Presets' : '/path/to/my/presets',
     });
@@ -325,7 +326,7 @@ export class SettingsSheet {
       fieldRow(
         'Extra preset folders',
         'Premiere profile presets are found automatically. Add folders that hold exported .prfpset files.',
-        el('div', { class: 'field__control' }, [
+        el('div', { class: 'field__control field__control--wide' }, [
           folderInput,
           el('button', {
             class: 'button',
