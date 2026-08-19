@@ -53,10 +53,26 @@ export const makeProjectItem = ({
   height = 0,
   /** Whatever the editor typed into a project panel column, which is in the same XMP as the size. */
   note = '',
+  /**
+   * Where this file's own clock starts. Camera files carry a start timecode — an hour is the usual
+   * one — and then the item counts its in and out from there rather than from zero, and refuses to
+   * point below it. A script that asks for five seconds in gets the start of the media instead.
+   */
+  mediaStart = 0,
+  /**
+   * Whether this Premiere's `setInPoint` insists on being told the media type. The build in Premiere
+   * 26 answers the one-argument form with "Not Enough Parameters".
+   */
+  needsMediaType = false,
 }) => {
-  const asTime = (value) => time(Number(value?.seconds ?? value));
-  let inPoint = time(0);
-  let outPoint = time(duration);
+  const asTime = (value) => time(Math.max(mediaStart, Number(value?.seconds ?? value)));
+  const timecode = (seconds) => {
+    const whole = Math.floor(seconds);
+    const pad = (part) => String(part).padStart(2, '0');
+    return `${pad(Math.floor(whole / 3600))}:${pad(Math.floor(whole / 60) % 60)}:${pad(whole % 60)}:00`;
+  };
+  let inPoint = time(mediaStart);
+  let outPoint = time(mediaStart + duration);
   return {
     name,
     nodeId: nodeId || `node:${name}`,
@@ -73,13 +89,19 @@ export const makeProjectItem = ({
       (withAudio ? ` premierePrivateProjectMetaData:Column.Intrinsic.AudioInfo="48000 Hz - Stereo"` : '') +
       (width > 0 ? ` premierePrivateProjectMetaData:Column.Intrinsic.VideoInfo="${width} x ${height} (1.0)"` : '') +
       (note === '' ? '' : ` premierePrivateProjectMetaData:Column.PropertyText.Comment="${note}"`) +
-      ` premierePrivateProjectMetaData:Column.Intrinsic.MediaStart="00:00:00:00"/></rdf:RDF></x:xmpmeta>`,
+      ` premierePrivateProjectMetaData:Column.Intrinsic.MediaStart="${timecode(mediaStart)}"/></rdf:RDF></x:xmpmeta>`,
     getInPoint: () => inPoint,
     getOutPoint: () => outPoint,
-    setInPoint(value) {
+    setInPoint(value, ...rest) {
+      if (needsMediaType && rest.length === 0) {
+        throw new Error('Not Enough Parameters');
+      }
       inPoint = asTime(value);
     },
-    setOutPoint(value) {
+    setOutPoint(value, ...rest) {
+      if (needsMediaType && rest.length === 0) {
+        throw new Error('Not Enough Parameters');
+      }
       outPoint = asTime(value);
     },
   };

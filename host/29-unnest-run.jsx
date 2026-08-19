@@ -18,19 +18,69 @@ FXP.unnestPlacedLength = function (piece) {
     return piece.srcOut - piece.srcIn;
 };
 
+/** What a project item is pointing at now, or null when this Premiere will not say. */
+FXP.itemRange = function (item) {
+    try {
+        return { from: FXP.clipSeconds(item.getInPoint()), to: FXP.clipSeconds(item.getOutPoint()) };
+    } catch (error) {
+        return null;
+    }
+};
+
 /**
  * Points a project item at the piece of source a placement needs, and hands back what it was pointing
  * at. Premiere places whatever is between an item's in and out points, so this is the only way to
  * place a trimmed clip in one call: nothing lands at full length and gets cut down afterwards.
+ *
+ * A camera file with a start timecode counts its own in and out from that timecode rather than from
+ * zero, while the clip inside the nest counts its trim from zero, and Premiere will not point an item
+ * below where it counts from: a file starting at 01:00:00:00 answers a request for two seconds from
+ * five seconds in with an hour and no length at all. So a range that comes back the wrong length is
+ * asked for again from wherever the item ended up, which is where it counts from — no metadata to
+ * parse and no Premiere version to guess at.
+ *
+ * The length is what decides, both because it is the one thing that means the same whatever an item
+ * counts from, and because a build that reports its in point on one base and takes writes on another
+ * would have every correct placement refused by a check on the in point.
  */
 FXP.setItemRange = function (item, from, to) {
-    var had = null;
-    try {
-        had = { from: FXP.clipSeconds(item.getInPoint()), to: FXP.clipSeconds(item.getOutPoint()) };
-    } catch (error) {
-        had = null;
+    var had = FXP.itemRange(item);
+    var wanted = to - from;
+    var bases = [0];
+    var tried = [];
+    for (var b = 0; b < bases.length; b++) {
+        var base = bases[b];
+        var forms = FXP.itemRangeForms(item, base + from, base + to);
+        for (var i = 0; i < forms.length; i++) {
+            try {
+                forms[i]();
+            } catch (error) {
+                tried[tried.length] = 'form ' + i + ' at ' + base + ': ' + FXP.errorText(error);
+                continue;
+            }
+            var now = FXP.itemRange(item);
+            if (now && Math.abs((now.to - now.from) - wanted) <= FXP.TIME_SLACK) {
+                return { ok: true, had: had };
+            }
+            tried[tried.length] = 'form ' + i + ' at ' + base + ' gave ' +
+                (now ? now.from + '-' + now.to : 'nothing');
+            // Two bases learnt is plenty, and a build that answers with a new number every time is
+            // one to stop asking rather than to keep following.
+            if (bases.length < 3 && now && now.from > FXP.TIME_SLACK && !FXP.nearAny(bases, now.from)) {
+                bases[bases.length] = now.from;
+            }
+        }
     }
-    var attempts = [
+    // The numbers, because the message this turns into can only say that it did not work: what an
+    // item answered when it was asked for a range is the whole of the evidence.
+    FXP.trace('setItemRange wanted ' + from + '-' + to + ' of an item at ' +
+        (had ? had.from + '-' + had.to : 'an unknown range') + '; ' + tried.join('; '));
+    return { ok: false, had: had };
+};
+
+/** The shapes of the in and out setters, longest first: the media type argument came later. */
+FXP.itemRangeForms = function (item, from, to) {
+    return [
         function () {
             item.setInPoint(from, FXP.ALL_MEDIA_TYPES);
             item.setOutPoint(to, FXP.ALL_MEDIA_TYPES);
@@ -40,24 +90,15 @@ FXP.setItemRange = function (item, from, to) {
             item.setOutPoint(to);
         }
     ];
-    for (var i = 0; i < attempts.length; i++) {
-        try {
-            attempts[i]();
-        } catch (error) {
-            FXP.trace('setItemRange attempt ' + i + ' failed: ' + FXP.errorText(error));
-            continue;
-        }
-        var now = 0;
-        try {
-            now = FXP.clipSeconds(item.getOutPoint()) - FXP.clipSeconds(item.getInPoint());
-        } catch (inner) {
-            now = 0;
-        }
-        if (Math.abs(now - (to - from)) <= FXP.TIME_SLACK) {
-            return { ok: true, had: had };
+};
+
+FXP.nearAny = function (numbers, value) {
+    for (var i = 0; i < numbers.length; i++) {
+        if (Math.abs(numbers[i] - value) <= FXP.TIME_SLACK) {
+            return true;
         }
     }
-    return { ok: false, had: had };
+    return false;
 };
 
 FXP.restoreItemRange = function (item, had) {

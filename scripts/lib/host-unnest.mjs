@@ -271,6 +271,44 @@ export const hostUnnestTests = (fresh) => {
     check('and the run names it instead of leaving it to be found', /empty audio track/.test(messages(result)), messages(result));
   }
 
+  console.log('\nFootage that counts its own time from a start timecode');
+  {
+    const { world, call } = fresh();
+    // A camera file at 01:00:00:00, which is what came back from a real timeline as "this Premiere
+    // would not point C5749.MP4 at the part of it the nest shows". The clip inside the nest counts
+    // its trim from zero, the bin item counts from the timecode and will not point below it, and the
+    // item insists on being told the media type — all three at once, as they arrive in practice.
+    const camera = makeProjectItem({
+      name: 'C5749.MP4',
+      mediaPath: '/media/C5749.MP4',
+      duration: 60,
+      mediaStart: 3600,
+      needsMediaType: true,
+    });
+    const cam = world.addSequence('CAM', [
+      { name: 'C5749.MP4', start: 0, end: 4, track: 0, audio: false, item: camera, sourceIn: 1 },
+    ]);
+    world.addClip({ name: 'CAM', start: 20, end: 24, projectItem: cam.projectItem });
+    world.select('CAM');
+    const result = run(call, { media: 'video' });
+    check('the nest comes out rather than being refused', result.ok && result.outcome.applied === 1, messages(result));
+    check(
+      'and the clip lands where it was, at the length it was',
+      spans(world, 'video', 1).join(',') === 'C5749.MP4@20-24',
+      JSON.stringify(spans(world, 'video', 1)),
+    );
+    check(
+      'showing the piece of its source it was showing, counted from the timecode the file counts from',
+      sources(world, 'video', 1).join(',') === 'C5749.MP4:3601-3605',
+      JSON.stringify(sources(world, 'video', 1)),
+    );
+    check(
+      'and the item is left pointing at the whole of itself again',
+      camera.getInPoint().seconds === 3600 && camera.getOutPoint().seconds === 3660,
+      `${camera.getInPoint().seconds}-${camera.getOutPoint().seconds}`,
+    );
+  }
+
   console.log('\nWhat was on the clips comes with them');
   {
     const { world, call } = fresh();
