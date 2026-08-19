@@ -276,6 +276,20 @@ FXP.placeStill = function (sequence, item, seconds) {
     } catch (error) {
         playhead = 0;
     }
+    // Everything from here on can refuse, and a refusal that leaves a new empty track behind has
+    // charged the editor for a paste that never happened.
+    var had = { video: FXP.trackCount('video'), audio: FXP.trackCount('audio') };
+    try {
+        return FXP.placeStillOn(sequence, item, placed, playhead);
+    } catch (error) {
+        FXP.shrinkTracksTo('video', had.video);
+        FXP.shrinkTracksTo('audio', had.audio);
+        throw error;
+    }
+};
+
+/** The placement itself, once the length and the playhead are known. */
+FXP.placeStillOn = function (sequence, item, placed, playhead) {
     var slot = FXP.reserveTracks('video', 1, playhead, playhead + placed);
     var audio = FXP.pasteReserveAudio(item, playhead, playhead + placed);
     var track = FXP.tracksOf('video')[slot.base];

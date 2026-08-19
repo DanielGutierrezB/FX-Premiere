@@ -162,6 +162,55 @@ FXP.addTracks = function (mediaType, count) {
     return 0;
 };
 
+/**
+ * Removes one empty track through QE, which is the only DOM that offers it. Best effort by design:
+ * a leftover empty track at the top of the stack is untidy, and nothing worth failing a run over.
+ */
+FXP.removeTrackAt = function (mediaType, index) {
+    var qeSeq = FXP.qeSequence();
+    if (!qeSeq) {
+        return false;
+    }
+    var before = FXP.trackCount(mediaType);
+    var attempts = [
+        function () {
+            return mediaType === 'audio' ? qeSeq.removeAudioTrack(index) : qeSeq.removeVideoTrack(index);
+        },
+        function () {
+            return mediaType === 'audio' ? qeSeq.deleteAudioTrack(index) : qeSeq.deleteVideoTrack(index);
+        }
+    ];
+    for (var i = 0; i < attempts.length; i++) {
+        try {
+            attempts[i]();
+        } catch (error) {
+            FXP.trace('removeTrack attempt ' + i + ' failed: ' + FXP.errorText(error));
+            continue;
+        }
+        if (FXP.trackCount(mediaType) < before) {
+            return true;
+        }
+    }
+    return false;
+};
+
+/**
+ * Gives back the tracks a run grew the sequence by, once it turns out it has nothing to put on them.
+ *
+ * Only from the top down, and only while the track is empty, so a track somebody put something on is
+ * never at stake — including one the reservation found rather than added. A build that adds its new
+ * tracks *underneath* keeps them: down there nothing tells a track this added apart from a track the
+ * editor had, and renumbering somebody's tracks on a guess is worse than an empty track at the top.
+ */
+FXP.shrinkTracksTo = function (mediaType, floor) {
+    while (FXP.trackCount(mediaType) > floor) {
+        var top = FXP.trackCount(mediaType) - 1;
+        if (FXP.trackClipCount(mediaType, top) > 0 || !FXP.removeTrackAt(mediaType, top)) {
+            return;
+        }
+    }
+};
+
 /** Whether `count` adjacent tracks from `base` upwards are all free across the span. */
 FXP.runIsFree = function (mediaType, base, count, startSeconds, endSeconds) {
     if (base < 0 || base + count > FXP.trackCount(mediaType)) {

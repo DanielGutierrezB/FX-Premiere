@@ -134,6 +134,11 @@ export const hostUnnestGuardTests = (fresh) => {
       world.tracks.video.every((track) => track.clipList.every((clip) => !clip.name.startsWith('nested-'))),
       JSON.stringify(everything(world)),
     );
+    check(
+      'the tracks it grew by are left rather than guessed at, since on this build they are not the top ones',
+      world.tracks.video.every((track) => track.clipList.every((clip) => !clip.name.startsWith('nested-'))),
+      JSON.stringify(everything(world)),
+    );
   }
 
   console.log('\nWhen the placement does not go where it was sent');
@@ -159,6 +164,29 @@ export const hostUnnestGuardTests = (fresh) => {
       JSON.stringify(everything(world)),
     );
     check('the nest is still a nest', world.clips.nestClip.disabled === false);
+  }
+
+  console.log('\nA refusal after the room was made');
+  {
+    const { world, call } = fresh();
+    world.qeSetSpeedSupported = false;
+    world.addClip({ name: 'Risky Nest', start: 20, end: 23, projectItem: world.riskyItem });
+    world.addClip({ name: 'Busy.mp4', start: 20, end: 23, track: 1 });
+    world.select('Risky Nest');
+    const videoBefore = world.tracks.video.length;
+    const result = run(call, { media: 'video' });
+    check('the nest is left as it was', result.outcome.applied === 0 && result.outcome.failed === 1, JSON.stringify(result.outcome));
+    check('and the reason is the speed it could not put back', /speed/.test(messages(result)), messages(result));
+    check(
+      'nothing it had placed is left behind',
+      world.tracks.video.every((track) => track.clipList.every((clip) => clip.name !== 'fast.mp4' && clip.name !== 'Legal Title')),
+      JSON.stringify(everything(world)),
+    );
+    check(
+      'and the tracks it grew the sequence by are given back',
+      world.tracks.video.length === videoBefore,
+      `${videoBefore} then ${world.tracks.video.length}`,
+    );
   }
 
   console.log('\nWhen a placement overwrites something');

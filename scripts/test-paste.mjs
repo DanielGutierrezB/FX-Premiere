@@ -232,6 +232,28 @@ writeFileSync(movie, 'a path Premiere can be handed, with sound behind it', 'utf
   check('and the import is taken back out of the project', world.deletedItems.includes('take.mov'), world.deletedItems.join(','));
 }
 
+// A paste that is refused after the room was made must not leave the room behind: an editor who got
+// an error and a new empty track was charged for a paste that never happened.
+{
+  const { world, call } = fresh();
+  world.importedHasAudio = true;
+  world.importedDuration = 9;
+  world.trackTargetingUnsupported = true;
+  const playhead = world.current.getPlayerPosition().seconds;
+  for (let index = 0; index < world.tracks.video.length; index += 1) {
+    world.addClip({ name: `blocker${index}`, start: playhead - 1, end: playhead + 10, track: index });
+  }
+  const before = { video: world.tracks.video.length, audio: world.tracks.audio.length };
+  const refused = call({ op: 'pasteStill', path: movie, bin: 'Pasted', seconds: 0 });
+  check('the paste is refused', !refused.ok, JSON.stringify(refused));
+  check(
+    'and the tracks it had added for it are given back',
+    world.tracks.video.length === before.video && world.tracks.audio.length === before.audio,
+    `${before.video}/${before.audio} then ${world.tracks.video.length}/${world.tracks.audio.length}`,
+  );
+  check('every blocker is still where it was', world.tracks.video.every((track) => track.clipList.some((clip) => clip.name.startsWith('blocker'))));
+}
+
 // A silent still must not cost an audio track: this is what the un-nest used to get wrong.
 {
   const { world, call } = fresh();

@@ -273,38 +273,6 @@ FXP.unnestCleanSpills = function (state) {
 };
 
 /**
- * Removes one empty track through QE, which is the only DOM that offers it. Best effort by design:
- * a leftover empty track at the top of the stack is untidy, and nothing worth failing a run over.
- */
-FXP.removeTrackAt = function (mediaType, index) {
-    var qeSeq = FXP.qeSequence();
-    if (!qeSeq) {
-        return false;
-    }
-    var before = FXP.trackCount(mediaType);
-    var attempts = [
-        function () {
-            return mediaType === 'audio' ? qeSeq.removeAudioTrack(index) : qeSeq.removeVideoTrack(index);
-        },
-        function () {
-            return mediaType === 'audio' ? qeSeq.deleteAudioTrack(index) : qeSeq.deleteVideoTrack(index);
-        }
-    ];
-    for (var i = 0; i < attempts.length; i++) {
-        try {
-            attempts[i]();
-        } catch (error) {
-            FXP.trace('removeTrack attempt ' + i + ' failed: ' + FXP.errorText(error));
-            continue;
-        }
-        if (FXP.trackCount(mediaType) < before) {
-            return true;
-        }
-    }
-    return false;
-};
-
-/**
  * Places one clip of the plan, deals with whatever else arrived with it, and finishes it: the speed it
  * ran at, whether it was switched off, and the effects that were on it. An error here is the nest's
  * error, and the caller takes everything this nest placed back off.
@@ -427,6 +395,19 @@ FXP.unnestFinishPiece = function (state, piece, entry) {
     FXP.replayEffects(entry, piece.effects, piece.mediaType, FXP.clipSeconds(entry.clip.inPoint), state.notes);
 };
 
+/**
+ * Takes back off the tracks this nest grew the sequence by. Reserving a run of tracks adds however
+ * many the nest needed, and a nest that is then left as it was has no use for them: an editor who
+ * refused nothing and pressed nothing would still be looking at two new empty tracks.
+ *
+ * Only from the top down, and only while the track is empty, so nothing that anybody put anything on
+ * is at stake — including a track the reservation found rather than added.
+ */
+FXP.unnestShrinkBack = function (state) {
+    FXP.shrinkTracksTo('video', state.grew.video);
+    FXP.shrinkTracksTo('audio', state.grew.audio);
+};
+
 /** Everything this nest put on the timeline, taken back off, leaving the nest the nest it was. */
 FXP.unnestUndo = function (state, reason) {
     if (state.placed.length > 0) {
@@ -439,6 +420,7 @@ FXP.unnestUndo = function (state, reason) {
         FXP.deselectAll(state.parent);
     }
     FXP.unnestCleanSpills(state);
+    FXP.unnestShrinkBack(state);
     FXP.trace('undo: ' + reason);
 };
 
@@ -452,6 +434,8 @@ FXP.unnestOne = function (state, job) {
     state.placed = [];
     state.spills = { video: null, audio: null };
     state.rooms = { video: null, audio: null };
+    // The sequence as it was before this nest asked for room, which is what a rollback goes back to.
+    state.grew = { video: FXP.trackCount('video'), audio: FXP.trackCount('audio') };
     var nested = FXP.sequenceForItem(FXP.projectItemOf(entry.clip));
     if (!nested) {
         return FXP.unnestSkipped(state, entry, 'its sequence is not in this project');
@@ -464,6 +448,10 @@ FXP.unnestOne = function (state, job) {
     try {
         state.rooms = FXP.unnestReserveRooms(plan, entry);
     } catch (error) {
+        // A reservation can add tracks and still not find the run it needed — a build that puts new
+        // tracks underneath leaves the top of the stack as busy as it was — so this path gives back
+        // whatever it grew by too.
+        FXP.unnestShrinkBack(state);
         return FXP.unnestSkipped(state, entry, FXP.errorText(error));
     }
     for (var i = 0; i < plan.pieces.length; i++) {
@@ -567,6 +555,7 @@ FXP.unnestRun = function (request) {
         placed: [],
         spills: { video: null, audio: null },
         rooms: { video: null, audio: null },
+        grew: { video: FXP.trackCount('video'), audio: FXP.trackCount('audio') },
         stop: ''
     };
     for (var n = 0; n < nests.length; n++) {
