@@ -31,7 +31,10 @@ FXP.TRANSFORM_PARAM_INDEX = {
 };
 
 FXP.OPACITY_PARAM_INDEX = {
-    opacity: 0
+    opacity: 0,
+    // Not a measurement: it holds which compositing mode, as a number. Named here so the ease can
+    // refuse it on a build that names no parameters, where nothing about the value gives it away.
+    blendMode: 1
 };
 
 /**

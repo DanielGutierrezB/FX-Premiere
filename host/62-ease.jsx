@@ -49,14 +49,21 @@ FXP.EASE_MAX_FRAMES = 300;
 FXP.EASE_FIT_SLACK = 1e-4;
 
 /**
- * The continuous properties of the three components this host knows the shape of. Inside those, the
- * parameters that are not on this list are known to be a checkbox or a dropdown, so they are refused
- * by name; on every other effect the values themselves are what decides. See FXP.easeCollectFrom.
+ * The parameters no reading of a value would tell from a measurement.
+ *
+ * Almost everything that is not a measurement gives itself away: a checkbox comes back as a truth and
+ * a parameter that only holds whole steps is caught by writing one keyframe and reading it back. A
+ * compositing mode does neither. It is a number, it accepts 3.4 and means it, and the clip then
+ * flickers through five modes on its way across, so it has to be refused before anything is written.
  */
-FXP.EASE_ROLES = ['position', 'scale', 'scaleWidth', 'rotation', 'opacity', 'anchor'];
-
-/** Which of them hold a point rather than a number, so a value of the wrong shape is caught. */
-FXP.EASE_PAIR_ROLES = ['position', 'anchor'];
+FXP.EASE_SWITCH_NAMES = [
+    'Blend Mode',
+    'Modo de fusi\u00f3n',
+    'Modo de mesclagem',
+    'Metodo di fusione',
+    'Mode de fusion',
+    'F\u00fcllmethode'
+].concat(FXP.PARAM_NAMES.uniformScale);
 
 /**
  * How far a value written to a keyframe may read back changed and still count as taken, as a
@@ -155,26 +162,6 @@ FXP.easeableValue = function (value) {
 };
 
 /**
- * Whether every keyframe holds the shape the property is supposed to hold. Reading a kind off a
- * value cannot tell a number that means a distance from a number that means the fourth entry of a
- * dropdown, so the allow-list decides what may be eased and this only catches a parameter that
- * turned out not to be the one the index table promised.
- */
-FXP.easeableKeys = function (keys, role) {
-    var pair = FXP.contains(FXP.EASE_PAIR_ROLES, role);
-    for (var i = 0; i < keys.length; i++) {
-        var value = keys[i].value;
-        if (!FXP.easeableValue(value)) {
-            return false;
-        }
-        if (pair !== (FXP.isList(value) && value.length >= 2)) {
-            return false;
-        }
-    }
-    return true;
-};
-
-/**
  * Whether every keyframe holds the same shape of value as the first, which is all there is to ask of
  * a property nothing here knows the name of. A run that starts as a number and ends as a pair is not
  * one property's animation, it is a reading that went wrong somewhere, and lerping across the change
@@ -259,19 +246,6 @@ FXP.easeParamName = function (param) {
     return name === null || name === undefined ? '' : String(name);
 };
 
-/** Which of the six a parameter is, by what it is called, or '' when it is none of them. */
-FXP.easeRoleOf = function (displayName) {
-    if (displayName === '') {
-        return '';
-    }
-    for (var i = 0; i < FXP.EASE_ROLES.length; i++) {
-        if (FXP.contains(FXP.PARAM_NAMES[FXP.EASE_ROLES[i]], displayName)) {
-            return FXP.EASE_ROLES[i];
-        }
-    }
-    return '';
-};
-
 FXP.easeComponentIs = function (component, matchNames, displayNames) {
     var matchName = FXP.componentMatchName(component);
     if (matchName !== '') {
@@ -287,32 +261,21 @@ FXP.easeComponentIs = function (component, matchNames, displayNames) {
 };
 
 /**
- * Where the six sit inside a component this host knows the shape of, or null for every other
- * effect. Only the intrinsic Motion and Opacity and the Transform effect are eased: a parameter
- * called Position on some other effect could hold anything, and a dropdown interpolated into a
- * fraction of itself is the failure this list exists to close.
+ * Where a switch sits inside a component this host knows the shape of, for a build that names no
+ * parameters at all. Empty for every other effect: on those, a switch that a value would not give
+ * away is a risk this cannot see, and refusing every unnamed parameter would refuse the whole clip.
  */
-FXP.easeIndexTable = function (component) {
+FXP.easeSwitchIndexes = function (component) {
     if (FXP.easeComponentIs(component, FXP.MOTION_MATCH_NAMES, FXP.MOTION_DISPLAY_NAMES)) {
-        return FXP.MOTION_PARAM_INDEX;
+        return [FXP.MOTION_PARAM_INDEX.uniformScale];
     }
     if (FXP.easeComponentIs(component, FXP.OPACITY_MATCH_NAMES, FXP.OPACITY_DISPLAY_NAMES)) {
-        return FXP.OPACITY_PARAM_INDEX;
+        return [FXP.OPACITY_PARAM_INDEX.blendMode];
     }
     if (FXP.easeComponentIs(component, FXP.TRANSFORM_MATCH_NAMES, FXP.TRANSFORM_DISPLAY_NAMES)) {
-        return FXP.TRANSFORM_PARAM_INDEX;
+        return [FXP.TRANSFORM_PARAM_INDEX.uniformScale];
     }
-    return null;
-};
-
-/** Which role sits at this index, for a build that will not name its parameters at all. */
-FXP.easeRoleAtIndex = function (table, index) {
-    for (var i = 0; i < FXP.EASE_ROLES.length; i++) {
-        if (table[FXP.EASE_ROLES[i]] === index) {
-            return FXP.EASE_ROLES[i];
-        }
-    }
-    return '';
+    return [];
 };
 
 /** What to call a parameter in a message, for the builds that will not say what it is called. */
@@ -353,14 +316,7 @@ FXP.easeCollectFrom = function (component, easeable, totals) {
     } catch (error) {
         return;
     }
-    var table = FXP.easeIndexTable(component);
-    var named = false;
-    for (var n = 0; n < total; n++) {
-        if (FXP.easeParamName(properties[n]) !== '') {
-            named = true;
-            break;
-        }
-    }
+    var switches = FXP.easeSwitchIndexes(component);
     for (var p = 0; p < total; p++) {
         var param = null;
         try {
@@ -376,21 +332,16 @@ FXP.easeCollectFrom = function (component, easeable, totals) {
             continue;
         }
         keys.sort(FXP.easeByTime);
+        // One question, asked of every effect alike: Position and Crop's percentages and a blur's
+        // radius and Transform's Skew are all measurements, and which of them this host happens to
+        // know the shape of says nothing about that. So the values decide, a parameter that turns out
+        // to hold whole steps is caught when the curve is written to it, and the only thing refused
+        // out of hand is a switch that no value would give away.
         var displayName = FXP.easeParamName(param);
-        var takes = false;
-        if (table) {
-            // A component whose shape is known is judged by name: its Blend Mode and its Uniform
-            // Scale read back as a number and a truth, and no reading of the value would say that
-            // one is a compositing mode and the other a switch.
-            var role = named ? FXP.easeRoleOf(displayName) : FXP.easeRoleAtIndex(table, p);
-            takes = role !== '' && FXP.easeableKeys(keys, role);
-        } else {
-            // Every other effect: Crop's percentages, a blur's radius, a warp's angle. Which of them
-            // hold a measurement is not knowable from here, so the values decide, and a parameter
-            // that turns out to hold whole steps is caught when the curve is written to it.
-            takes = FXP.easeSameShape(keys);
-        }
-        if (takes) {
+        var isSwitch = displayName === ''
+            ? FXP.contains(switches, p)
+            : FXP.contains(FXP.EASE_SWITCH_NAMES, displayName);
+        if (!isSwitch && FXP.easeSameShape(keys)) {
             easeable[easeable.length] = {
                 param: param,
                 keys: keys,

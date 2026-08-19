@@ -633,17 +633,44 @@ console.log('\nWhat an ease is allowed to touch');
   );
   world.clips.clipA.componentList.push(shuffled);
   const skew = shuffled.paramList[0];
+  const uniform = shuffled.paramList[2];
   keyframed(skew, [
     [at(0), 0],
     [at(10), 30],
   ]);
-  const done = call({ op: 'ease', options: FACTORY_EASE });
+  keyframed(uniform, [
+    [at(0), true],
+    [at(10), false],
+  ]);
+  call({ op: 'ease', options: FACTORY_EASE });
+  check('a nameless parameter holding a measurement is eased on its values alone', skew.keys.length === 11, String(skew.keys.length));
   check(
-    'a parameter that does not hold what the table promised is refused rather than written to',
-    skew.keys.length === 2 && skew.calls.length === 0,
-    JSON.stringify(skew.calls),
+    'and the switch next to it is still left alone, because a truth is not a measurement',
+    uniform.keys.length === 2 && uniform.calls.length === 0,
+    JSON.stringify(uniform.calls),
   );
-  check('and counted, so the outcome is not silent about it', done.data?.applied === 0, JSON.stringify(done.data));
+}
+
+// A compositing mode is the one switch a value does not give away: it is a number, and it takes 3.4
+// and means it. On a build that names nothing, where it sits is all there is left to go on.
+{
+  const { world, call } = fresh();
+  world.select('A.mp4');
+  park(world, world.clips.clipA, 5);
+  const opacity = world.clips.clipA.componentList.find((component) => component.matchName === 'AE.ADBE Opacity');
+  const nameless = withoutParamNames(opacity);
+  world.clips.clipA.componentList[world.clips.clipA.componentList.indexOf(opacity)] = nameless;
+  const blend = nameless.paramList[1];
+  keyframed(blend, [
+    [at(0), 0],
+    [at(10), 5],
+  ]);
+  call({ op: 'ease', options: FACTORY_EASE });
+  check(
+    'a nameless blend mode is refused on where it sits, not written to and read back',
+    blend.keys.length === 2 && blend.calls.length === 0,
+    JSON.stringify(blend.calls),
+  );
 }
 
 {
