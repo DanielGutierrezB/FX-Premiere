@@ -154,23 +154,18 @@ FXP.inspectSelection = function () {
 };
 
 /**
- * Reads every parameter of every effect on the selected clip into the same shape the .prfpset
- * parser produces, so replaying a captured preset uses exactly the same code path.
+ * Reads every parameter of every effect on one clip into the same shape the .prfpset parser
+ * produces, so replaying it uses exactly the same code path as a preset from disk. Null means
+ * Premiere would not say what is on the clip, which is different from a clip with nothing on it.
  */
-FXP.captureSelection = function () {
-    var selection = FXP.requireSelection();
-    var entry = selection.length > 0 ? selection[0] : null;
-    if (!entry) {
-        throw new Error('Select the clip you want to capture.');
-    }
-    var clip = FXP.freshClip(entry);
+FXP.captureClipEffects = function (clip) {
     var list = null;
     var count = 0;
     try {
         list = clip.components;
         count = list.numItems;
     } catch (error) {
-        throw new Error('Premiere did not report the effects on this clip.');
+        return null;
     }
     var effects = [];
     for (var i = 0; i < count; i++) {
@@ -208,6 +203,20 @@ FXP.captureSelection = function () {
             params: params
         };
     }
+    return effects;
+};
+
+FXP.captureSelection = function () {
+    var selection = FXP.requireSelection();
+    var entry = selection.length > 0 ? selection[0] : null;
+    if (!entry) {
+        throw new Error('Select the clip you want to capture.');
+    }
+    var clip = FXP.freshClip(entry);
+    var effects = FXP.captureClipEffects(clip);
+    if (effects === null) {
+        throw new Error('Premiere did not report the effects on this clip.');
+    }
     if (effects.length === 0) {
         throw new Error('This clip has no effects to capture.');
     }
@@ -216,6 +225,9 @@ FXP.captureSelection = function () {
         createdAt: new Date().getTime(),
         sourceClip: entry.name,
         mediaType: entry.mediaType,
+        // Keyframes are stored in the source's own time, so where this clip started in its source is
+        // what makes them mean anything on a clip that starts somewhere else in its own.
+        sourceIn: FXP.clipSeconds(clip.inPoint),
         effects: effects
     };
 };
@@ -239,6 +251,62 @@ FXP.capturedDefinition = function (param) {
     };
 };
 
+/**
+ * Writes a captured stack onto one clip. `sourceIn` is where the clip it was read from started in
+ * its own source: every keyframe was read at a source time, so the same distance from the in point is
+ * what "the same animation" means on a clip that starts somewhere else. An un-nest passes the target's
+ * own in point, which makes the keyframes land exactly where they were.
+ */
+FXP.replayEffects = function (entry, effects, mediaType, sourceIn, notes) {
+    var clipIn = FXP.clipSeconds(entry.clip.inPoint);
+    var clipOut = FXP.clipSeconds(entry.clip.outPoint);
+    if (clipOut <= clipIn) {
+        clipOut = clipIn + Math.max(0.04, entry.endSeconds - entry.startSeconds);
+    }
+    var detail = {
+        type: FXP.PRESET_ANCHOR.ANCHOR_TO_IN,
+        anchorIn: Math.round(Number(sourceIn) * FXP.TICKS_PER_SECOND),
+        anchorOut: 0,
+        mediaType: mediaType,
+        effects: []
+    };
+    var e;
+    for (e = 0; e < effects.length; e++) {
+        var params = [];
+        for (var p = 0; p < effects[e].params.length; p++) {
+            params[params.length] = FXP.capturedDefinition(effects[e].params[p]);
+        }
+        detail.effects[detail.effects.length] = {
+            matchName: effects[e].matchName,
+            displayName: effects[e].name,
+            params: params
+        };
+    }
+    var context = { inPoint: clipIn, outPoint: clipOut, unmatched: 0 };
+    var written = 0;
+    for (e = 0; e < detail.effects.length; e++) {
+        var effect = detail.effects[e];
+        var component = null;
+        if (FXP.contains(FXP.INTRINSIC_MATCH_NAMES, effect.matchName)) {
+            component = FXP.lastComponentWithMatchName(FXP.freshClip(entry), effect.matchName);
+        }
+        if (!component) {
+            component = FXP.addEffectForPreset(entry, effect, mediaType);
+        }
+        if (!component) {
+            if (!FXP.contains(notes.missing, effect.matchName)) {
+                notes.missing[notes.missing.length] = effect.matchName;
+            }
+            continue;
+        }
+        FXP.applyPresetEffectParams(component, effect, detail, context);
+        written++;
+    }
+    FXP.flushParams(context);
+    notes.unmatched += context.unmatched;
+    return written;
+};
+
 FXP.applyCapturedPreset = function (request) {
     var preset = request.preset;
     if (!preset || !preset.effects || preset.effects.length === 0) {
@@ -258,66 +326,23 @@ FXP.applyCapturedPreset = function (request) {
         return outcome;
     }
 
-    // Captured keyframes are already relative to the source clip's start.
-    var detail = { type: 0, mediaType: preset.mediaType, effects: [] };
-    for (var e = 0; e < preset.effects.length; e++) {
-        var source = preset.effects[e];
-        var params = [];
-        for (var p = 0; p < source.params.length; p++) {
-            params[params.length] = FXP.capturedDefinition(source.params[p]);
-        }
-        detail.effects[detail.effects.length] = {
-            matchName: source.matchName,
-            displayName: source.name,
-            params: params
-        };
-    }
-
-    var missing = [];
-    var unmatched = 0;
+    var notes = { missing: [], unmatched: 0 };
+    // Presets captured before this field existed have no source in point of their own, so their
+    // keyframes are read as offsets from the clip's in point, which is what they were written as.
+    var sourceIn = Number(preset.sourceIn) || 0;
     FXP.attachQEItems(targets);
     for (var t = 0; t < targets.length; t++) {
-        var entry = targets[t];
-        var context = {
-            inPoint: FXP.clipSeconds(entry.clip.inPoint),
-            outPoint: FXP.clipSeconds(entry.clip.outPoint),
-            unmatched: 0
-        };
-        if (context.outPoint <= context.inPoint) {
-            context.outPoint = context.inPoint + Math.max(0.04, entry.endSeconds - entry.startSeconds);
-        }
-        var appliedHere = 0;
-        for (var d = 0; d < detail.effects.length; d++) {
-            var effect = detail.effects[d];
-            var component = null;
-            if (FXP.contains(FXP.INTRINSIC_MATCH_NAMES, effect.matchName)) {
-                component = FXP.lastComponentWithMatchName(FXP.freshClip(entry), effect.matchName);
-            }
-            if (!component) {
-                component = FXP.addEffectForPreset(entry, effect, preset.mediaType);
-            }
-            if (!component) {
-                if (!FXP.contains(missing, effect.matchName)) {
-                    missing[missing.length] = effect.matchName;
-                }
-                continue;
-            }
-            FXP.applyPresetEffectParams(component, effect, detail, context);
-            appliedHere++;
-        }
-        FXP.flushParams(context);
-        if (appliedHere > 0) {
+        if (FXP.replayEffects(targets[t], preset.effects, preset.mediaType, sourceIn, notes) > 0) {
             outcome.applied++;
         } else {
             outcome.failed++;
         }
-        unmatched += context.unmatched;
     }
-    if (missing.length > 0) {
-        outcome.messages[outcome.messages.length] = 'Missing effects: ' + missing.join(', ');
+    if (notes.missing.length > 0) {
+        outcome.messages[outcome.messages.length] = 'Missing effects: ' + notes.missing.join(', ');
     }
-    if (unmatched > 0) {
-        outcome.messages[outcome.messages.length] = unmatched + ' parameter(s) could not be matched by name';
+    if (notes.unmatched > 0) {
+        outcome.messages[outcome.messages.length] = notes.unmatched + ' parameter(s) could not be matched by name';
     }
     return outcome;
 };

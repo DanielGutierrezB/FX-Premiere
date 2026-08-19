@@ -31,20 +31,10 @@ FXP.route = function (request) {
         }
         case 'inspect':
             return FXP.inspectSelection();
-        // Un-nesting crosses the bridge once per stage: the panel has to press Premiere's own Copy
-        // and Paste between them, and only the panel can press anything.
         case 'unnestSurvey':
             return FXP.unnestSurvey(request);
-        case 'unnestBegin':
-            return FXP.unnestBegin(request);
-        case 'unnestArm':
-            return FXP.unnestArm(request);
-        case 'unnestHarvest':
-            return FXP.unnestHarvest(request);
-        case 'unnestFinish':
-            return FXP.unnestFinish(request);
-        case 'unnestAbort':
-            return FXP.unnestAbort(request);
+        case 'unnestRun':
+            return FXP.unnestRun(request);
         case 'ease':
             return FXP.easeSelection(request);
         case 'anchorSources':

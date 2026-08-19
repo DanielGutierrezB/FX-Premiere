@@ -1,23 +1,27 @@
-// Sequences as first-class objects in the mock Premiere, plus the clipboard behaviour un-nesting is
-// built on. It lives apart from mock-premiere.mjs because a nest is a sequence like any other: the
-// same tracks, the same QE view, the same placement rules, and the only way to test un-nesting is to
-// be able to make one current and select the clips inside it.
+// Sequences as first-class objects in the mock Premiere. It lives apart from mock-premiere.mjs
+// because a nest is a sequence like any other: the same tracks, the same QE view, the same placement
+// rules, and the only way to test un-nesting is to be able to read the clips inside one.
 //
 // The primitives are handed in rather than imported, which keeps the two files from importing each
 // other.
 
-/** What the clips inside the nested sequence look like, in that sequence's own time. */
+/**
+ * What the clips inside the nested sequence look like, in that sequence's own time. `withAudio` is
+ * footage that carries sound of its own, which is what makes a linked pair inside a nest: the same
+ * source on V1 and A1 across the same span, and the trap an un-nest of video only has to survive.
+ */
 export const NEST_CONTENTS = [
-  { name: 'nested-1.mp4', start: 0, end: 2, track: 0, audio: false },
+  { name: 'nested-1.mp4', start: 0, end: 2, track: 0, audio: false, withAudio: true },
   { name: 'nested-2.mp4', start: 2, end: 4, track: 0, audio: false },
   { name: 'nested-overlay.png', start: 0, end: 4, track: 1, audio: false },
-  { name: 'nested.wav', start: 0, end: 4, track: 0, audio: true },
+  { name: 'nested-1.mp4', start: 0, end: 2, track: 0, audio: true, withAudio: true },
+  { name: 'nested.wav', start: 2, end: 4, track: 0, audio: true, audioOnly: true },
 ];
 
 /** The innermost nest of the nest-inside-a-nest fixture. */
 export const INNER_CONTENTS = [
   { name: 'inner-1.mp4', start: 0, end: 3, track: 0, audio: false },
-  { name: 'inner.wav', start: 0, end: 3, track: 0, audio: true },
+  { name: 'inner.wav', start: 0, end: 3, track: 0, audio: true, audioOnly: true },
 ];
 
 /**
@@ -30,7 +34,7 @@ export const RISKY_CONTENTS = [
   { name: 'Cross Dissolve', start: 1.8, end: 2.2, track: 0, audio: false, transition: true },
 ];
 
-/** A multicam source, which Copy and Paste carry across as one clip on the angle that was showing. */
+/** A multicam source: three angles, of which no API says which one the editor was watching. */
 export const MULTICAM_CONTENTS = [
   { name: 'Angle 1', start: 0, end: 4, track: 0, audio: false },
   { name: 'Angle 2', start: 0, end: 4, track: 1, audio: false },
@@ -39,9 +43,6 @@ export const MULTICAM_CONTENTS = [
 ];
 
 export const createSequenceKit = ({ collection, time, makeClip, makeProjectItem, ticksPerSecond, slack }) => {
-  /** Premiere's own clipboard, as much of it as matters: a change count and what is on it. */
-  const pasteboard = { changes: 0, clips: [] };
-
   const walk = (sequence, visit) => {
     for (const audio of [false, true]) {
       const list = audio ? sequence.audioTrackList : sequence.videoTrackList;
@@ -100,7 +101,13 @@ export const createSequenceKit = ({ collection, time, makeClip, makeProjectItem,
     const to = projectItem.getOutPoint().seconds;
     const one = { name: projectItem.name, offset: 0, length: to - from, source: from, track: 0, item: projectItem };
     if (!projectItem.isSequence()) {
-      return [{ ...one, audio: false }];
+      // Sound with no picture behind it lands as one audio clip, wherever it was aimed.
+      if (projectItem.audioOnly) {
+        return [{ ...one, audio: true }];
+      }
+      // Footage with sound lands as two clips whether or not anybody wanted the sound: this is the
+      // trap a placement has to survive, and a mock that placed video alone could not show it.
+      return projectItem.withAudio ? [{ ...one, audio: false }, { ...one, audio: true }] : [{ ...one, audio: false }];
     }
     const specs = [{ ...one, audio: false }];
     if ((projectItem.contents ?? []).some((entry) => entry.audio === true)) {
@@ -109,20 +116,40 @@ export const createSequenceKit = ({ collection, time, makeClip, makeProjectItem,
     return specs;
   };
 
+  /**
+   * The bin item behind a clip inside a nest. Every clip on a real timeline has one, and an un-nest
+   * places clips from theirs, so a fixture whose insides had none could not be rebuilt at all.
+   */
+  const contentItem = (entry) =>
+    entry.item ??
+    // A graphic made in the timeline may have nothing behind it at all: `projectItem` answers null,
+    // and a placement has no item to be made from.
+    (entry.itemless === true
+      ? null
+      : makeProjectItem({
+        name: entry.name,
+        mediaPath: entry.title ? '' : `/media/${entry.name}`,
+        duration: entry.sourceLength ?? entry.end - entry.start,
+        withAudio: entry.withAudio === true,
+        audioOnly: entry.audioOnly === true,
+        width: entry.audioOnly === true ? 0 : 1920,
+        height: entry.audioOnly === true ? 0 : 1080,
+      }));
+
   const clipFromContent = (entry, audio) =>
     makeClip({
       name: entry.name,
       start: entry.start,
       end: entry.end,
-      inPoint: 0,
+      inPoint: entry.sourceIn ?? 0,
       // A clip whose source runs longer than its place on the timeline is a speed change, which the
       // survey counts by comparing the two.
       sourceLength: entry.sourceLength,
       selected: false,
       audio,
       // A title has no media behind it and is not a sequence either, which is how the survey knows
-      // one. Giving it a project item with an empty path is what a real graphic looks like.
-      projectItem: entry.item ?? (entry.title ? makeProjectItem({ name: entry.name, mediaPath: '' }) : null),
+      // one. A project item with an empty path is what a real graphic looks like.
+      projectItem: contentItem(entry),
     });
 
   /**
@@ -137,6 +164,12 @@ export const createSequenceKit = ({ collection, time, makeClip, makeProjectItem,
     let playhead = time(1);
 
     const listFor = (audio) => (audio ? audioTrackList : videoTrackList);
+
+    /** Where Premiere sends the sound that comes with a video clip: the targeted track, or A1. */
+    const targetedAudio = () => {
+      const at = audioTrackList.findIndex((track) => track.targeted);
+      return at < 0 ? 0 : at;
+    };
 
     const place = (item, when, base, mode) => {
       const at = Number(when?.seconds ?? when);
@@ -185,9 +218,24 @@ export const createSequenceKit = ({ collection, time, makeClip, makeProjectItem,
     };
 
     /**
+     * Where the two halves of a placement go when the call names them and when it does not. The
+     * documented form takes both track indexes; the short one puts the picture on the track the call
+     * was made through and sends the sound wherever the timeline is targeted, which is the behaviour
+     * that made linked audio land on somebody's A1.
+     */
+    const baseFor = (track, videoTrack, audioTrack) => ({
+      video: videoTrack === undefined || videoTrack === null ? (track.audio ? 0 : track.index) : Number(videoTrack),
+      audio:
+        audioTrack === undefined || audioTrack === null
+          ? track.audio
+            ? track.index
+            : targetedAudio()
+          : Number(audioTrack),
+    });
+
+    /**
      * One track. `clips` is read fresh every time, like Premiere's own collection, so a placement is
-     * visible to whatever asks next. A placement made through a track uses that track as its base
-     * and only reaches tracks of the same media type; the sequence-level calls take both bases.
+     * visible to whatever asks next.
      */
     const makeTrack = (audio, clipList, transitionList = []) => {
       const track = {
@@ -195,20 +243,30 @@ export const createSequenceKit = ({ collection, time, makeClip, makeProjectItem,
         clipList,
         transitionList,
         locked: false,
+        // A1 is targeted on a fresh sequence, which is why linked audio lands there unless somebody
+        // says otherwise. Where the sound of a placed clip goes is read off this, not off the call.
+        targeted: audio && listFor(true).length === 0,
         get index() {
           return listFor(audio).indexOf(track);
         },
         isLocked: () => track.locked,
-        insertClip(item, when) {
-          return place(item, when, audio ? { video: 0, audio: track.index } : { video: track.index, audio: 0 }, 'insert');
+        isTargeted: () => {
+          if (world.trackTargetingUnsupported) {
+            throw new Error('isTargeted is not available in this Premiere');
+          }
+          return track.targeted;
         },
-        overwriteClip(item, when) {
-          return place(
-            item,
-            when,
-            audio ? { video: 0, audio: track.index } : { video: track.index, audio: 0 },
-            'overwrite',
-          );
+        setTargeted(on) {
+          if (world.trackTargetingUnsupported) {
+            throw new Error('setTargeted is not available in this Premiere');
+          }
+          track.targeted = on === true;
+        },
+        insertClip(item, when, videoTrack, audioTrack) {
+          return place(item, when, baseFor(track, videoTrack, audioTrack), 'insert');
+        },
+        overwriteClip(item, when, videoTrack, audioTrack) {
+          return place(item, when, baseFor(track, videoTrack, audioTrack), 'overwrite');
         },
       };
       Object.defineProperty(track, 'clips', { get: () => collection(track.clipList, 'numItems') });
@@ -342,93 +400,5 @@ export const createSequenceKit = ({ collection, time, makeClip, makeProjectItem,
     return sequence;
   };
 
-  /**
-   * Premiere's Copy. What is not selected is not copied, which is why clearing the parent sequence's
-   * selection before this is the difference between copying the clips inside a nest and copying the
-   * nest itself.
-   */
-  const copySelection = (sequence, world) => {
-    const taken = [];
-    walk(sequence, (clip, index, audio) => {
-      if (clip.selected) {
-        taken.push({ clip, index, audio });
-      }
-    });
-    if (world.copyBringsLinked) {
-      walk(sequence, (clip, index, audio) => {
-        const linked = taken.some(
-          (entry) =>
-            entry.audio !== audio &&
-            Math.abs(entry.clip.start.seconds - clip.start.seconds) < slack &&
-            Math.abs(entry.clip.end.seconds - clip.end.seconds) < slack,
-        );
-        if (linked && !taken.some((entry) => entry.clip === clip)) {
-          taken.push({ clip, index, audio });
-        }
-      });
-    }
-    if (taken.length === 0) {
-      return 0;
-    }
-    pasteboard.changes += 1;
-    pasteboard.clips = taken.map(({ clip, index, audio }) => ({
-      name: clip.name,
-      start: clip.start.seconds,
-      end: clip.end.seconds,
-      inPoint: clip.inPoint.seconds,
-      outPoint: clip.outPoint.seconds,
-      track: index,
-      audio,
-      projectItem: clip.projectItem,
-    }));
-    return pasteboard.clips.length;
-  };
-
-  /**
-   * Premiere's Paste: the group lands with its earliest clip at the playhead and its lowest track on
-   * whichever track was last targeted, which no API will say and this deliberately models as the
-   * first one. Everything it placed comes out selected, which is how the host finds it again.
-   */
-  const paste = (sequence, world) => {
-    if (pasteboard.clips.length === 0) {
-      return 0;
-    }
-    const target = world.pasteTarget;
-    const at = world.pasteAt === null || world.pasteAt === undefined ? sequence.getPlayerPosition().seconds : world.pasteAt;
-    const earliest = Math.min(...pasteboard.clips.map((entry) => entry.start));
-    const lowest = { video: Infinity, audio: Infinity };
-    for (const entry of pasteboard.clips) {
-      const kind = entry.audio ? 'audio' : 'video';
-      lowest[kind] = Math.min(lowest[kind], entry.track);
-    }
-    walk(sequence, (clip) => {
-      clip.selected = false;
-    });
-    const made = [];
-    for (const entry of pasteboard.clips) {
-      const kind = entry.audio ? 'audio' : 'video';
-      const index = (entry.audio ? target.audio : target.video) + (entry.track - lowest[kind]);
-      sequence.grow(entry.audio, index + 1);
-      const track = (entry.audio ? sequence.audioTrackList : sequence.videoTrackList)[index];
-      const start = at + (entry.start - earliest);
-      const clip = makeClip({
-        name: entry.name,
-        start,
-        end: start + (entry.end - entry.start),
-        inPoint: entry.inPoint,
-        sourceLength: entry.outPoint - entry.inPoint,
-        selected: true,
-        audio: entry.audio,
-        projectItem: entry.projectItem,
-      });
-      clearSpan(track, clip.start.seconds, clip.end.seconds);
-      track.clipList.push(clip);
-      resort(track);
-      made.push(clip);
-    }
-    world.pasteCalls.push({ sequence: sequence.name, at, clips: made.map((clip) => clip.name) });
-    return made.length;
-  };
-
-  return { pasteboard, makeSequence, copySelection, paste, walk, resort, expand, clearSpan };
+  return { makeSequence, walk, resort, expand, clearSpan };
 };

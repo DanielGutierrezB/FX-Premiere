@@ -224,6 +224,23 @@ check('an incomplete package is rejected', /incomplete/i.test(truncatedError), t
 check('the working install is untouched after a bad package', readFileSync(join(installed, 'version.json'), 'utf8').includes('9.9.9'));
 server2.close();
 
+// A system-wide install (/Library on macOS, Program Files on Windows) belongs to root and cannot be
+// unpacked over. A folder with the write bit taken away stands in for it.
+console.log('\nAn extension folder that cannot be written to');
+fs.chmodSync(installed, 0o500);
+let readOnlyError = '';
+try {
+  await updater.applyUpdate(`${base}/download`);
+} catch (error) {
+  readOnlyError = error.message;
+}
+fs.chmodSync(installed, 0o700);
+check('the refusal names the folder', readOnlyError.includes(installed), readOnlyError);
+check('and says it is not writable', /not writable/i.test(readOnlyError), readOnlyError);
+check('and sends the reader to the installer instead', /installer/i.test(readOnlyError), readOnlyError);
+check('the probe file is not left behind', !existsSync(join(installed, '.fxp-write-probe')));
+check('the working install is untouched', readFileSync(join(installed, 'version.json'), 'utf8').includes('9.9.9'));
+
 const devInstall = join(stage, 'dev', 'com.fxpremiere.suite');
 mkdirSync(join(stage, 'dev'), { recursive: true });
 symlinkSync(join(root, 'dist'), devInstall);

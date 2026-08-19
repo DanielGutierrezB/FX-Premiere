@@ -13,10 +13,18 @@
  * value clings to that keyframe for longer. 0 and 0 is a straight line, which is what having no ease
  * should mean.
  *
- * Drawing a curve means overwriting whatever was on those frames, so the whole of this file is
- * about knowing when that is safe: only the six continuous properties are eased, only a run of
- * keyframes that measurably lies on a curve of this shape is treated as a previous bake to redraw,
- * and a pair longer than the cap is refused rather than turned into hundreds of keyframes.
+ * What gets drawn is the one pair the playhead sits between, on every property that has keyframes
+ * on both sides of it. Scoping it to the playhead is what makes the tool answer for a property this
+ * host has never heard of: an editor asking for an ease is looking at a moment in the timeline, and
+ * the pair around that moment is a thing they can see, so a curve drawn somewhere else on the same
+ * property is a surprise rather than a favour.
+ *
+ * Drawing a curve means overwriting whatever was on those frames, so most of what follows is about
+ * knowing when that is safe: a value that is a choice rather than a measurement is left alone, a
+ * property that snaps the curve's values to whole steps is put back rather than left stepping, and a
+ * pair longer than the cap is refused rather than turned into hundreds of keyframes. Which pair, and
+ * whether a dense run of keyframes is a bake to redraw or an animation to leave alone, is decided in
+ * `63-ease-plan.jsx`.
  */
 
 FXP.EASE_FACTORY = { easeOut: 33, easeIn: 100 };
@@ -40,11 +48,23 @@ FXP.EASE_MAX_FRAMES = 300;
  */
 FXP.EASE_FIT_SLACK = 1e-4;
 
-/** The six continuous properties. Everything else is refused: see FXP.easeRoleOf. */
+/**
+ * The continuous properties of the three components this host knows the shape of. Inside those, the
+ * parameters that are not on this list are known to be a checkbox or a dropdown, so they are refused
+ * by name; on every other effect the values themselves are what decides. See FXP.easeCollectFrom.
+ */
 FXP.EASE_ROLES = ['position', 'scale', 'scaleWidth', 'rotation', 'opacity', 'anchor'];
 
 /** Which of them hold a point rather than a number, so a value of the wrong shape is caught. */
 FXP.EASE_PAIR_ROLES = ['position', 'anchor'];
+
+/**
+ * How far a value written to a keyframe may read back changed and still count as taken, as a
+ * fraction of how far the pair travels. A parameter that only holds whole steps answers a curve's
+ * 3.4 with a 3, which is half a step out; single-precision storage of the same number is out by
+ * about a millionth of it. See FXP.easeTookValue.
+ */
+FXP.EASE_SNAP_SLACK = 1e-4;
 
 FXP.easeInfluence = function (raw, fallback) {
     var value = Math.round(Number(raw));
@@ -134,6 +154,30 @@ FXP.easeableKeys = function (keys, role) {
             return false;
         }
         if (pair !== (FXP.isList(value) && value.length >= 2)) {
+            return false;
+        }
+    }
+    return true;
+};
+
+/**
+ * Whether every keyframe holds the same shape of value as the first, which is all there is to ask of
+ * a property nothing here knows the name of. A run that starts as a number and ends as a pair is not
+ * one property's animation, it is a reading that went wrong somewhere, and lerping across the change
+ * would write a shape the parameter never held.
+ */
+FXP.easeSameShape = function (keys) {
+    var pair = FXP.isList(keys[0].value);
+    var axes = pair ? keys[0].value.length : 0;
+    for (var i = 0; i < keys.length; i++) {
+        var value = keys[i].value;
+        if (!FXP.easeableValue(value)) {
+            return false;
+        }
+        if (pair !== FXP.isList(value)) {
+            return false;
+        }
+        if (pair && value.length !== axes) {
             return false;
         }
     }
@@ -314,11 +358,20 @@ FXP.easeCollectFrom = function (component, found) {
         }
         keys.sort(FXP.easeByTime);
         var displayName = FXP.easeParamName(param);
-        var role = '';
+        var takes = false;
         if (table) {
-            role = named ? FXP.easeRoleOf(displayName) : FXP.easeRoleAtIndex(table, p);
+            // A component whose shape is known is judged by name: its Blend Mode and its Uniform
+            // Scale read back as a number and a truth, and no reading of the value would say that
+            // one is a compositing mode and the other a switch.
+            var role = named ? FXP.easeRoleOf(displayName) : FXP.easeRoleAtIndex(table, p);
+            takes = role !== '' && FXP.easeableKeys(keys, role);
+        } else {
+            // Every other effect: Crop's percentages, a blur's radius, a warp's angle. Which of them
+            // hold a measurement is not knowable from here, so the values decide, and a parameter
+            // that turns out to hold whole steps is caught when the curve is written to it.
+            takes = FXP.easeSameShape(keys);
         }
-        if (role !== '' && FXP.easeableKeys(keys, role)) {
+        if (takes) {
             found.easeable[found.easeable.length] = {
                 param: param,
                 keys: keys,
@@ -352,210 +405,6 @@ FXP.easeCollect = function (clip, found) {
             FXP.easeCollectFrom(component, found);
         }
     }
-};
-
-/* -- Telling a curve this drew from an animation somebody placed ------------------------------ */
-
-/** The t at which a curve with both handles flat has done this fraction of its move. */
-FXP.easeSolveT = function (v) {
-    var low = 0;
-    var high = 1;
-    var t = v;
-    for (var i = 0; i < 40; i++) {
-        t = (low + high) / 2;
-        if (FXP.bezierAxis(t, 0, 1) < v) {
-            low = t;
-        } else {
-            high = t;
-        }
-    }
-    return t;
-};
-
-/**
- * With one sample there is a family of curves through it rather than one, so the question is only
- * whether any of them exists: both handles are inside the unit square and both coefficients are
- * positive, so the reachable range of the row is what they span.
- */
-FXP.easeRowsReachable = function (rows) {
-    for (var i = 0; i < rows.length; i++) {
-        if (rows[i].c < -FXP.EASE_FIT_SLACK || rows[i].c > rows[i].a + rows[i].b + FXP.EASE_FIT_SLACK) {
-            return false;
-        }
-    }
-    return true;
-};
-
-/**
- * Whether these samples lie on a curve of the shape this tool draws.
- *
- * The value axis has both handles flat, so the t behind a sample can be solved for from its value
- * alone. Putting that t back into the time axis leaves one linear equation in the two unknown
- * handles per sample, and a two-by-two least squares over all of them recovers the influence pair
- * that would have been used. If that pair sits inside the unit square and every sample lands on the
- * curve it describes, the run is a bake; a run somebody placed by hand misses by orders of
- * magnitude more than the slack, because nobody hand-places a cubic.
- */
-FXP.easeFitsCurve = function (samples) {
-    var aa = 0;
-    var ab = 0;
-    var bb = 0;
-    var ac = 0;
-    var bc = 0;
-    var rows = [];
-    for (var i = 0; i < samples.length; i++) {
-        var v = samples[i].v;
-        if (v < -FXP.EASE_FIT_SLACK || v > 1 + FXP.EASE_FIT_SLACK) {
-            return false;
-        }
-        if (v <= FXP.EASE_FIT_SLACK || v >= 1 - FXP.EASE_FIT_SLACK) {
-            continue;
-        }
-        var t = FXP.easeSolveT(v);
-        var u = 1 - t;
-        var a = 3 * u * u * t;
-        var b = 3 * u * t * t;
-        var c = samples[i].p - t * t * t;
-        rows[rows.length] = { a: a, b: b, c: c };
-        aa += a * a;
-        ab += a * b;
-        bb += b * b;
-        ac += a * c;
-        bc += b * c;
-    }
-    if (rows.length === 0) {
-        return true;
-    }
-    var det = aa * bb - ab * ab;
-    if (Math.abs(det) < 1e-18) {
-        return FXP.easeRowsReachable(rows);
-    }
-    var x1 = (ac * bb - bc * ab) / det;
-    var x2 = (bc * aa - ac * ab) / det;
-    if (x1 < -0.02 || x1 > 1.02 || x2 < -0.02 || x2 > 1.02) {
-        return false;
-    }
-    for (var r = 0; r < rows.length; r++) {
-        if (Math.abs(rows[r].a * x1 + rows[r].b * x2 - rows[r].c) > FXP.EASE_FIT_SLACK) {
-            return false;
-        }
-    }
-    return true;
-};
-
-/**
- * Whether the keys between these two are samples of a curve this tool drew rather than poses
- * somebody placed. A bake leaves one key on every frame, all of them on the grid and all of them on
- * one curve, and every axis of a two-part value moves in the same proportion because the value is
- * read off a single curve and shared out. Keys off the grid are ignored here: they cannot have come
- * from a bake on this grid and are dropped before one is written anyway.
- */
-FXP.easeIsBaked = function (keys, first, last, gridSeconds) {
-    var from = keys[first].value;
-    var to = keys[last].value;
-    var firstFrame = Math.round(keys[first].seconds / gridSeconds);
-    var frames = Math.round(keys[last].seconds / gridSeconds) - firstFrame;
-    if (frames < 2) {
-        return false;
-    }
-    var axes = FXP.isList(from) ? from.length : 1;
-    var axis = 0;
-    var span = 0;
-    for (var a = 0; a < axes; a++) {
-        var reach = Math.abs(FXP.easeComponentAt(to, a) - FXP.easeComponentAt(from, a));
-        if (reach > span) {
-            span = reach;
-            axis = a;
-        }
-    }
-    var tolerance = span * FXP.EASE_FIT_SLACK;
-    var samples = [];
-    var expected = firstFrame;
-    for (var i = first; i <= last; i++) {
-        var frame = keys[i].seconds / gridSeconds;
-        if (Math.abs(frame - Math.round(frame)) * gridSeconds > FXP.TIME_SLACK) {
-            continue;
-        }
-        frame = Math.round(frame);
-        if (frame !== expected) {
-            return false;
-        }
-        expected++;
-        if (i === first || i === last) {
-            continue;
-        }
-        if (span <= FXP.EASE_VALUE_SLACK) {
-            if (!FXP.easeSameValue(keys[i].value, from)) {
-                return false;
-            }
-            continue;
-        }
-        var reached =
-            (FXP.easeComponentAt(keys[i].value, axis) - FXP.easeComponentAt(from, axis)) /
-            (FXP.easeComponentAt(to, axis) - FXP.easeComponentAt(from, axis));
-        for (var b = 0; b < axes; b++) {
-            var wanted =
-                FXP.easeComponentAt(from, b) +
-                (FXP.easeComponentAt(to, b) - FXP.easeComponentAt(from, b)) * reached;
-            if (Math.abs(FXP.easeComponentAt(keys[i].value, b) - wanted) > tolerance) {
-                return false;
-            }
-        }
-        samples[samples.length] = { p: (frame - firstFrame) / frames, v: reached };
-    }
-    if (expected !== firstFrame + frames + 1 || samples.length === 0) {
-        return false;
-    }
-    return FXP.easeFitsCurve(samples);
-};
-
-/**
- * Which pairs the curves get drawn between. A run of keys a frame apart is either a bake to redraw
- * or an animation to leave alone, and `easeIsBaked` is what decides which; a key where the value
- * turns around splits the run first, because a bounce is two curves and losing the pose at the top
- * would flatten it into a slide.
- */
-FXP.easePlanSegment = function (plan, keys, first, last, gridSeconds) {
-    if (last <= first) {
-        return;
-    }
-    if (last === first + 1 || FXP.easeIsBaked(keys, first, last, gridSeconds)) {
-        plan.segments[plan.segments.length] = { from: keys[first], to: keys[last] };
-        return;
-    }
-    plan.dense++;
-};
-
-FXP.easePlanRun = function (plan, keys, first, last, gridSeconds) {
-    var start = first;
-    for (var i = first + 1; i < last; i++) {
-        if (!FXP.easeTurnsAt(keys[i - 1].value, keys[i].value, keys[i + 1].value)) {
-            continue;
-        }
-        FXP.easePlanSegment(plan, keys, start, i, gridSeconds);
-        start = i;
-    }
-    FXP.easePlanSegment(plan, keys, start, last, gridSeconds);
-};
-
-FXP.easePlan = function (keys, gridSeconds) {
-    var tight = gridSeconds + FXP.TIME_SLACK;
-    var plan = { segments: [], dense: 0 };
-    var i = 0;
-    while (i + 1 < keys.length) {
-        var j = i;
-        while (j + 1 < keys.length && keys[j + 1].seconds - keys[j].seconds <= tight) {
-            j++;
-        }
-        if (j <= i + 1) {
-            plan.segments[plan.segments.length] = { from: keys[i], to: keys[i + 1] };
-            i++;
-            continue;
-        }
-        FXP.easePlanRun(plan, keys, i, j, gridSeconds);
-        i = j;
-    }
-    return plan;
 };
 
 /* -- Writing the curve ------------------------------------------------------------------------ */
@@ -637,6 +486,82 @@ FXP.easeRestore = function (param, kept, written) {
     }
 };
 
+/** How far the pair travels on each axis, which is the scale everything about it is judged against. */
+FXP.easeSpanOf = function (from, to) {
+    if (FXP.isList(from)) {
+        var out = [];
+        for (var i = 0; i < from.length; i++) {
+            out[out.length] = Number(to[i]) - Number(from[i]);
+        }
+        return out;
+    }
+    return Number(to) - Number(from);
+};
+
+FXP.easeWidestAxis = function (span) {
+    if (!FXP.isList(span)) {
+        return 0;
+    }
+    var axis = 0;
+    var widest = -1;
+    for (var i = 0; i < span.length; i++) {
+        var reach = Math.abs(Number(span[i]));
+        if (reach > widest) {
+            widest = reach;
+            axis = i;
+        }
+    }
+    return axis;
+};
+
+/** Whether the value a keyframe came back with is the one that was written to it. */
+FXP.easeTookValue = function (wrote, read, span) {
+    if (!FXP.easeableValue(read) || FXP.isList(wrote) !== FXP.isList(read)) {
+        return false;
+    }
+    var axes = FXP.isList(wrote) ? wrote.length : 1;
+    if (FXP.isList(read) && read.length < axes) {
+        return false;
+    }
+    for (var i = 0; i < axes; i++) {
+        var allowed = Math.abs(FXP.easeComponentAt(span, i)) * FXP.EASE_SNAP_SLACK;
+        if (allowed < FXP.EASE_VALUE_SLACK) {
+            allowed = FXP.EASE_VALUE_SLACK;
+        }
+        if (Math.abs(FXP.easeComponentAt(read, i) - FXP.easeComponentAt(wrote, i)) > allowed) {
+            return false;
+        }
+    }
+    return true;
+};
+
+/**
+ * The order the frames are written in: the one a parameter that only holds whole steps would change
+ * the most goes first, so it can be read back before the rest are written. That is the frame whose
+ * value sits farthest from a whole number on the axis that travels furthest; if that one survives
+ * the round trip, none of the others had anything to lose, and if it does not, the property is put
+ * back having taken one write rather than three hundred.
+ */
+FXP.easeWriteOrder = function (frames, axis) {
+    var probe = 0;
+    var worst = -1;
+    for (var i = 0; i < frames.length; i++) {
+        var value = FXP.easeComponentAt(frames[i].value, axis);
+        var off = Math.abs(value - Math.round(value));
+        if (off > worst) {
+            worst = off;
+            probe = i;
+        }
+    }
+    var order = [probe];
+    for (var f = 0; f < frames.length; f++) {
+        if (f !== probe) {
+            order[order.length] = f;
+        }
+    }
+    return order;
+};
+
 /**
  * The keys the editor placed are not written to. Their values are already what the curve reaches at
  * its ends, and forcing a type onto them would throw away handles somebody shaped by hand.
@@ -647,95 +572,107 @@ FXP.easePair = function (param, keys, from, to, options, gridSeconds, context) {
     if (frames < 2 || FXP.easeSameValue(from.value, to.value)) {
         return { written: 0, failed: false };
     }
-    var kept = FXP.easeSnapshot(param, keys, from, to);
-    FXP.easeDropOffGrid(param, kept, gridSeconds);
-    var written = [];
+    var wanted = [];
     for (var f = 1; f < frames; f++) {
         var seconds = (firstFrame + f) * gridSeconds;
         if (seconds <= from.seconds + FXP.TIME_SLACK || seconds >= to.seconds - FXP.TIME_SLACK) {
             continue;
         }
-        var value = FXP.easeLerp(from.value, to.value, FXP.easeAt(f / frames, options));
-        var at = FXP.keyWrite(param, FXP.keyAt(seconds), value, false);
+        wanted[wanted.length] = {
+            seconds: seconds,
+            value: FXP.easeLerp(from.value, to.value, FXP.easeAt(f / frames, options))
+        };
+    }
+    if (wanted.length === 0) {
+        return { written: 0, failed: false };
+    }
+    var span = FXP.easeSpanOf(from.value, to.value);
+    var order = FXP.easeWriteOrder(wanted, FXP.easeWidestAxis(span));
+    var kept = FXP.easeSnapshot(param, keys, from, to);
+    FXP.easeDropOffGrid(param, kept, gridSeconds);
+    var written = [];
+    for (var i = 0; i < order.length; i++) {
+        var frame = wanted[order[i]];
+        var at = FXP.keyWrite(param, FXP.keyAt(frame.seconds), frame.value, false);
         if (at === null) {
             FXP.easeRestore(param, kept, written);
-            return { written: 0, failed: true, undo: null };
+            return { written: 0, failed: true };
         }
-        written[written.length] = { at: at, seconds: seconds };
+        written[written.length] = { at: at, seconds: frame.seconds };
         FXP.easeLinearAt(param, at);
-        context.repaint = FXP.keyRepaint(param, at, value);
+        context.repaint = FXP.keyRepaint(param, at, frame.value);
+        if (i > 0) {
+            continue;
+        }
+        var read = FXP.keyValueAt(param, at);
+        if (read !== undefined && !FXP.easeTookValue(frame.value, read, span)) {
+            FXP.easeRestore(param, kept, written);
+            return { written: 0, failed: false, snapped: true };
+        }
     }
-    return { written: written.length, failed: false, undo: { kept: kept, written: written } };
+    return { written: written.length, failed: false };
 };
 
-/** Every pair this property took, put back newest first so the ends of one are not the other's. */
-FXP.easeUndoParam = function (param, done) {
-    for (var i = done.length - 1; i >= 0; i--) {
-        FXP.easeRestore(param, done[i].kept, done[i].written);
-    }
-};
-
-FXP.easeNoteFailed = function (totals, name) {
-    totals.failed++;
-    if (!FXP.contains(totals.failedNames, name) && totals.failedNames.length < FXP.EASE_REFUSED_SHOWN) {
-        totals.failedNames[totals.failedNames.length] = name;
+FXP.easeNote = function (names, name) {
+    if (!FXP.contains(names, name) && names.length < FXP.EASE_REFUSED_SHOWN) {
+        names[names.length] = name;
     }
 };
 
 /**
- * One property, all of its pairs or none of them. A pair that will not take the write says something
- * about the property rather than about that pair, so the ones already drawn come off too: a curve on
- * the first half of a property and the editor's own timing on the second is a shape nobody asked for,
- * and Premiere has no single undo step that spans it. The totals are only added at the end for the
- * same reason, so a run that is put back is not also counted.
+ * One property, one pair: the one the playhead sits between. A property with keyframes on only one
+ * side of the playhead is left alone rather than eased at its nearest pair, because an ease drawn
+ * somewhere the editor is not looking is indistinguishable from a bug.
  */
-FXP.easeParam = function (entry, options, gridSeconds, context, totals) {
+FXP.easeParam = function (entry, options, gridSeconds, seconds, context, totals) {
     var plan = FXP.easePlan(entry.keys, gridSeconds);
-    totals.dense += plan.dense;
-    // The pending redraw writes a value at a moment. Left in place after the pairs are put back, it
-    // would write this bake's value onto a restored keyframe at the end of the run and undo the undoing.
-    var repaintBefore = context.repaint;
-    var done = [];
-    var pairs = 0;
-    var keys = 0;
-    var flat = 0;
-    for (var i = 0; i < plan.segments.length; i++) {
-        var segment = plan.segments[i];
-        var frames =
-            Math.round(segment.to.seconds / gridSeconds) - Math.round(segment.from.seconds / gridSeconds);
-        if (frames > FXP.EASE_MAX_FRAMES) {
-            totals.tooLong++;
-            if (frames > totals.longest) {
-                totals.longest = frames;
-            }
-            continue;
-        }
-        var result = FXP.easePair(
-            entry.param,
-            entry.keys,
-            segment.from,
-            segment.to,
-            options,
-            gridSeconds,
-            context
-        );
-        if (result.failed) {
-            FXP.easeUndoParam(entry.param, done);
-            context.repaint = repaintBefore;
-            FXP.easeNoteFailed(totals, entry.name);
-            return;
-        }
-        if (result.written > 0) {
-            done[done.length] = result.undo;
-            pairs++;
-            keys += result.written;
+    var segment = FXP.easeSpanAt(plan.segments, seconds);
+    if (!segment) {
+        if (FXP.easeSpanAt(plan.dense, seconds)) {
+            totals.dense++;
         } else {
-            flat++;
+            totals.outside++;
         }
+        return;
     }
-    totals.pairs += pairs;
-    totals.keys += keys;
-    totals.flat += flat;
+    var frames =
+        Math.round(segment.to.seconds / gridSeconds) - Math.round(segment.from.seconds / gridSeconds);
+    if (frames > FXP.EASE_MAX_FRAMES) {
+        totals.tooLong++;
+        if (frames > totals.longest) {
+            totals.longest = frames;
+        }
+        return;
+    }
+    // The pending redraw writes a value at a moment. Left in place after the pair is put back, it
+    // would write this bake's value onto a restored keyframe and undo the undoing.
+    var repaintBefore = context.repaint;
+    var result = FXP.easePair(
+        entry.param,
+        entry.keys,
+        segment.from,
+        segment.to,
+        options,
+        gridSeconds,
+        context
+    );
+    if (result.failed || result.snapped === true) {
+        context.repaint = repaintBefore;
+        if (result.snapped === true) {
+            totals.snapped++;
+            FXP.easeNote(totals.snappedNames, entry.name);
+        } else {
+            totals.failed++;
+            FXP.easeNote(totals.failedNames, entry.name);
+        }
+        return;
+    }
+    if (result.written > 0) {
+        totals.pairs++;
+        totals.keys += result.written;
+    } else {
+        totals.flat++;
+    }
 };
 
 /* -- The clip's own frame grid ---------------------------------------------------------------- */
@@ -786,6 +723,16 @@ FXP.easeGrid = function (entry, frameSeconds) {
     return { seconds: frameSeconds * speed, ok: true };
 };
 
+/**
+ * Where the playhead is in the time the keyframes are written at. `playheadTimeInClip` answers in
+ * timeline seconds from the clip's in point, and a retimed clip runs through its source faster than
+ * that, by the same factor the frame grid is stretched by.
+ */
+FXP.easePlayheadInClip = function (entry, speed) {
+    var inPoint = FXP.clipSeconds(entry.clip.inPoint);
+    return inPoint + (FXP.playheadTimeInClip(entry) - inPoint) * speed;
+};
+
 FXP.easeClip = function (entry, options, frameSeconds, context, totals) {
     var clip = FXP.freshClip(entry);
     var grid = FXP.easeGrid(entry, frameSeconds);
@@ -793,6 +740,7 @@ FXP.easeClip = function (entry, options, frameSeconds, context, totals) {
         totals.retimed++;
         return;
     }
+    var seconds = FXP.easePlayheadInClip(entry, grid.seconds / frameSeconds);
     var found = { easeable: [], refused: 0, refusedNames: [] };
     FXP.easeCollect(clip, found);
     totals.refused += found.refused;
@@ -805,29 +753,43 @@ FXP.easeClip = function (entry, options, frameSeconds, context, totals) {
         }
     }
     for (var i = 0; i < found.easeable.length; i++) {
-        FXP.easeParam(found.easeable[i], options, grid.seconds, context, totals);
+        FXP.easeParam(found.easeable[i], options, grid.seconds, seconds, context, totals);
     }
 };
 
 FXP.easeNotes = function (totals, outcome) {
+    if (totals.outside > 0) {
+        outcome.messages[outcome.messages.length] =
+            totals.outside +
+            ' property(ies) have keyframes but none on both sides of the playhead, so nothing was ' +
+            'drawn on them. An ease is drawn between the two keyframes the playhead sits between.';
+    }
     if (totals.refused > 0) {
         outcome.messages[outcome.messages.length] =
             totals.refused +
-            ' keyframed property(ies) were left alone because an ease only draws through Position, ' +
-            'Scale, Scale Width, Rotation, Opacity and Anchor Point: ' +
+            ' keyframed property(ies) hold a choice rather than a measurement, which no curve can ' +
+            'pass through, so they were left alone: ' +
             totals.refusedNames.join(', ') +
+            '.';
+    }
+    if (totals.snapped > 0) {
+        outcome.messages[outcome.messages.length] =
+            totals.snapped +
+            ' property(ies) only hold whole steps, so a curve would step through them rather than ' +
+            'ease; they were put back the way they were: ' +
+            totals.snappedNames.join(', ') +
             '.';
     }
     if (totals.dense > 0) {
         outcome.messages[outcome.messages.length] =
             totals.dense +
-            ' run(s) of keyframes already have a key on every frame and are not a curve this drew, ' +
-            'so they were left as they are.';
+            ' run(s) of keyframes around the playhead already have a key on every frame and are not ' +
+            'a curve this drew, so they were left as they are.';
     }
     if (totals.tooLong > 0) {
         outcome.messages[outcome.messages.length] =
             totals.tooLong +
-            ' pair(s) are longer than ' +
+            ' pair(s) at the playhead are longer than ' +
             FXP.EASE_MAX_FRAMES +
             ' frames and were left alone; the longest is ' +
             totals.longest +
@@ -866,6 +828,9 @@ FXP.easeSelection = function (request) {
         flat: 0,
         refused: 0,
         refusedNames: [],
+        snapped: 0,
+        snappedNames: [],
+        outside: 0,
         dense: 0,
         tooLong: 0,
         longest: 0,
@@ -891,16 +856,16 @@ FXP.easeSelection = function (request) {
         if (outcome.messages.length === 0) {
             outcome.messages[outcome.messages.length] =
                 totals.flat > 0
-                    ? 'Every pair of keyframes here is either a single frame apart or holds the same value on both ends.'
+                    ? 'The pair at the playhead is either a single frame apart or holds the same value on both ends.'
                     : 'Nothing in the selection has two keyframes on one property yet.';
         }
         return outcome;
     }
     outcome.messages[outcome.messages.length] =
         totals.keys +
-        ' keyframe(s) across ' +
+        ' keyframe(s) drawn on ' +
         totals.pairs +
-        ' pair(s) at ' +
+        ' property(ies) at ' +
         options.easeOut +
         ' out / ' +
         options.easeIn +

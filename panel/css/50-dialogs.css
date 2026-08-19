@@ -192,27 +192,54 @@
   font-size: calc(10.5px * var(--font-scale));
 }
 
-/* The anchor dialog: nine cells laid out like the frame they stand for. */
+/* The anchor dialog: nine cells laid out like the frame they stand for, with the two switches that
+   qualify them alongside rather than below, which is what keeps the whole sheet under 240px. */
 .anchor {
   flex: 1;
   display: flex;
   flex-direction: column;
-  padding: 18px;
+  padding: 14px;
   gap: 4px;
   min-height: 0;
   overflow-y: auto;
 }
 
-/* The frame's shape, so the nine cells read as places in a picture; capped so the switches under it
-   still fit the sheet at a large font scale. */
+.anchor__body {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  margin: 4px 0 8px;
+}
+
+.anchor__side {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+/* Hugging their labels rather than filling the column, so the two of them read as two switches. */
+.anchor__side .seg {
+  align-self: flex-start;
+}
+
+.anchor__label {
+  color: var(--text-faint);
+  font-size: calc(9.5px * var(--font-scale));
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+/* The frame's shape, so the nine cells read as places in a picture. Sized off the text, so the cells
+   still hold a digit at a large font scale without the sheet growing a scrollbar. */
 .grid {
+  flex: 0 0 auto;
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: 4px;
-  margin: 6px 0 10px;
+  gap: 3px;
+  width: calc(132px * var(--font-scale));
   aspect-ratio: 16 / 9;
-  max-height: 180px;
-  flex-shrink: 0;
 }
 
 .grid__cell {

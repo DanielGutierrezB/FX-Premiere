@@ -32,8 +32,13 @@ export interface PasteProbe {
   folder: string;
   /** The file name the wildcards produced, before any collision suffix. */
   fileName: string;
-  /** How long the still will last, from Premiere's own default where it would say. */
+  /**
+   * How long the still will last, from Premiere's own default where it would say. Zero for media
+   * that has a length of its own, which is the whole point of pasting a copied video as a video.
+   */
   seconds: number;
+  /** True when the clipboard held a file: it is copied into the folder rather than written there. */
+  fromFile: boolean;
   /** Empty when the paste can go ahead; otherwise the one reason that it cannot. */
   error: string;
 }
@@ -53,15 +58,36 @@ export const probePaste = async (settings: Settings, at: Date = new Date()): Pro
   const name = safeFileName(expandWildcards(paste.name, wildcards).text);
   const clipboard = clipboardBridge();
   const grab = await clipboard.grab(clipboard.scratch());
+  const fromFile = grab.source === 'file';
   return {
     grab,
     context,
     folder: folder.path,
-    fileName: `${name === '' ? 'Paste' : name}.png`,
-    seconds: context.stillSeconds > 0 ? context.stillSeconds : paste.stillSeconds,
+    // A copied file keeps the name it already has: it is the editor's own footage, and a wildcard
+    // name would make the clip in the project unrecognisable next to the one on disk.
+    fileName: fromFile ? baseName(grab.path) : `${name === '' ? 'Paste' : name}.png`,
+    seconds: fromFile ? 0 : context.stillSeconds > 0 ? context.stillSeconds : paste.stillSeconds,
+    fromFile,
     error: clipboardError(grab) || folder.error,
   };
 };
+
+const baseName = (file: string): string => {
+  const path = nodeRequire()('path') as typeof import('path');
+  const raw = path.basename(file);
+  const ext = path.extname(raw);
+  // The extension is kept out of the sanitising: it is what Premiere imports by, and a long name
+  // cut to length would otherwise arrive in the folder as a file Premiere will not read.
+  const stem = safeFileName(raw.slice(0, raw.length - ext.length));
+  return `${stem === '' ? 'Paste' : stem}${ext}`;
+};
+
+/**
+ * The probe with a duration somebody chose on the dialog. Media that carries its own length is left
+ * alone: the seconds field only ever meant anything for a still.
+ */
+export const withDuration = (probe: PasteProbe, seconds: number): PasteProbe =>
+  probe.seconds === 0 ? probe : { ...probe, seconds };
 
 /**
  * A name nothing is using. A paste never lands on top of an earlier one, and the wildcards can only
@@ -91,6 +117,12 @@ const moveInto = (from: string, to: string): void => {
     fs.copyFileSync(from, to);
     fs.rmSync(from, { force: true });
   }
+};
+
+/** For a file the editor copied: it is theirs, wherever it lives, and a paste never takes it away. */
+const copyInto = (from: string, to: string): void => {
+  const fs = nodeRequire()('fs') as typeof import('fs');
+  fs.copyFileSync(from, to);
 };
 
 /** Takes the scratch PNG back off disk, answering whether it really went. */
@@ -127,9 +159,13 @@ export const commitPaste = async (probe: PasteProbe, settings: Settings): Promis
   const fileName = freeFileName(probe.folder, probe.fileName);
   const file = path.join(probe.folder, fileName);
   try {
-    moveInto(probe.grab.path, file);
+    if (probe.fromFile) {
+      copyInto(probe.grab.path, file);
+    } else {
+      moveInto(probe.grab.path, file);
+    }
   } catch (error) {
-    return { ok: false, error: `The PNG could not be saved: ${(error as Error).message}` };
+    return { ok: false, error: `${probe.fromFile ? 'The file' : 'The PNG'} could not be saved: ${(error as Error).message}` };
   }
   const placed = await callHost<PasteResult>({
     op: 'pasteStill',
@@ -144,16 +180,20 @@ export const commitPaste = async (probe: PasteProbe, settings: Settings): Promis
     const swept = discard(file);
     return {
       ok: false,
-      error: `${placed.error ?? 'Premiere could not place the PNG.'}${swept ? '' : ` ${fileName} was left in ${probe.folder}.`}`,
+      error: `${placed.error ?? 'Premiere could not place it.'}${swept ? '' : ` ${fileName} was left in ${probe.folder}.`}`,
     };
   }
-  if (!probe.grab.alpha) {
+  if (!probe.fromFile && !probe.grab.alpha) {
     messages.push('The clipboard had no transparency, so the PNG is opaque.');
   }
-  messages.push(
-    placed.data.addedTrack
-      ? `V${placed.data.track} was added so nothing was covered up.`
-      : `On V${placed.data.track}, which was free.`,
-  );
-  return outcome(1, [`${fileName} \u00b7 ${probe.grab.width}\u00d7${probe.grab.height}`, ...messages]);
+  if (placed.data.addedTrack) {
+    messages.push(`V${placed.data.track} was added so nothing was covered up.`);
+  }
+  // Footage is the one paste whose length was not asked for, so it is said. A still that went where
+  // it was meant to go says nothing at all: the palette stops for whatever is in here, and stopping
+  // over a paste that did exactly what was asked is a keystroke somebody has to spend to get rid of.
+  if (probe.fromFile) {
+    messages.push(`${fileName} \u00b7 ${placed.data.seconds}s on V${placed.data.track}`);
+  }
+  return outcome(1, messages);
 };

@@ -34,9 +34,7 @@ import { localVersion } from '@shared/updater';
 import { resolveAnchorBounds } from './alpha';
 import { ApplyPipeline, type ApplyIntent } from './apply';
 import { applyCompass, compassMessages, exportViaCompass, roundTripped } from '@shared/compass-run';
-import { keysBridge } from './keys-bridge';
-import { commitPaste } from './paste';
-import { runUnnest, showPalette } from './unnest';
+import { commitPaste, probePaste, withDuration } from './paste';
 import {
   clearCatalogCache,
   fetchCatalog,
@@ -184,7 +182,7 @@ export class PaletteApp {
     this.bar.reload();
     this.applyTheme();
     // Before the first paint, so the palette looks like it opened right rather than settling in.
-    this.size.apply('list');
+    this.size.apply('search');
     this.buildChrome();
     registerKeyInterest();
     this.bindEvents();
@@ -335,7 +333,7 @@ export class PaletteApp {
   /** The view and the size of the window are the same decision, so they are made together. */
   private viewChanged(view: View): void {
     this.bar.show(view === 'search');
-    this.size.apply(view === 'search' ? 'list' : 'sheet');
+    this.size.apply(view);
     this.renderHints();
   }
 
@@ -835,26 +833,15 @@ export class PaletteApp {
   }
 
   /**
-   * The palette is hidden for the whole run, so its own report of what happened would go out onto a
-   * window nobody can see. It comes back for anything worth reading — a failure, a nest that was
-   * refused, a census warning, a nest disabled instead of deleted — and not only for a run that got
-   * nothing done: a run that opened one nest and lost a clip doing it reports one applied, and that
-   * sentence is the whole point of taking the census.
+   * One call: the host rebuilds the contents of every selected nest itself. `nests` is what the dialog
+   * counted, so a selection changed while the dialog was up is refused rather than acted on.
    */
-  private async runUnnest(): Promise<HostResponse<ApplyOutcome>> {
-    const response = await runUnnest(this.settings.unnest, {
-      keys: keysBridge(),
-      status: (text, kind) => this.setStatus(text, kind),
-      keepLoaded: () => this.settings.keepLoaded,
-      nests: () => this.sheets.nests(),
+  private runUnnest(): Promise<HostResponse<ApplyOutcome>> {
+    return callHost<ApplyOutcome>({
+      op: 'unnestRun',
+      options: this.settings.unnest,
+      nests: this.sheets.nests(),
     });
-    const outcome = response.data;
-    const worthReading =
-      !response.ok || !outcome || outcome.applied === 0 || outcome.failed > 0 || outcome.messages.length > 0;
-    if (worthReading) {
-      showPalette();
-    }
-    return response;
   }
 
   private async confirmEase(item: CatalogItem, options: EaseOptions): Promise<void> {
@@ -889,19 +876,27 @@ export class PaletteApp {
   /**
    * The duration is the one thing the dialog can change, and it is remembered rather than asked for
    * again: the default the setting holds is what Premiere would not say, not what was last wanted.
+   * Footage has a length of its own and the dialog does not offer one, so there is nothing to keep.
    */
   private async confirmPaste(item: CatalogItem, seconds: number): Promise<void> {
-    this.settings.paste.stillSeconds = seconds;
-    saveSettings(this.settings);
+    if (seconds > 0) {
+      this.settings.paste.stillSeconds = seconds;
+      saveSettings(this.settings);
+    }
     await this.pipeline.run(item, false, { hold: true });
   }
 
+  /**
+   * Enter in the search view has not read the clipboard yet, which is what makes the paste one
+   * keystroke: reading it here rather than on the way in keeps the palette from touching the
+   * clipboard for every other thing an editor types.
+   */
   private async runPaste(): Promise<HostResponse<ApplyOutcome>> {
-    const probe = this.sheets.probe();
-    if (!probe) {
-      return { ok: false, error: 'Nothing was read from the clipboard.' };
+    const opened = this.sheets.probe();
+    if (!opened) {
+      return commitPaste(await probePaste(this.settings), this.settings);
     }
-    return commitPaste({ ...probe, seconds: this.settings.paste.stillSeconds }, this.settings);
+    return commitPaste(withDuration(opened, this.settings.paste.stillSeconds), this.settings);
   }
 
   /** Reported rather than announced: a write Premiere refused has to reach the status line as one. */

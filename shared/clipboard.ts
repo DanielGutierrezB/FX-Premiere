@@ -6,6 +6,10 @@
  * best one its platform offers and says which it took, so the panel can tell the difference between
  * "here is your cut-out" and "here is your cut-out on a white rectangle".
  *
+ * A file copied in Finder or Explorer is the one case where there is nothing to encode: the helper
+ * hands back the path and the paste imports that file, which is the only way a copied video arrives
+ * as a video rather than as a picture of its first frame.
+ *
  * It goes through the native helper rather than `osascript` or PowerShell because a script asked to
  * hand back binary image data has to encode it to get it through a pipe, and re-encoding is exactly
  * what loses the alpha.
@@ -14,7 +18,7 @@ import { helperFields, helperInstalled, runHelper } from './helper-run';
 import { nodeRequire } from './node';
 import type { ClipboardGrab, ClipboardSource } from './types';
 
-const SOURCES: ClipboardSource[] = ['png', 'tiff', 'nsimage', 'dibv5', 'bitmap', 'none'];
+const SOURCES: ClipboardSource[] = ['png', 'tiff', 'nsimage', 'dibv5', 'bitmap', 'file', 'none'];
 
 const asSource = (value: string): ClipboardSource =>
   SOURCES.includes(value as ClipboardSource) ? (value as ClipboardSource) : 'none';
@@ -62,7 +66,8 @@ export const clipboardScratch = (): string => {
 
 /**
  * Writes the clipboard image to `file`. Nothing is created when the clipboard holds no image, so
- * the caller can open a dialog on the answer without having made anything on disk yet.
+ * the caller can open a dialog on the answer without having made anything on disk yet, and nothing
+ * is created either when the clipboard holds a file: `path` is then the editor's own copy of it.
  */
 export const grabClipboard = async (file: string): Promise<ClipboardGrab> => {
   if (!helperInstalled()) {
@@ -81,7 +86,7 @@ export const clipboardError = (grab: ClipboardGrab): string => {
     case '':
       return '';
     case 'no-image':
-      return 'There is no image on the clipboard.';
+      return 'There is nothing on the clipboard to paste.';
     case 'no-helper':
       return 'The native helper is not installed.';
     case 'encode-failed':

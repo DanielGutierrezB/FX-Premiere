@@ -40,7 +40,8 @@
   text-align: left;
 }
 
-.compass__relative {
+.compass__relative,
+.compass__browse {
   width: 30px;
   border: 1px solid var(--border-strong);
   border-radius: 6px;

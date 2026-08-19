@@ -120,10 +120,26 @@ export const createCepWindow = ({ html, home, extensionRoot = home, evalScript, 
     },
   };
 
+  /**
+   * CEP's own file dialog. The real one is a modal the tests cannot answer, so what it comes back
+   * with is scripted: `dialog.answer` is the path chosen, and null is a cancelled dialog, which the
+   * panel has to leave the field it was filling alone for.
+   */
+  const dialog = { answer: null, asked: [] };
+  window.cep = {
+    fs: {
+      showOpenDialogEx: (allowMultiple, chooseFolder, title, from, types) => {
+        dialog.asked.push({ chooseFolder, title, from, types: [...(types ?? [])] });
+        return dialog.answer === null ? { err: 2, data: [] } : { err: 0, data: [dialog.answer] };
+      },
+    },
+  };
+
   return {
     dom,
     window,
     calls,
+    dialog,
     /** Somebody dragging the window by its corner, which the panel must not mistake for its own. */
     dragWindow: (width, height) => setSize(width, height),
     run: (bundle) => window.eval(readFileSync(bundle, 'utf8')),

@@ -81,6 +81,8 @@ jobs:
         run: |
           npm run build
           chmod 755 dist/helper/mac/fxp-hotkey
+      # This also packages the CEP debug-mode enablers from tools/ into a zip beside the ZXP. They
+      # have to reach the release: a self-signed ZXP does not load without them.
       - name: Sign ZXP
         run: bash scripts/sign.sh
       - name: Build macOS installer
@@ -91,6 +93,7 @@ jobs:
           path: |
             release/*.zxp
             release/*.pkg
+            release/*.zip
 
   package-win:
     needs: [helper-mac, helper-win, checks]
@@ -127,7 +130,9 @@ jobs:
     permissions:
       contents: write
     steps:
-      # Only the installers belong on the release; the helper artifacts are build inputs.
+      # Only the installers and the debug-mode enabler zip belong on the release; the helper
+      # artifacts are build inputs. The enabler zip rides along in FX-Premiere-macos because
+      # scripts/sign.sh makes it, but it carries the Windows enabler too.
       - uses: actions/download-artifact@v4
         with:
           pattern: FX-Premiere-*

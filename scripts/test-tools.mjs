@@ -23,7 +23,7 @@ import {
   transformComponent,
   withoutParamNames,
 } from './lib/mock-premiere.mjs';
-import { FACTORY_EASE, at, callsOn, keyAt, paramOf, typeAt } from './lib/tools-keys.mjs';
+import { FACTORY_EASE, at, callsOn, keyAt, paramOf, park, typeAt } from './lib/tools-keys.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const hostScript = join(root, 'dist', 'host', 'fxpremiere.jsx');
@@ -283,6 +283,7 @@ console.log('\nWhat Premiere does with a keyframe, as the mock has it');
 {
   const { world, call } = fresh();
   world.select('A.mp4');
+  park(world, world.clips.clipA, 5);
   const scale = paramOf(world.clips.clipA, 'AE.ADBE Motion', 'Scale');
   keyframed(scale, [
     [at(0), 100],
@@ -326,12 +327,13 @@ console.log('\nWhat Premiere does with a keyframe, as the mock has it');
     callsOn(scale, 'setValueAtKey').length > 8 && scale.repaints === 1,
     `${scale.repaints} repaints`,
   );
-  check('and the outcome says how much work it did', /keyframe\(s\) across 1 pair\(s\) at 33 out \/ 100 in/.test(done.data?.messages.join(' ') ?? ''), JSON.stringify(done.data?.messages));
+  check('and the outcome says how much work it did', /keyframe\(s\) drawn on 1 property\(ies\) at 33 out \/ 100 in/.test(done.data?.messages.join(' ') ?? ''), JSON.stringify(done.data?.messages));
 }
 
 {
   const { world, call, FXP } = fresh();
   world.select('A.mp4');
+  park(world, world.clips.clipA, 3);
   const position = paramOf(world.clips.clipA, 'AE.ADBE Motion', 'Position');
   keyframed(position, [
     [at(0), [0.2, 0.4]],
@@ -353,6 +355,7 @@ console.log('\nWhat Premiere does with a keyframe, as the mock has it');
 {
   const { world, call } = fresh();
   world.select('A.mp4');
+  park(world, world.clips.clipA, 5);
   const scale = paramOf(world.clips.clipA, 'AE.ADBE Motion', 'Scale');
   keyframed(scale, [
     [at(0), 100, INTERPOLATION.BEZIER],
@@ -372,6 +375,85 @@ console.log('\nWhat Premiere does with a keyframe, as the mock has it');
   check('while the frames between them are linear', typeAt(scale, 5) === INTERPOLATION.LINEAR, String(typeAt(scale, 5)));
 }
 
+console.log('\nWhich pair the playhead picks');
+// An editor asking for an ease is looking at a moment in the timeline. A property animated across
+// the whole clip has several pairs, and the one they can see is the one around the playhead.
+{
+  const { world, call } = fresh();
+  world.select('A.mp4');
+  const scale = paramOf(world.clips.clipA, 'AE.ADBE Motion', 'Scale');
+  const three = () => [
+    [at(0), 100],
+    [at(10), 200],
+    [at(20), 100],
+  ];
+
+  keyframed(scale, three());
+  park(world, world.clips.clipA, 15);
+  call({ op: 'ease', options: FACTORY_EASE });
+  check('the pair the playhead is inside is the one that gets the curve', scale.keys.length === 12, String(scale.keys.length));
+  check(
+    'and it is the second pair, not the first',
+    !keyAt(scale, 5) && Boolean(keyAt(scale, 15)),
+    JSON.stringify(scale.sortedKeys().map((key) => Math.round(key.at * 30))),
+  );
+
+  keyframed(scale, three());
+  park(world, world.clips.clipA, 5);
+  call({ op: 'ease', options: FACTORY_EASE });
+  check(
+    'parked in the first pair it is the first that gets it',
+    Boolean(keyAt(scale, 5)) && !keyAt(scale, 15),
+    JSON.stringify(scale.sortedKeys().map((key) => Math.round(key.at * 30))),
+  );
+
+  // Parked on the keyframe in the middle, both pairs touch the playhead. The move ahead is the one
+  // being asked about: the one behind has already played.
+  keyframed(scale, three());
+  park(world, world.clips.clipA, 10);
+  call({ op: 'ease', options: FACTORY_EASE });
+  check(
+    'parked exactly on a keyframe it eases the move ahead of it',
+    Boolean(keyAt(scale, 15)) && !keyAt(scale, 5),
+    JSON.stringify(scale.sortedKeys().map((key) => Math.round(key.at * 30))),
+  );
+
+  keyframed(scale, three());
+  scale.calls.length = 0;
+  park(world, world.clips.clipA, 26);
+  const outside = call({ op: 'ease', options: FACTORY_EASE });
+  check('parked past the last keyframe nothing is drawn at all', scale.keys.length === 3 && scale.calls.length === 0, JSON.stringify(scale.calls));
+  check('the clip is reported as skipped rather than eased', outside.data?.applied === 0 && outside.data?.failed === 0, JSON.stringify(outside.data));
+  check(
+    'and the outcome says where an ease is drawn',
+    /none on both sides of the playhead/.test(outside.data?.messages.join(' ') ?? ''),
+    JSON.stringify(outside.data?.messages),
+  );
+}
+
+// Two clips of a stack are at different points of their own animations under one playhead.
+{
+  const { world, call } = fresh();
+  const second = world.addClip({ name: 'over.mp4', start: 0, end: 4, track: 2 });
+  world.select('A.mp4', 'over.mp4');
+  park(world, world.clips.clipA, 5);
+  park(world, second, 5);
+  const below = paramOf(world.clips.clipA, 'AE.ADBE Motion', 'Scale');
+  const above = paramOf(second, 'AE.ADBE Motion', 'Scale');
+  keyframed(below, [
+    [at(0), 100],
+    [at(10), 200],
+  ]);
+  keyframed(above, [
+    [at(20), 100],
+    [at(30), 200],
+  ]);
+  const done = call({ op: 'ease', options: FACTORY_EASE });
+  check('the clip whose pair holds the playhead is eased', below.keys.length === 11, String(below.keys.length));
+  check('the one whose animation is elsewhere is left alone', above.keys.length === 2 && above.calls.length === 0, JSON.stringify(above.calls));
+  check('and the outcome counts one of each rather than failing', done.data?.applied === 1 && done.data?.skipped === 1, JSON.stringify(done.data));
+}
+
 console.log('\nWhat an ease is allowed to touch');
 // A checkbox and a dropdown both come back from Premiere as values, and neither reads back as a
 // string: the mock has Blend Mode as a number because that is what Premiere answers. Interpolating
@@ -380,6 +462,7 @@ console.log('\nWhat an ease is allowed to touch');
 {
   const { world, call } = fresh();
   world.select('A.mp4');
+  park(world, world.clips.clipA, 5);
   const blend = paramOf(world.clips.clipA, 'AE.ADBE Opacity', 'Blend Mode');
   const uniform = paramOf(world.clips.clipA, 'AE.ADBE Motion', 'Uniform Scale');
   keyframed(blend, [
@@ -406,33 +489,81 @@ console.log('\nWhat an ease is allowed to touch');
     JSON.stringify(done.data?.messages),
   );
   check(
-    'and says which properties an ease does draw through',
-    /Position, Scale, Scale Width, Rotation, Opacity and Anchor Point/.test(done.data?.messages.join(' ') ?? ''),
+    'and says why rather than naming a list of properties',
+    /hold a choice rather than a measurement/.test(done.data?.messages.join(' ') ?? ''),
     JSON.stringify(done.data?.messages),
   );
 }
 
-// The allow-list is by property, not by kind: a parameter on some other effect could hold anything,
-// and there is no way to read a distance apart from a code from the value alone.
+// Any effect, not only the three whose shape this host knows: Crop's percentages and a blur's radius
+// are keyframed as often as Position is, and an ease that skipped them would be answering a question
+// nobody asked.
 {
   const { world, call } = fresh();
   world.select('A.mp4');
+  park(world, world.clips.clipA, 5);
   world.clips.clipA.componentList.push(
+    makeComponent('AE.ADBE Crop', 'Crop', [makeParam('Left', 0), makeParam('Top', 0)]),
     makeComponent('AE.ADBE Gaussian Blur 2', 'Gaussian Blur', [makeParam('Blurriness', 0)]),
   );
+  const left = paramOf(world.clips.clipA, 'AE.ADBE Crop', 'Left');
+  const top = paramOf(world.clips.clipA, 'AE.ADBE Crop', 'Top');
   const blur = paramOf(world.clips.clipA, 'AE.ADBE Gaussian Blur 2', 'Blurriness');
+  keyframed(left, [
+    [at(0), 0],
+    [at(10), 25],
+  ]);
   keyframed(blur, [
     [at(0), 0],
     [at(10), 40],
   ]);
   const done = call({ op: 'ease', options: FACTORY_EASE });
-  check('a keyframed parameter of another effect is left alone', blur.keys.length === 2 && blur.calls.length === 0, JSON.stringify(blur.calls));
-  check('and the outcome names it', /Blurriness/.test(done.data?.messages.join(' ') ?? ''), JSON.stringify(done.data?.messages));
+  check('a crop is eased', left.keys.length === 11, String(left.keys.length));
+  check('so is a blur', blur.keys.length === 11, String(blur.keys.length));
+  check(
+    'and the crop follows the same curve Position gets',
+    Math.abs(keyAt(left, 5).value - 25 * 0.8679) < 0.2,
+    String(keyAt(left, 5)?.value),
+  );
+  check('the parameter of the same effect that has no keyframes is untouched', top.keys.length === 0 && top.calls.length === 0, JSON.stringify(top.calls));
+  check('with nothing said about anything being passed over', !/left alone/.test(done.data?.messages.join(' ') ?? ''), JSON.stringify(done.data?.messages));
+  check('and both properties counted', /keyframe\(s\) drawn on 2 property\(ies\)/.test(done.data?.messages.join(' ') ?? ''), JSON.stringify(done.data?.messages));
+}
+
+// Some parameters hold whole numbers and nothing between them. There is no API that says which, so
+// the curve's first value is written and read back, and a property that changed it is put back.
+{
+  const { world, call } = fresh();
+  world.select('A.mp4');
+  park(world, world.clips.clipA, 5);
+  world.clips.clipA.componentList.push(
+    makeComponent('AE.ADBE Posterize', 'Posterize', [makeParam('Levels', 8, { snaps: true })]),
+  );
+  const levels = paramOf(world.clips.clipA, 'AE.ADBE Posterize', 'Levels');
+  keyframed(levels, [
+    [at(0), 4],
+    [at(10), 12],
+  ]);
+  const done = call({ op: 'ease', options: FACTORY_EASE });
+  check('a property that snaps the curve to whole steps keeps the two keyframes it had', levels.keys.length === 2, String(levels.keys.length));
+  check(
+    'holding the values the editor gave them',
+    keyAt(levels, 0)?.value === 4 && keyAt(levels, 10)?.value === 12,
+    JSON.stringify(levels.sortedKeys().map((key) => key.value)),
+  );
+  check('it was tried once rather than three hundred times', callsOn(levels, 'setValueAtKey').length === 1, JSON.stringify(levels.calls));
+  check('the clip is reported as skipped, not failed', done.data?.applied === 0 && done.data?.failed === 0, JSON.stringify(done.data));
+  check(
+    'and the outcome names it and says what happened',
+    /only hold whole steps/.test(done.data?.messages.join(' ') ?? '') && /Levels/.test(done.data?.messages.join(' ') ?? ''),
+    JSON.stringify(done.data?.messages),
+  );
 }
 
 {
   const { world, call } = fresh();
   world.select('A.mp4');
+  park(world, world.clips.clipA, 5);
   const opacity = paramOf(world.clips.clipA, 'AE.ADBE Opacity', 'Opacity');
   const rotation = paramOf(world.clips.clipA, 'AE.ADBE Motion', 'Rotation');
   const anchor = paramOf(world.clips.clipA, 'AE.ADBE Motion', 'Anchor Point');
@@ -455,7 +586,7 @@ console.log('\nWhat an ease is allowed to touch');
   ]);
   const done = call({ op: 'ease', options: FACTORY_EASE });
   check(
-    'each of the six on the list is baked',
+    'each of the four is baked',
     [opacity, rotation, anchor, width].every((param) => param.keys.length === 11),
     JSON.stringify([opacity, rotation, anchor, width].map((param) => param.keys.length)),
   );
@@ -467,6 +598,7 @@ console.log('\nWhat an ease is allowed to touch');
 {
   const { world, call } = fresh();
   world.select('A.mp4');
+  park(world, world.clips.clipA, 5);
   world.clips.clipA.componentList.push(withoutParamNames(transformComponent()));
   const geometry = world.clips.clipA.componentList.at(-1);
   const position = geometry.paramList[1];
@@ -485,6 +617,7 @@ console.log('\nWhat an ease is allowed to touch');
 {
   const { world, call } = fresh();
   world.select('A.mp4');
+  park(world, world.clips.clipA, 5);
   // The same effect with its geometry in another order, which is all an index table is a bet on.
   const shuffled = withoutParamNames(
     makeComponent('AE.ADBE Geometry2', 'Transform', [
@@ -516,6 +649,7 @@ console.log('\nWhat an ease is allowed to touch');
 {
   const { world, call } = fresh();
   world.select('A.mp4');
+  park(world, world.clips.clipA, 4);
   const scale = paramOf(world.clips.clipA, 'AE.ADBE Motion', 'Scale');
   keyframed(scale, [
     [at(4), 100],
@@ -541,6 +675,7 @@ console.log('\nEasing something that was already eased');
 {
   const { world, call } = fresh();
   world.select('A.mp4');
+  park(world, world.clips.clipA, 6);
   const scale = paramOf(world.clips.clipA, 'AE.ADBE Motion', 'Scale');
   keyframed(scale, [
     [at(0), 100],
@@ -573,10 +708,14 @@ console.log('\nEasing something that was already eased');
     [at(6), 200],
     [at(12), 100],
   ]);
+  park(world, world.clips.clipA, 3);
   call({ op: 'ease', options: FACTORY_EASE });
-  check('both halves of a there-and-back are baked', scale.keys.length === 13, String(scale.keys.length));
+  check('the half the playhead is in is baked', scale.keys.length === 8, String(scale.keys.length));
+  park(world, world.clips.clipA, 9);
   call({ op: 'ease', options: FACTORY_EASE });
-  check('and the pose at the top survives a second run', keyAt(scale, 6)?.value === 200, String(keyAt(scale, 6)?.value));
+  check('and moving the playhead to the other half bakes that one too', scale.keys.length === 13, String(scale.keys.length));
+  call({ op: 'ease', options: FACTORY_EASE });
+  check('the pose at the top survives a second run over the way down', keyAt(scale, 6)?.value === 200, String(keyAt(scale, 6)?.value));
   check('with the way up still on the curve', Math.abs(keyAt(scale, 3).value - (100 + 100 * 0.8679)) < 1, String(keyAt(scale, 3).value));
 }
 
@@ -585,6 +724,7 @@ console.log('\nEasing something that was already eased');
 {
   const { world, call } = fresh();
   world.select('A.mp4');
+  park(world, world.clips.clipA, 4);
   const scale = paramOf(world.clips.clipA, 'AE.ADBE Motion', 'Scale');
   keyframed(scale, [
     [at(0), 100],
@@ -617,6 +757,7 @@ console.log('\nA key on every frame that this tool did not put there');
 {
   const { world, call } = fresh();
   world.select('A.mp4');
+  park(world, world.clips.clipA, 5);
   const scale = paramOf(world.clips.clipA, 'AE.ADBE Motion', 'Scale');
   const hand = [100, 101, 103, 106, 111, 119, 131, 148, 170, 196, 220];
   keyframed(
@@ -643,6 +784,7 @@ console.log('\nA key on every frame that this tool did not put there');
 {
   const { world, call } = fresh();
   world.select('A.mp4');
+  park(world, world.clips.clipA, 2);
   const scale = paramOf(world.clips.clipA, 'AE.ADBE Motion', 'Scale');
   keyframed(scale, [
     [at(0), 100],
@@ -665,6 +807,7 @@ console.log('\nHow much work one ease is allowed to do');
 {
   const { world, call } = fresh();
   world.select('A.mp4');
+  park(world, world.clips.clipA, 5);
   const scale = paramOf(world.clips.clipA, 'AE.ADBE Motion', 'Scale');
   keyframed(scale, [
     [at(0), 100],
@@ -684,6 +827,7 @@ console.log('\nHow much work one ease is allowed to do');
 {
   const { world, call } = fresh();
   world.select('A.mp4');
+  park(world, world.clips.clipA, 5);
   const scale = paramOf(world.clips.clipA, 'AE.ADBE Motion', 'Scale');
   keyframed(scale, [
     [at(0), 100],
@@ -701,6 +845,7 @@ console.log('\nA clip that has been retimed');
   const { world, call } = fresh();
   const fast = world.addClip({ name: 'fast.mp4', start: 20, end: 24, track: 1, sourceLength: 8 });
   world.select('fast.mp4');
+  park(world, fast, 5);
   const scale = paramOf(fast, 'AE.ADBE Motion', 'Scale');
   keyframed(scale, [
     [at(0), 100],
@@ -745,6 +890,7 @@ console.log('\nA bake that cannot be finished');
 {
   const { world, call } = fresh();
   world.select('A.mp4');
+  park(world, world.clips.clipA, 5);
   const scale = paramOf(world.clips.clipA, 'AE.ADBE Motion', 'Scale');
   keyframed(scale, [
     [at(0), 100],
@@ -775,12 +921,13 @@ console.log('\nA bake that cannot be finished');
   );
 }
 
-// A property with more than one pair on it is one shape, not a row of unrelated ones. A build that
-// refuses the write refuses it for the property, so the pairs that went in before the refusal are
-// the ones left holding a curve nobody can see the rest of.
+// A refusal part way through says something about the property, not about that frame, and a property
+// carrying half a curve is worse than one carrying none: the pair the playhead is in comes off whole,
+// and the pair next to it was never the tool's to touch.
 {
   const { world, call } = fresh();
   world.select('A.mp4');
+  park(world, world.clips.clipA, 15);
   const scale = paramOf(world.clips.clipA, 'AE.ADBE Motion', 'Scale');
   keyframed(scale, [
     [at(0), 100],
@@ -797,14 +944,14 @@ console.log('\nA bake that cannot be finished');
   };
   const done = call({ op: 'ease', options: FACTORY_EASE });
   check(
-    'a refusal in the second pair takes the first one off as well',
+    'a refusal takes off every frame the run had already written',
     JSON.stringify(scale.sortedKeys().map((key) => [key.at, key.value, key.interpolation])) === JSON.stringify(before),
     JSON.stringify(scale.sortedKeys().map((key) => [Math.round(key.at * 30), key.value])),
   );
   check('the editor\u2019s own three keyframes are all that is left', scale.keys.length === 3, String(scale.keys.length));
   check('nothing is reported as eased', done.data?.applied === 0 && done.data?.failed === 1, JSON.stringify(done.data));
   check(
-    'and it is counted once for the property rather than once per pair',
+    'and it is counted once for the property',
     /^1 property\(ies\) could not be written/.test(
       (done.data?.messages ?? []).find((line) => line.includes('put back')) ?? '',
     ),

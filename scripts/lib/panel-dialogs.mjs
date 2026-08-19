@@ -8,7 +8,7 @@ import { join } from 'node:path';
 
 import { check } from './check.mjs';
 import { settle } from './mock-cep.mjs';
-import { keyframed, makeProjectItem } from './mock-premiere.mjs';
+import { TICKS_PER_SECOND, keyframed, makeProjectItem } from './mock-premiere.mjs';
 
 const paeth = (left, up, upLeft) => {
   const guess = left + up - upLeft;
@@ -154,6 +154,10 @@ export const easeAndAnchorDialogs = async ({ window, world, cep, cepCalls, stage
     [0, 100],
     [0.2, 160],
   ]);
+  // The ease is drawn between the two keyframes the playhead sits between, so it has to be parked
+  // inside the pair. Put back afterwards, because where the playhead is is also where a paste lands.
+  const playheadWas = world.sequence.getPlayerPosition().ticks;
+  world.sequence.setPlayerPosition(String((world.clips.clipB.start.seconds + 0.1) * TICKS_PER_SECOND));
   await press('ArrowUp');
   await press('Enter');
   await settle(20);
@@ -161,6 +165,7 @@ export const easeAndAnchorDialogs = async ({ window, world, cep, cepCalls, stage
   check('the amount on screen is the one that reached the host', /34 out \/ 100 in/.test(toastText()), toastText());
   check('and it is remembered for the next time the dialog opens', savedSettings().ease.current.easeOut === 34, JSON.stringify(savedSettings().ease.current));
   check('the palette leaves the dialog once it has run', !window.document.querySelector('.ease'));
+  world.sequence.setPlayerPosition(playheadWas);
 
   await summon();
   await type('ease');
@@ -217,6 +222,17 @@ export const easeAndAnchorDialogs = async ({ window, world, cep, cepCalls, stage
   const segNamed = (label) => [...window.document.querySelectorAll('.seg__item')].find((node) => node.textContent === label);
   check('the dialog offers Motion or the Transform effect', Boolean(segNamed('Motion')) && Boolean(segNamed('Transform')), '');
   check('and the frame or what is drawn inside it', Boolean(segNamed('Frame')) && Boolean(segNamed('Alpha')), '');
+
+  // The sheet is one screenful: the grid and the two switches share a row, and the window it asks
+  // for is short enough that nothing needs scrolling to be read.
+  const body = window.document.querySelector('.anchor__body');
+  check('the grid and the switches sit in one row', Boolean(body?.querySelector('.grid')) && Boolean(body?.querySelector('.anchor__side .seg')), body?.className ?? 'no body');
+  check('with no section headings between them', window.document.querySelectorAll('.anchor .section-title').length === 0, String(window.document.querySelectorAll('.anchor .section-title').length));
+  check(
+    'and the window it asks for is short',
+    (cepCalls.resizes.at(-1)?.[1] ?? 0) <= 240,
+    JSON.stringify(cepCalls.resizes.at(-1)),
+  );
 
   reset();
   await digit(1);

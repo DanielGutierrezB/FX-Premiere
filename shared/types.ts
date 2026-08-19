@@ -148,46 +148,6 @@ export interface UnnestSurvey {
   identities: string[];
 }
 
-/** Which stage of one nest the panel is at, which is also which key it has to press next. */
-export type UnnestStage = 'copy' | 'paste' | 'done';
-
-/** The answer to `unnestArm` and `unnestHarvest`: what to press, and for which nest. */
-export interface UnnestStep {
-  token: string;
-  stage: UnnestStage;
-  nest: string;
-  /** Clips selected inside the nested sequence, so a Copy that reached nothing is visible. */
-  clips: number;
-  /** Only on the `done` stage, where there is nothing left to press and the run is over. */
-  outcome: ApplyOutcome | null;
-}
-
-export interface UnnestProgress {
-  /** True once the queue is empty; the panel stops looping on this rather than on a count. */
-  done: boolean;
-  outcome: ApplyOutcome;
-}
-
-/** Whether posting keyboard events is allowed. Windows never asks, so it is always granted there. */
-export type KeysAccess = 'granted' | 'denied' | 'unknown';
-
-/** One run of the native helper in a one-shot mode, parsed from its `FXP_NAME=value` lines. */
-export interface KeysReport {
-  ok: boolean;
-  /** Empty when it worked; otherwise `no-access`, `screen-locked`, `not-frontmost`, `bad-combo`. */
-  error: string;
-  access: KeysAccess;
-  locked: boolean;
-  frontIsTarget: boolean;
-  frontmost: string;
-  /** Which process macOS holds responsible, which is whose name the permission row carries. */
-  responsible: string;
-  /** Whether asking for the permission actually opened the setting, or it was already on. */
-  requested: boolean;
-  pasteboard: number | null;
-  posted: string;
-}
-
 /**
  * How much of each side of a keyframe pair the ease takes up, as Premiere's own influence numbers:
  * `easeOut` belongs to the first keyframe of the pair and `easeIn` to the second.
@@ -348,8 +308,12 @@ export interface PasteSettings extends CompassPath {
   createdFolders: string[];
 }
 
-/** Which clipboard flavour the image came out of, which is what decides whether alpha survived. */
-export type ClipboardSource = 'png' | 'tiff' | 'nsimage' | 'dibv5' | 'bitmap' | 'none';
+/**
+ * Which clipboard flavour the paste came out of, which is what decides whether alpha survived.
+ * `file` is the one that is not pixels at all: a file copied in Finder or Explorer, which is taken
+ * as the media itself rather than as a picture of it.
+ */
+export type ClipboardSource = 'png' | 'tiff' | 'nsimage' | 'dibv5' | 'bitmap' | 'file' | 'none';
 
 /** One run of the helper's clipboard mode, parsed from its `FXP_NAME=value` lines. */
 export interface ClipboardGrab {
@@ -361,6 +325,10 @@ export interface ClipboardGrab {
   alpha: boolean;
   width: number;
   height: number;
+  /**
+   * For the image flavours, the scratch PNG the helper just wrote, which is ours to move. For
+   * `file`, the editor's own file, which is only ever copied from.
+   */
   path: string;
   bytes: number;
 }
@@ -427,18 +395,14 @@ export type HostRequest =
   | { op: 'motion'; command: MotionCommand }
   | { op: 'command'; commandId: string }
   | { op: 'applyCaptured'; preset: CapturedPreset }
-  // Un-nesting is a sequence of ops rather than one, because only the panel can press the keys
-  // Premiere's own Copy and Paste are behind, and the host has to prepare and check around each.
   | { op: 'unnestSurvey'; media: UnnestMedia }
-  | { op: 'unnestBegin'; options: UnnestOptions; nests: string[] }
-  | { op: 'unnestArm'; token: string }
-  | { op: 'unnestHarvest'; token: string }
-  | { op: 'unnestFinish'; token: string }
-  | { op: 'unnestAbort'; token: string; reason: string }
+  /** `nests` is what the dialog was about, so a selection that changed since is refused. */
+  | { op: 'unnestRun'; options: UnnestOptions; nests: string[] }
   | { op: 'ease'; options: EaseOptions }
   | { op: 'anchorSources' }
   | { op: 'anchor'; options: AnchorOptions; bounds: AnchorBounds[] }
   | { op: 'projectContext' }
+  /** `seconds` at zero means the media has a length of its own and is to be placed at it. */
   | { op: 'pasteStill'; path: string; bin: string; seconds: number }
   | { op: 'compassApply'; media: string; frame: string }
   | { op: 'compassExport'; path: string; fileName: string; preset: string }
@@ -534,9 +498,20 @@ export interface Settings {
   /** Slots in every favourite row, which is also the highest digit that fires one. */
   favoriteSlots: number;
   /**
-   * Content size asked of the host. Null means it follows what is being shown: the width follows
-   * the favourite slots, the height follows the resting list.
+   * Content size asked of the host for the palette itself. Null means it follows what is being
+   * shown: the width follows the favourite slots, the height follows the resting list.
    */
   width: number | null;
   height: number | null;
+  /**
+   * The size each sheet was last dragged to, by the name of the view. Kept apart from the palette's
+   * own size because they are different windows to work in: Compass is a page of paths and the
+   * palette is a list of names, and one size for both is what makes the dense ones unreadable.
+   */
+  sheetSizes: Record<string, WindowBox>;
+}
+
+export interface WindowBox {
+  width: number;
+  height: number;
 }

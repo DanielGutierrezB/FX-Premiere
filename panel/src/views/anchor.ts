@@ -85,50 +85,48 @@ export class AnchorDialog {
       }),
     );
 
+    // The grid is the question and the two switches qualify it, so they sit beside it rather than
+    // under it: the whole sheet is then one screenful at any font scale.
     container.appendChild(
-      el(
-        'div',
-        { class: 'grid' },
-        GRID.map((target, index) =>
-          el(
-            'button',
-            {
-              class: `grid__cell${target === this.options.target ? ' grid__cell--on' : ''}`,
-              title: target,
-              onclick: () => {
-                this.options.target = target;
-                this.rerender();
+      el('div', { class: 'anchor__body' }, [
+        el(
+          'div',
+          { class: 'grid' },
+          GRID.map((target, index) =>
+            el(
+              'button',
+              {
+                class: `grid__cell${target === this.options.target ? ' grid__cell--on' : ''}`,
+                title: target,
+                onclick: () => {
+                  this.options.target = target;
+                  this.rerender();
+                },
               },
-            },
-            [el('span', { class: 'grid__key', text: String(index + 1) })],
+              [el('span', { class: 'grid__key', text: String(index + 1) })],
+            ),
           ),
         ),
-      ),
-    );
-
-    container.appendChild(el('div', { class: 'section-title', text: 'Where the anchor lives' }));
-    container.appendChild(
-      segmented(COMPONENTS, this.options.component, (value) => {
-        this.options.component = value;
-        this.rerender();
-      }),
-    );
-
-    container.appendChild(el('div', { class: 'section-title', text: 'What the corners are on' }));
-    container.appendChild(
-      segmented(BOUNDS, this.options.bounds, (value) => {
-        this.options.bounds = value;
-        this.rerender();
-      }),
-    );
-    container.appendChild(
-      el('span', {
-        class: 'field__hint',
-        text:
-          this.options.bounds === 'alpha'
-            ? 'The edges of what is actually drawn. Only PNG sources can be read; anything else falls back to the frame and says so.'
-            : 'The edges of the whole clip, whatever its alpha channel says.',
-      }),
+        el('div', { class: 'anchor__side' }, [
+          el('span', { class: 'anchor__label', text: 'Anchor on' }),
+          segmented(COMPONENTS, this.options.component, (value) => {
+            this.options.component = value;
+            this.rerender();
+          }),
+          el('span', { class: 'anchor__label', text: 'Corners on' }),
+          segmented(BOUNDS, this.options.bounds, (value) => {
+            this.options.bounds = value;
+            this.rerender();
+          }),
+          el('span', {
+            class: 'field__hint',
+            text:
+              this.options.bounds === 'alpha'
+                ? 'The edges of what is drawn. Only PNG sources can be read; anything else falls back to the frame and says so.'
+                : 'The edges of the whole clip, whatever its alpha channel says.',
+          }),
+        ]),
+      ]),
     );
 
     container.appendChild(

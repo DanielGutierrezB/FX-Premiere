@@ -14,8 +14,6 @@ import {
   type UnnestSurvey,
 } from '@shared/types';
 import { EMPTY_CONTEXT, readContext } from '@shared/compass-run';
-import { KEYS_ASKED, KEYS_GRANTED } from './keys-copy';
-import { keysBridge } from './keys-bridge';
 import { probePaste, type PasteProbe } from './paste';
 import { AnchorDialog } from './views/anchor';
 import { CompassSheet } from './views/compass';
@@ -124,7 +122,6 @@ export class Sheets {
       {
         selectedClips: () => host.sequence()?.selectedClips ?? 0,
         apply: (item, media) => host.applyUnnest(item, media),
-        requestKeys: () => void this.requestKeys(),
         back: () => host.back(),
       },
       defaultSettings().unnest,
@@ -277,20 +274,13 @@ export class Sheets {
     this.transitionDialog.render(this.host.body());
   }
 
-  /**
-   * Both answers are read before the dialog appears: what the nests hold, and whether the keystrokes
-   * are allowed at all. A dialog that offered Enter and then refused it would have been the wrong
-   * place to find out.
-   */
+  /** What the nests hold is read before the dialog appears, so Enter is offered on a known quantity. */
   async openUnnest(item: CatalogItem): Promise<void> {
     const media = this.host.settings().unnest.media;
-    const [survey, keys] = await Promise.all([
-      callHost<UnnestSurvey>({ op: 'unnestSurvey', media }),
-      keysBridge().preflight(),
-    ]);
+    const survey = await callHost<UnnestSurvey>({ op: 'unnestSurvey', media });
     this.unnestNests = survey.data?.identities ?? [];
     this.enter('unnest');
-    this.unnestDialog.open(item, this.host.settings().unnest, survey.data ?? null, keys);
+    this.unnestDialog.open(item, this.host.settings().unnest, survey.data ?? null);
     this.unnestDialog.render(this.host.body());
   }
 
@@ -300,13 +290,6 @@ export class Sheets {
    */
   nests(): string[] {
     return this.unnestNests;
-  }
-
-  /** Opens the system setting on macOS, then says what it answered without waiting to be asked. */
-  private async requestKeys(): Promise<void> {
-    const asked = await keysBridge().request();
-    this.host.toast(asked.access === 'granted' ? KEYS_GRANTED : KEYS_ASKED, asked.access === 'granted' ? 'info' : 'error');
-    this.unnestDialog.noteKeys(await keysBridge().preflight());
   }
 
   openEase(item: CatalogItem): void {

@@ -1,8 +1,6 @@
-import { keysAllowed } from '@shared/keys';
-import type { CatalogItem, KeysReport, UnnestMedia, UnnestOptions, UnnestSurvey } from '@shared/types';
+import type { CatalogItem, UnnestMedia, UnnestOptions, UnnestSurvey } from '@shared/types';
 import { clear, el } from '../dom';
 import { buttonRow } from '../widgets';
-import { KEYS_GRANT_BUTTON, KEYS_MISSING } from '../keys-copy';
 
 /** In the order they are offered, which is also the order the digits reach them. */
 const CHOICES: Array<{ value: UnnestMedia; label: string; hint: string }> = [
@@ -12,41 +10,46 @@ const CHOICES: Array<{ value: UnnestMedia; label: string; hint: string }> = [
 ];
 
 /**
- * Every write an un-nest makes goes through the QE DOM, which creates no entry on Premiere's undo
- * list. The clips that come out can be deleted by hand and a disabled nest can be switched back on,
- * but Cmd+Z will not do either, and that is worth knowing before Enter rather than after.
+ * Part of an un-nest is on Premiere's undo list and part of it is not: the clips are placed through
+ * the ordinary API and come off one Cmd+Z at a time, while switching the nest back on and taking away
+ * a track this had to add are QE writes that leave no entry at all.
  */
-const NO_UNDO = 'Premiere cannot undo this: Cmd+Z will not put the nest back.';
+const NO_UNDO = 'Cmd+Z takes the rebuilt clips off one at a time; switching the nest back on is by hand.';
 
 interface UnnestHost {
   /** Read on every render: the selection can change while the dialog is up. */
   selectedClips(): number;
   apply(item: CatalogItem, media: UnnestMedia): void;
-  /** Asks macOS for the keystroke permission, then re-renders with whatever it answered. */
-  requestKeys(): void;
   back(): void;
 }
 
-/** What the survey found, worth saying only when there is something to say about it. */
+/**
+ * What the survey found, worth saying only when there is something to say about it. The contents are
+ * rebuilt clip by clip, so what cannot be rebuilt is named before Enter: a transition is not a clip
+ * and no API makes one, and no API says which angle of a multicam clip was showing.
+ */
 const surveyLine = (survey: UnnestSurvey): string => {
-  const risks = [
-    survey.titles > 0 ? `${survey.titles} title${survey.titles === 1 ? '' : 's'}` : '',
-    survey.transitions > 0 ? `${survey.transitions} transition${survey.transitions === 1 ? '' : 's'}` : '',
-    survey.multicam > 0 ? `${survey.multicam} multicam clip${survey.multicam === 1 ? '' : 's'}` : '',
-    survey.speedChanges > 0 ? `${survey.speedChanges} speed change${survey.speedChanges === 1 ? '' : 's'}` : '',
-  ].filter(Boolean);
-  const inside = `${survey.clips} clip${survey.clips === 1 ? '' : 's'} inside`;
-  const trimmed = survey.trimmed > 0 ? ` \u00b7 ${survey.trimmed} trimmed, rebuilt before copying` : '';
-  if (risks.length === 0) {
-    return `${inside}${trimmed}`;
+  const parts = [`${survey.clips} clip${survey.clips === 1 ? '' : 's'} inside`];
+  // A graphic made in the timeline may have no project item behind it, and a placement is made from
+  // a project item: the nest is refused by name when Premiere will not describe one.
+  if (survey.titles > 0) {
+    parts.push(`${survey.titles} title${survey.titles === 1 ? '' : 's'} made here, which Premiere may not describe`);
   }
-  return `${inside}${trimmed} \u00b7 ${risks.join(', ')} may not come out the same`;
+  if (survey.transitions > 0) {
+    parts.push(`${survey.transitions} transition${survey.transitions === 1 ? '' : 's'} will not come out`);
+  }
+  if (survey.multicam > 0) {
+    parts.push(`${survey.multicam} multicam clip${survey.multicam === 1 ? '' : 's'}: those nests are refused`);
+  }
+  if (survey.speedChanges > 0) {
+    parts.push(`${survey.speedChanges} retimed clip${survey.speedChanges === 1 ? '' : 's'}`);
+  }
+  return parts.join(' \u00b7 ');
 };
 
 /**
- * The one question un-nesting has to ask, plus the two things worth knowing before Enter: whether the
- * keystroke permission is there at all, and what the nests hold that may not survive the round trip
- * through Premiere's own Copy and Paste. Neither routes anything; both are said out loud.
+ * The one question un-nesting has to ask, plus what the nests hold that a rebuild cannot carry across.
+ * Nothing here routes anything: it is said out loud before Enter rather than reported after it.
  */
 export class UnnestDialog {
   private item: CatalogItem | null = null;
@@ -54,8 +57,6 @@ export class UnnestDialog {
   private media: UnnestMedia;
 
   private survey: UnnestSurvey | null = null;
-
-  private keys: KeysReport | null = null;
 
   private container: HTMLElement | null = null;
 
@@ -66,26 +67,15 @@ export class UnnestDialog {
     this.media = defaults.media;
   }
 
-  open(item: CatalogItem, options: UnnestOptions, survey: UnnestSurvey | null, keys: KeysReport | null): void {
+  open(item: CatalogItem, options: UnnestOptions, survey: UnnestSurvey | null): void {
     this.item = item;
     this.media = options.media;
     this.survey = survey;
-    this.keys = keys;
-  }
-
-  /** After the permission was asked for, which is the only thing that changes under the dialog. */
-  noteKeys(keys: KeysReport | null): void {
-    this.keys = keys;
-    this.rerender();
   }
 
   clear(): void {
     this.item = null;
     this.survey = null;
-  }
-
-  private allowed(): boolean {
-    return this.keys === null || keysAllowed(this.keys);
   }
 
   render(container: HTMLElement): void {
@@ -135,24 +125,10 @@ export class UnnestDialog {
       ),
     );
 
-    if (!this.allowed()) {
-      container.appendChild(
-        el('div', { class: 'unnest__blocked' }, [
-          el('div', { class: 'unnest__blocked-text', text: KEYS_MISSING }),
-          el('button', { class: 'button', text: KEYS_GRANT_BUTTON, onclick: () => this.host.requestKeys() }),
-        ]),
-      );
-    }
-
     container.appendChild(
       buttonRow('\u2191\u2193 or 1\u20133 chooses, Enter un-nests, Esc goes back.', [
         el('button', { class: 'button', text: 'Back', onclick: () => this.host.back() }),
-        el('button', {
-          class: 'button button--primary',
-          text: 'Un-nest',
-          disabled: !this.allowed(),
-          onclick: () => this.confirm(),
-        }),
+        el('button', { class: 'button button--primary', text: 'Un-nest', onclick: () => this.confirm() }),
       ]),
     );
   }
@@ -196,7 +172,7 @@ export class UnnestDialog {
 
   /** Also reachable from the footer, so a click on the hint does what the key does. */
   confirm(): void {
-    if (this.item && this.allowed()) {
+    if (this.item) {
       this.host.apply(this.item, this.media);
     }
   }

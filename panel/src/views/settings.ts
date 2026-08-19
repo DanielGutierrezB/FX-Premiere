@@ -1,3 +1,4 @@
+import { chooseOnDisk } from '@shared/cep';
 import { formatHotkey, formatModifiers, hotkeyFromEvent, isHotkeyUsable, modifiersOf } from '@shared/hotkey';
 import {
   ACCENTS,
@@ -10,18 +11,9 @@ import {
   readHelperStatus,
   sameModifiers,
 } from '@shared/settings';
-import type { KeysReport, Modifiers, Settings } from '@shared/types';
-import { keysBridge } from '../keys-bridge';
+import type { Modifiers, Settings } from '@shared/types';
 import { applyUpdate, checkForUpdate, isDevInstall, localVersion, type UpdateCheck } from '@shared/updater';
 import { clear, el } from '../dom';
-import {
-  KEYS_ASKED,
-  KEYS_GRANTED,
-  KEYS_GRANT_BUTTON,
-  KEYS_ROW_TITLE,
-  KEYS_WHY,
-  keysState,
-} from '../keys-copy';
 import { buttonRow, fieldRow, segmented, swatches, switchNode } from '../widgets';
 
 const RELOAD_DELAY_MS = 900;
@@ -67,8 +59,6 @@ export class SettingsSheet {
 
   private state: 'idle' | 'checking' | 'installing' = 'idle';
 
-  private keys: KeysReport | null = null;
-
   private container: HTMLElement | null = null;
 
   constructor(private readonly host: SettingsHost) {}
@@ -78,7 +68,6 @@ export class SettingsSheet {
     if (this.update === null && this.state === 'idle' && !isDevInstall()) {
       void this.checkForUpdate();
     }
-    void this.checkKeys();
   }
 
   closed(): void {
@@ -183,7 +172,6 @@ export class SettingsSheet {
     );
 
     container.appendChild(el('div', { class: 'section-title', text: 'Un-nest' }));
-    container.appendChild(this.keysRow());
 
     container.appendChild(el('div', { class: 'section-title', text: 'Behaviour' }));
     container.appendChild(
@@ -304,6 +292,16 @@ export class SettingsSheet {
           folderInput,
           el('button', {
             class: 'button',
+            text: 'Browse\u2026',
+            onclick: () => {
+              const chosen = chooseOnDisk({ folder: true, title: 'Choose a folder of presets' });
+              if (chosen !== null) {
+                folderInput.value = chosen;
+              }
+            },
+          }),
+          el('button', {
+            class: 'button',
             text: 'Add',
             onclick: () => {
               const value = folderInput.value.trim();
@@ -353,13 +351,14 @@ export class SettingsSheet {
         }),
       ),
     );
-    const sizedByHand = settings.width !== null || settings.height !== null;
+    const sheetsSized = Object.keys(settings.sheetSizes).length > 0;
+    const sizedByHand = settings.width !== null || settings.height !== null || sheetsSized;
     container.appendChild(
       fieldRow(
         'Window width',
         sizedByHand
-          ? 'This is the size in force. Fit it back to let the bar and the list decide again.'
-          : 'The width follows the numbered bar and the height follows the resting list, until you pick or drag one.',
+          ? 'This is the size in force. Fit it back to let the bar and the list decide again, and to forget the size each sheet was dragged to.'
+          : 'The width follows the numbered bar and the height follows the resting list, until you pick or drag one. Each sheet opens at the size it needs, and keeps whatever you drag it to.',
         el('div', { class: 'field__control' }, [
           segmented(
             WIDTHS.map((width) => ({ value: width, label: `${width}` })),
@@ -378,6 +377,7 @@ export class SettingsSheet {
                 onclick: () => {
                   settings.width = null;
                   settings.height = null;
+                  settings.sheetSizes = {};
                   this.save(false);
                 },
               })
@@ -441,36 +441,6 @@ export class SettingsSheet {
         el('button', { class: 'button button--primary', text: 'Done', onclick: () => this.host.close() }),
       ]),
     );
-  }
-
-  /**
-   * The keystroke permission un-nesting needs. Checked when the sheet opens rather than on every
-   * render: the answer comes from a process, and a sheet that re-renders on every keypress would
-   * spawn one each time.
-   */
-  private keysRow(): HTMLElement {
-    const windows = process.platform === 'win32';
-    return fieldRow(
-      KEYS_ROW_TITLE,
-      `${keysState(this.keys, windows)}. ${KEYS_WHY}`,
-      el('button', {
-        class: 'button',
-        text: KEYS_GRANT_BUTTON,
-        disabled: windows || this.keys?.access === 'granted',
-        onclick: () => void this.requestKeys(),
-      }),
-    );
-  }
-
-  private async checkKeys(): Promise<void> {
-    this.keys = await keysBridge().preflight();
-    this.rerender();
-  }
-
-  private async requestKeys(): Promise<void> {
-    const asked = await keysBridge().request();
-    this.host.toast(asked.access === 'granted' ? KEYS_GRANTED : KEYS_ASKED, asked.access === 'granted' ? 'info' : 'error');
-    await this.checkKeys();
   }
 
   private updateRow(): HTMLElement {

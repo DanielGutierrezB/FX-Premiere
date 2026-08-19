@@ -107,8 +107,15 @@ export class ApplyPipeline {
       case LOCAL_COMMAND_ANCHOR:
         this.host.openAnchor(item);
         return;
+      // Enter pastes. The clipboard is not a question: what is on it is what goes on the timeline,
+      // at the length Premiere gives a graphic, and Shift is there for the once in a while somebody
+      // wants to see where it is going or set a different duration first.
       case LOCAL_COMMAND_PASTE:
-        await this.host.openPaste(item);
+        if (intent === 'withOptions') {
+          await this.host.openPaste(item);
+          return;
+        }
+        await this.run(item, intent === 'keepOpen', { hold: true });
         return;
       case LOCAL_COMMAND_COMPASS:
         await this.host.openCompass();

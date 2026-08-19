@@ -25,11 +25,38 @@ interface AdobeCep {
   resizeContent(width: number, height: number): void;
 }
 
+/** What CEP's own file dialogs answer with: a non-zero `err`, or the paths that were chosen. */
+interface CepDialogResult {
+  err: number;
+  data?: string[];
+}
+
+interface CepFs {
+  showOpenDialogEx?(
+    allowMultiple: boolean,
+    chooseFolder: boolean,
+    title: string,
+    initialPath?: string,
+    fileTypes?: string[],
+    friendlyPrefix?: string,
+  ): CepDialogResult;
+  showOpenDialog?(
+    allowMultiple: boolean,
+    chooseFolder: boolean,
+    title: string,
+    initialPath?: string,
+    fileTypes?: string[],
+  ): CepDialogResult;
+}
+
 declare global {
   interface Window {
     __adobe_cep__?: AdobeCep;
     cep_node?: { require: NodeRequire };
-    cep?: { process?: { createProcess(...args: string[]): { err: number; data: number } } };
+    cep?: {
+      process?: { createProcess(...args: string[]): { err: number; data: number } };
+      fs?: CepFs;
+    };
   }
 }
 
@@ -184,6 +211,41 @@ export const resizeSelf = (width: number, height: number): void => {
   } catch (error) {
     appendLog('panel', `resize failed: ${String(error)}`);
   }
+};
+
+/**
+ * A folder or a file, chosen in the system's own dialog.
+ *
+ * Typing a path is fine for the one somebody already knows and hopeless for the one they are looking
+ * for, and there is nowhere in a CEP panel to draw a file browser. Null covers everything that is not
+ * a choice: a host too old to have the dialog, a cancelled one, an error. The caller leaves whatever
+ * was in the field alone on null rather than clearing it.
+ */
+export const chooseOnDisk = (options: {
+  folder: boolean;
+  title: string;
+  from?: string;
+  /** Extensions without the dot, for a file dialog. Ignored when choosing a folder. */
+  types?: string[];
+}): string | null => {
+  const fs = window.cep?.fs;
+  const open = fs?.showOpenDialogEx ?? fs?.showOpenDialog;
+  if (!open || !fs) {
+    appendLog('panel', 'this host has no file dialog, so paths can only be typed');
+    return null;
+  }
+  let result: CepDialogResult;
+  try {
+    result = open.call(fs, false, options.folder, options.title, options.from ?? '', options.types ?? []);
+  } catch (error) {
+    appendLog('panel', `file dialog failed: ${String(error)}`);
+    return null;
+  }
+  const chosen = result?.data?.[0];
+  if (result?.err !== 0 || typeof chosen !== 'string' || chosen === '') {
+    return null;
+  }
+  return stripFileScheme(chosen);
 };
 
 /**

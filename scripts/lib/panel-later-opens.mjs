@@ -10,7 +10,6 @@ import { check } from './check.mjs';
 import { createCepWindow, settle, waitFor } from './mock-cep.mjs';
 import { fileReads } from './mock-files.mjs';
 import { createHost } from './mock-premiere.mjs';
-import { createKeysFake } from './panel-keys.mjs';
 
 export const laterOpens = async ({ hostScript, panelHtml, panelBundle, stage, storage, presetFixture, settingsDir }) => {
   console.log('\nOpening it again');
@@ -166,7 +165,6 @@ export const laterOpens = async ({ hostScript, panelHtml, panelBundle, stage, st
   const oddHost = createHost({ hostScript, documentsRoot: join(oddStage, 'Documents') });
   oddHost.world.select('Nested Sequence');
   const odd = createCepWindow({ html: panelHtml, home: oddStage, evalScript: oddHost.evalInHost, storage: {} });
-  odd.window.__fxpKeys = createKeysFake(oddHost.world).keys;
   odd.run(panelBundle);
   await settle(60);
   const oddInput = odd.window.document.querySelector('.search__input');
@@ -178,7 +176,7 @@ export const laterOpens = async ({ hostScript, panelHtml, panelBundle, stage, st
   const oddChoice = [...odd.window.document.querySelectorAll('.choice--active')].map((node) => node.textContent).join('');
   check('a media choice nobody wrote falls back to the default', /Video and audio/.test(oddChoice), oddChoice);
   odd.window.dispatchEvent(new odd.window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
-  // The run waits on the keystrokes it posts, so this waits on the run rather than on a tick count.
+  // The run is one host call, so this waits on the clips arriving rather than on a tick count.
   await waitFor(() => oddHost.world.tracks.audio[1].clipList.length > 0, 4000);
   await settle(30);
   const oddSaved = JSON.parse(readFileSync(join(oddSettingsDir, 'settings.json'), 'utf8')).unnest;
@@ -239,50 +237,18 @@ export const laterOpens = async ({ hostScript, panelHtml, panelBundle, stage, st
   tools.close();
   rmSync(toolStage, { recursive: true, force: true });
 
-  // An un-nest is a loop of keystrokes with the palette closed. On a Premiere that will not keep
-  // the page loaded, closing it unloads the page: the run stops between reserving the tracks and
-  // putting anything on them, and nothing is left to notice or to report it.
+  // Un-nesting used to be a loop of keystrokes posted with the palette closed, which needed Premiere
+  // to keep the page loaded between them. It is one host call now, so a Premiere that never offered
+  // to keep the palette loaded is nothing more than a slower open: the run still has to go ahead.
   console.log('\nA Premiere that will not keep the palette loaded');
   const frailStage = mkdtempSync(join(tmpdir(), 'fxp-frail-'));
   const frailHost = createHost({ hostScript, documentsRoot: join(frailStage, 'Documents') });
   delete frailHost.context.app.setExtensionPersistent;
   frailHost.world.select('Nested Sequence');
   const frail = createCepWindow({ html: panelHtml, home: frailStage, evalScript: frailHost.evalInHost, storage: {} });
-  const frailKeys = createKeysFake(frailHost.world);
-  frail.window.__fxpKeys = frailKeys.keys;
   frail.run(panelBundle);
   await settle(60);
   const frailInput = frail.window.document.querySelector('.search__input');
-  frailInput.value = 'un-nest';
-  frailInput.dispatchEvent(new frail.window.Event('input', { bubbles: true }));
-  await settle(10);
-  frail.window.dispatchEvent(new frail.window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
-  await settle(20);
-  const closesBefore = frail.calls.closeExtension;
-  frail.window.dispatchEvent(new frail.window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
-  // Waited on rather than settled through: the point is that the keystrokes never come, and a tick
-  // count short of the first one would prove nothing.
-  await waitFor(() => frailKeys.presses.length > 0, 1500);
-  await settle(60);
-  check('the run refuses to start rather than entering one it cannot survive', frailKeys.presses.length === 0, JSON.stringify(frailKeys.presses));
-  check('the nest is untouched', frailHost.world.clips.nestClip.disabled === false);
-  check(
-    'nothing was placed on the tracks above it',
-    frailHost.world.tracks.video.slice(1).every((track) => track.clipList.length === 0),
-    JSON.stringify(frailHost.world.tracks.video.map((track) => track.clipList.map((clip) => clip.name))),
-  );
-  check('and the palette never closed itself', frail.calls.closeExtension === closesBefore, String(frail.calls.closeExtension));
-  check(
-    'the reason says what Premiere would not do',
-    /will not keep the palette loaded/.test(frail.window.document.querySelector('.foot:not(.foot--hidden)')?.textContent ?? ''),
-    frail.window.document.querySelector('.foot:not(.foot--hidden)')?.textContent ?? '',
-  );
-
-  // The other half: a host that answered no once must not be remembered as having answered yes.
-  frailHost.context.app.setExtensionPersistent = (extensionId, persistent) => {
-    frailHost.world.persistCalls.push({ extensionId: String(extensionId), persistent: Number(persistent) });
-  };
-  frailHost.world.select('Nested Sequence');
   frailInput.value = 'un-nest';
   frailInput.dispatchEvent(new frail.window.Event('input', { bubbles: true }));
   await settle(10);
@@ -292,9 +258,14 @@ export const laterOpens = async ({ hostScript, panelHtml, panelBundle, stage, st
   await waitFor(() => frailHost.world.tracks.video[1].clipList.length > 0, 4000);
   await settle(30);
   check(
-    'and once the same Premiere does answer yes, the run goes ahead',
-    frailHost.world.tracks.video[1].clipList.length > 0,
+    'the nest comes out anyway',
+    frailHost.world.tracks.video[1].clipList.map((clip) => clip.name).join(',') === 'nested-1.mp4,nested-2.mp4',
     JSON.stringify(frailHost.world.tracks.video.map((track) => track.clipList.map((clip) => clip.name))),
+  );
+  check(
+    'and nothing in the footer says it was refused',
+    !/will not keep the palette loaded/.test(frail.window.document.querySelector('.foot')?.textContent ?? ''),
+    frail.window.document.querySelector('.foot')?.textContent ?? '',
   );
   frail.close();
   rmSync(frailStage, { recursive: true, force: true });

@@ -35,9 +35,12 @@ Ctrl + Space  →  gsblr  →  Enter  →  Gaussian Blur en los 8 clips seleccio
   **solo del tipo que estás sacando**: sacar solo audio no crea pistas de video vacías. Respeta el
   recorte del nest: sale exactamente lo que estaba en la línea de tiempo, ni un frame más. El nest
   original queda **desactivado** (no borrado) para que su audio no suene por debajo de lo que acaba
-  de salir; en los ajustes puedes cambiarlo a dejarlo como está o borrarlo. Los efectos, los títulos
-  y las transiciones de dentro del nest sobreviven, porque **el Copiar y Pegar lo hace Premiere**
-  (ver [Cómo funciona desanidar](#cómo-funciona-desanidar)), no un script que los reconstruye.
+  de salir; en los ajustes puedes cambiarlo a dejarlo como está o borrarlo. Los efectos y sus
+  keyframes salen con cada clip, y el clip que estaba desactivado dentro sale desactivado. Lo hace
+  **solo con la API de Premiere**: no pulsa teclas, no pide permisos del sistema y no depende de qué
+  panel tiene el foco (ver [Cómo funciona desanidar](#cómo-funciona-desanidar)). Lo que una
+  reconstrucción no puede llevar lo dice por su nombre y deja el nest como estaba: las transiciones
+  de dentro y los clips multicámara, porque no hay API que diga qué ángulo se estaba viendo.
   Opcionalmente entra en los nests que había dentro del nest, con un límite de profundidad.
 - **Suavizar keyframes (*Ease*)**: busca «ease», «suavizar» o «curvas» y las animaciones de los clips
   seleccionados dejan de ser rectas. Al invocarlo pide una sola cosa, la cantidad, con dos números al
@@ -149,28 +152,53 @@ Ctrl + Space  →  gsblr  →  Enter  →  Gaussian Blur en los 8 clips seleccio
 
 ### Opción rápida
 
-| Sistema | Instalador |
-| --- | --- |
-| macOS | `FX-Premiere-<versión>.pkg` (doble clic) |
-| Windows | `FX-Premiere-<versión>-setup.exe` (doble clic) |
-| Ambos | `FX-Premiere-<versión>.zxp` con cualquier instalador de ZXP |
+| Sistema | Instalador | Pasos |
+| --- | --- | --- |
+| macOS | `FX-Premiere-<versión>.pkg` (doble clic) | uno |
+| Windows | `FX-Premiere-<versión>-setup.exe` (doble clic) | uno |
+| Ambos | `FX-Premiere-<versión>.zxp` con cualquier instalador de ZXP | dos, mira abajo |
 
-Los tres artefactos se generan en `release/` y también los publica CI en cada tag.
+**Si puedes, usa el `.pkg` o el `.exe`.** Son los que dejan todo listo de una vez.
+
+Los artefactos se generan en `release/` y también los publica CI en cada tag.
 
 Después de instalar: **reinicia Premiere Pro**. La extensión invisible arranca con Premiere
 y toma posesión del atajo global. También puedes abrir el panel desde
 `Ventana > Extensiones > FX Premiere`.
 
+Los dos instaladores lo hacen **por usuario**, sin pedir contraseña: en macOS dentro de
+`~/Library/Application Support/Adobe/CEP/extensions/com.fxpremiere.suite` y en Windows dentro de
+`%APPDATA%\Adobe\CEP\extensions\com.fxpremiere.suite`. Premiere lee esas carpetas igual que las
+del sistema, y como son tuyas el panel puede actualizarse solo más adelante.
+
 Como los binarios no están firmados con un certificado comercial, la primera vez macOS pide
 clic derecho > Abrir en el `.pkg`, y Windows muestra el aviso de SmartScreen ("Más
 información > Ejecutar de todas formas"). El `.zxp` no tiene ese aviso.
+
+### El `.zxp` necesita un paso más
+
+El `.zxp` va firmado con un certificado propio, no con uno de Adobe. Premiere no carga
+extensiones firmadas así hasta que el **modo depuración de CEP** está activado, y mientras esté
+apagado el panel no aparece en `Ventana > Extensiones` aunque el `.zxp` se haya instalado sin
+un solo error. Es el fallo con el que se topa cualquiera que nunca haya desarrollado una
+extensión de CEP.
+
+Por eso cada release lleva `FX-Premiere-<versión>-activar-modo-depuracion.zip`. Descomprímelo y:
+
+- macOS: doble clic en `activar-modo-depuracion-mac.command` (si macOS se queja, clic
+  derecho > Abrir).
+- Windows: doble clic en `activar-modo-depuracion-windows.bat`, sin administrador.
+
+Después reinicia Premiere. Se hace una sola vez por ordenador; las actualizaciones siguientes
+ya no lo necesitan. El `.pkg` y el `.exe` activan el modo depuración ellos mismos, así que por
+esa vía no hay que tocar nada.
 
 ### Generar los instaladores tú mismo
 
 ```bash
 npm install
 npm run build          # bundle en dist/ + compila el helper nativo del sistema actual
-npm run package:zxp    # release/FX-Premiere-<versión>.zxp (descarga ZXPSignCmd la primera vez)
+npm run package:zxp    # release/FX-Premiere-<versión>.zxp + el zip con los activadores de tools/
 npm run package:pkg    # release/FX-Premiere-<versión>.pkg (solo macOS)
 # solo Windows; la versión se pasa a mano porque el .iss no la adivina
 iscc /DAppVersion=$(node -p "require('./package.json').version") scripts\installer-win.iss
@@ -234,6 +262,24 @@ pulsar para ir directo a los ajustes.
 En una instalación de desarrollo (la carpeta CEP es un symlink a `dist/`) el botón se desactiva
 a propósito para no pisarte el repo: ahí actualizas con `npm run install-dev`.
 
+### Si te dice que la carpeta no se puede escribir
+
+Actualizar desde el panel consiste en descomprimir el `.zxp` nuevo encima de la carpeta desde la
+que la extensión se está ejecutando, así que solo funciona si esa carpeta es tuya. Las versiones
+hasta la 1.6.2 se instalaban para todo el sistema (`/Library/...` en macOS, `Common Files` en
+Windows), y esas carpetas son de `root` o de administrador: ahí el botón no puede hacer nada y lo
+dice, nombrando la carpeta, en vez de fallar con un error de permisos sin explicación.
+
+La salida es descargar el instalador de la última versión y ejecutarlo. Deja la extensión en tu
+carpeta de usuario y a partir de ahí el botón del panel ya funciona.
+
+Quita la copia vieja o Premiere listará el panel dos veces:
+
+- Windows: desinstala FX Premiere desde Configuración > Aplicaciones **antes** de ejecutar el
+  `.exe` nuevo. El instalador nuevo ya no pide permisos de administrador, así que no puede borrar
+  por su cuenta lo que dejó uno que sí los pedía.
+- macOS: `sudo rm -rf "/Library/Application Support/Adobe/CEP/extensions/com.fxpremiere.suite"`.
+
 ## Cómo funciona
 
 ```
@@ -250,8 +296,7 @@ Panel (paleta estilo FX Console)
 Host ExtendScript  →  QE DOM + API oficial  →  clips seleccionados
 
 Y en el otro sentido, el ayudante nativo en un disparo:
-Panel  →  desanidar        →  CGEventPost / SendInput  →  Cmd+C, Cmd+V en Premiere
-Panel  →  pegar del portapapeles  →  NSPasteboard / clipboard de Win32  →  PNG en disco
+Panel  →  pegar del portapapeles  →  NSPasteboard / clipboard de Win32  →  archivo en disco
 ```
 
 Premiere no permite asignar atajos de teclado a paneles de extensión, así que el atajo vive
@@ -261,66 +306,48 @@ cierra solo cuando Premiere se cierra.
 
 ### Cómo funciona desanidar
 
-Premiere **no tiene ninguna API para desanidar**. Tampoco para copiar y pegar, ni para elegir a qué
-pista va un pegado: el DOM de vanilla tiene cinco métodos en `Track` y el de QE ninguno que sirva.
-Colocar la secuencia del nest en la línea de tiempo no la expande: la vuelve a anidar, sin importar el
-botón de *insertar y sobrescribir secuencias como nests o clips individuales*, y Adobe ha confirmado
-que ese botón no está expuesto a los scripts.
+Premiere **no tiene ninguna API para desanidar**. Tampoco para duplicar un `trackItem`, ni para copiar
+y pegar, ni para ejecutar un comando de menú: `app.executeCommand` no existe y
+`qe.executeConsoleCommand` con nombres de comando devuelve `false`. Colocar la secuencia del nest en la
+línea de tiempo no la expande: la vuelve a anidar, sin importar el botón de *insertar y sobrescribir
+secuencias como nests o clips individuales*, que Adobe ha confirmado que no está expuesto a los
+scripts.
 
-Queda un camino, y es el que FX Premiere usa: **que Premiere haga su propio Copiar y Pegar**. El
-ayudante nativo que ya lleva el atajo pulsa `Cmd/Ctrl + C` y `Cmd/Ctrl + V` mientras Premiere está al
-frente, y el host se encarga del resto. Es la razón por la que los títulos, los efectos, las
-transiciones y el ángulo de un multicámara salen intactos: no los reconstruye nadie, los mueve
-Premiere.
+Quedaban dos caminos. Uno era pulsar `Cmd/Ctrl + C` y `Cmd/Ctrl + V` desde el ayudante nativo, que es
+lo que hace Grave Robber; funciona, pero pide el permiso de Accesibilidad en macOS, depende de qué
+panel tiene el foco y falla «a veces». El otro es el que FX Premiere usa: **reconstruirlo con la API
+que sí hay**. No pulsa ninguna tecla, no pide nada al sistema operativo y no le importa dónde esté el
+foco.
 
-Un desanidado es entonces una secuencia de pasos, y **ninguno toca nada tuyo hasta que el anterior
-está comprobado**:
+Reconstruir significa esto, y **nada se escribe hasta que el plan entero está hecho**:
 
-1. La paleta se esconde, para que el teclado sea de Premiere y de la línea de tiempo.
-2. El host anota dónde está el nest, **reserva** las pistas de destino y calcula un hueco de trabajo
-   pasado el final de la secuencia.
-3. Deselecciona todo en la secuencia madre. Esto es lo que evita que un `Cmd + C` que llegue tarde
-   copie el nest en vez de lo que hay dentro.
-4. Si el nest está recortado, construye la parte que se ve como secuencia aparte, porque Copiar copia
-   clips enteros.
-5. Abre el nest, selecciona **solo los clips del tipo que pediste** y la paleta pulsa Copiar.
-6. Vuelve a la secuencia madre, pone el cabezal en el hueco de trabajo y la paleta pulsa Pegar.
-7. El host busca lo que apareció ahí, comprueba que sea lo que esperaba y **entonces** lo lleva a su
-   sitio: pista reservada, tiempo real, desvincular y volver a vincular.
-8. Retira el nest y borra la secuencia temporal si hizo una.
+1. Se lee la secuencia del nest por el DOM normal: cada clip que se ve en la parte que el nest está
+   reproduciendo de verdad (un nest recortado empieza más adentro), con su pista, su tiempo, el trozo
+   de origen que muestra, su velocidad, si estaba desactivado y **los efectos y keyframes que lleva**.
+2. Lo que una reconstrucción no puede llevar se rechaza **por su nombre y antes de tocar nada**: un
+   clip multicámara (no hay API que diga qué ángulo se veía), una transición (no hay API que cree una),
+   un clip que Premiere no describe, o un nest retimado.
+3. Se reservan las pistas que hacen falta, del tipo que pediste, sobre lo que ya hay, y se comprueba
+   que estén libres justo en el hueco donde va cada clip.
+4. Cada clip se coloca apuntando su elemento de proyecto al trozo de origen que mostraba y
+   sobrescribiendo en la pista reservada, así que nada aterriza entero para recortarse después. La
+   línea de tiempo se cuenta antes y después de cada colocación: un clip que llegó donde no se le
+   mandó se ve, no se supone.
+5. La mitad que nadie pidió —el sonido de un video cuando sacas solo imagen— aterriza en una pista
+   aparte y se retira; si hubo que crear esa pista, se quita al terminar. Sacar solo audio no deja
+   pistas de video vacías, y al contrario tampoco.
+6. Encima del clip colocado se vuelven a escribir los efectos leídos en el paso 1, anclados a su punto
+   de entrada para que los keyframes caigan donde estaban.
+7. Se retira el nest según lo que digan los ajustes, y los clips nuevos quedan seleccionados.
 
-Si algo falla en cualquier punto —el permiso, el teclado, un Premiere que no sabe mover un clip— se
-deshace lo que llevaba, se restaura la secuencia activa y la selección que tenías, y se te dice qué
-falló. Lo que hiciste tú no se toca.
-
-### El permiso para pulsar teclas
-
-En macOS, enviar pulsaciones está detrás del permiso que el sistema llama **Accesibilidad**. La
-primera vez que uses *Desanidar*, la paleta lo comprueba antes de hacer nada y, si falta, se niega,
-te dice el sitio exacto (*Ajustes del Sistema › Privacidad y seguridad › Accesibilidad*) y ofrece un
-botón para abrirlo. En los ajustes hay una fila con el estado y el mismo botón.
-
-Dos cosas que conviene saber:
-
-- **La fila que tienes que marcar dice «Adobe Premiere Pro»**, no FX Premiere. macOS atribuye el envío
-  de eventos al proceso *responsable*, y para un hijo de Premiere ese proceso es Premiere. El efecto
-  secundario bueno es que reinstalar o recompilar el ayudante no te quita el permiso.
-- **Esto no lee lo que escribes.** El permiso que Apple pide para enviar pulsaciones es el mismo que
-  pide para leerlas, pero el ayudante solo envía: no hay ningún camino en el código por el que una
-  tecla llegue a FX Premiere. Y no envía nada si Premiere no está al frente o si la pantalla está
-  bloqueada; en esos dos casos se niega y lo dice.
-
-En Windows no hay permiso que pedir por adelantado: `SendInput` funciona sin más, y el ayudante
-igualmente se niega a enviar nada si Premiere no es la ventana activa. Por eso los ajustes muestran
-el estado como **desconocido** hasta que hace falta enviar algo de verdad. Sí puede bloquearlo el
-propio Windows: si Premiere se está ejecutando como administrador y la paleta no —o al revés—, UIPI
-descarta las pulsaciones. Cuando eso pasa, el ayudante lo detecta (cuenta lo que Windows aceptó de
-lo que pidió) y falla diciéndolo, en lugar de informar de un pegado que nunca ocurrió; el estado
-pasa entonces a **denegado**. La receta es abrir los dos con el mismo nivel de privilegios.
+Si algo falla a mitad de un nest, **se quita todo lo que ese nest había puesto** y el nest se queda
+como estaba, con el motivo dicho por su nombre. Los nests que quedaban en la cola siguen: uno que no
+se pudo reconstruir no cancela los demás. El único caso que detiene la corrida es que una colocación
+haya sobrescrito algo tuyo, y entonces te dice qué era y que `Cmd/Ctrl + Z` lo devuelve.
 
 **Deshacer un desanidado cuesta varias pulsaciones de `Cmd/Ctrl + Z`.** Premiere no expone agrupación
-de deshacer a los scripts, así que cada clip movido es un paso del historial. Es la misma razón por la
-que aplicar un preset a diez clips deja diez pasos.
+de deshacer a los scripts, así que cada clip colocado es un paso del historial. Es la misma razón por
+la que aplicar un preset a diez clips deja diez pasos.
 
 ### De dónde sale la imagen que se pega
 
@@ -383,6 +410,7 @@ host/                  ExtendScript (ES3) que habla con Premiere
 helper/mac/            Hotkey.swift  (RegisterEventHotKey para el atajo; CGEventPost para desanidar)
 helper/win/            hotkey.cpp    (RegisterHotKey + ventana en primer plano; SendInput)
 scripts/               build, instalación de desarrollo, firma, instaladores, pruebas
+tools/                 activadores del modo depuración de CEP, para quien instale el .zxp
 ```
 
 ## Desarrollo
@@ -430,25 +458,25 @@ cuesta abrir la paleta en un Premiere de verdad, y no en el navegador de las pru
   animación densa hecha a mano, incluido lo que pasa al ejecutarlo dos veces; y el ancla, con la
   corrección de posición para las nueve esquinas, con escala y rotación fijas y animadas, sobre
   Motion y sobre el efecto Transform, y con una corrección que solo se puede aplicar a medias.
-- `scripts/lib/host-unnest.mjs` es el desanidado entero, con el Copiar y Pegar del Premiere simulado
-  en el lugar de las pulsaciones. La primera prueba es la que faltaba: **colocar la secuencia de un
-  nest la anida**, que es la creencia falsa sobre la que estaba construida la versión anterior. Luego,
-  qué cuenta como nest en una selección cualquiera, que las dos mitades vinculadas cuenten como una,
-  que la secuencia madre quede deseleccionada antes de copiar, dónde caen los clips y en qué orden se
-  mueven, el recorte, video/audio/ambos —incluido que sacar solo audio no toque ni una pista de video
-  y al contrario—, los nests dentro de nests con su límite, y **cada forma de fallar**: un Copiar que
-  no copió nada, un Premiere que no sabe mover un clip de pista, uno que acepta moverlo en el tiempo
-  y no lo mueve, uno que no sabe añadir pistas. En todas, la comprobación es la misma: el nest sigue
-  siendo un nest, no queda nada en las pistas de arriba ni pasado el final, y vuelven la secuencia
-  activa y la selección que había.
-- `scripts/lib/panel-unnest.mjs` hace lo propio desde el panel real: el diálogo con su aviso de qué
-  hay dentro, el permiso que falta (con su texto, su botón y que `Enter` no haga nada mientras falte),
-  una vuelta completa comprobando que la paleta se escondió y pulsó Copiar y luego Pegar, y una
-  pulsación rechazada a mitad de camino que tiene que dejar el nest intacto.
-- `scripts/lib/panel-keys.mjs` es lo único que corre el ayudante **de verdad**: le pregunta el
-  permiso, el contador del portapapeles y quién es el proceso responsable, y comprueba que se niegue
-  a enviar teclas a una aplicación que no está al frente y a interpretar una combinación que no
-  entiende. Apunta a un id de paquete que nadie tiene abierto, así que no puede escribir en nada.
+- `scripts/lib/host-unnest.mjs` es el desanidado entero. La primera prueba es la que faltaba:
+  **colocar la secuencia de un nest la anida**, que es la creencia falsa sobre la que estaba construida
+  la primera versión. Luego, qué cuenta como nest en una selección cualquiera, que las dos mitades
+  vinculadas cuenten como una, el conteo previo de lo que hay dentro, dónde caen los clips y en qué
+  orden, el recorte del nest —que cada clip salga mostrando el trozo de origen que mostraba, no el
+  principio—, los efectos y keyframes que viajan con cada clip, un clip retimado, video/audio/ambos
+  —incluido que sacar solo audio no toque ni una pista de video y al contrario—, los nests dentro de
+  nests con su límite, y las tres formas de quedarse como estaba: un multicámara dentro, un Premiere
+  que no sabe poner una velocidad y uno que no sabe quitar una pista.
+- `scripts/lib/host-unnest-guards.mjs` es lo que Premiere no cuenta y hay que comprobar después: una
+  colocación que aterriza una pista más arriba de la que se le dijo, una que sobrescribe algo tuyo,
+  una selección que cambió desde que el diálogo la contó, un Premiere que añade las pistas nuevas por
+  debajo, otro al que no se le puede decir a qué pista va el sonido, y otro que no borra ni quita
+  pistas. En todas, la comprobación es la misma: nada de lo tuyo se movió, y lo que ese nest hubiera
+  puesto ya no está.
+- `scripts/lib/panel-unnest.mjs` hace lo propio desde el panel real: que el comando se encuentre en
+  los dos idiomas, el diálogo con su aviso de qué hay dentro y de qué deshace `Cmd+Z`, una vuelta
+  completa comprobando que la elección llega al host y se recuerda, y un nest que el host rechaza
+  (un multicámara dentro) que tiene que volver al pie de la paleta explicado.
 - `scripts/test-panel.mjs` arranca el panel real dentro de jsdom conectado a ese mismo host
   simulado, así que el flujo completo de teclado (invocar, escribir, ↑/↓, Enter, diálogo de
   transición, ajustes, grabar atajo) se prueba de punta a punta. Los diálogos de 1.6.0 entran ahí:
@@ -551,23 +579,24 @@ Dos herramientas que no son pruebas y por eso no están en `npm test`:
   en el parámetro que estuviera en esa posición.
 - Los presets capturados de un clip guardan el valor de cada parámetro tal como estaba en ese
   momento. Si el clip tenía dos veces el mismo efecto, el preset también.
-- **Desanidar necesita el ayudante nativo y, en macOS, el permiso de Accesibilidad** (ver [El permiso
-  para pulsar teclas](#el-permiso-para-pulsar-teclas)). Sin una de las dos cosas se niega antes de
-  empezar en vez de hacer la mitad. Es el precio de que el Copiar y Pegar lo haga Premiere, que es a
-  su vez lo que hace que salgan intactos los títulos y los efectos.
+- **Desanidar no pide nada al sistema operativo y no necesita el ayudante nativo**: reconstruye con la
+  API de Premiere (ver [Cómo funciona desanidar](#cómo-funciona-desanidar)). El precio de eso es lo que
+  una reconstrucción no puede llevar, y lo dice por su nombre antes de tocar nada: **las transiciones
+  de dentro del nest** (ningún script crea una) y **los clips multicámara**.
 - **Un clip multicámara no es un nest para esto.** Seleccionarlo y desanidar no hace nada: abrirlo
-  sacaría los ángulos apilados, que no es lo que quiere nadie. Un multicámara **dentro** de un nest
-  sale como un clip multicámara con el ángulo que tuviera, porque eso lo lleva el Copiar y Pegar de
-  Premiere; el aviso del diálogo lo cuenta para que lo sepas antes. Sigue siendo cierto que ningún
-  script puede *preguntar* cuál es el ángulo activo (la petición de Adobe DVAPR-4207094 sigue
-  abierta): si tienes un multicámara a mano, busca *Probe Multicam Clip* con ese clip seleccionado y
-  escribe un `multicam-probe.txt` junto a los ajustes con todo lo que Premiere expone de él.
+  sacaría los ángulos apilados, que no es lo que quiere nadie. Y un multicámara **dentro** de un nest
+  hace que ese nest se rechace entero, porque ningún script puede *preguntar* cuál es el ángulo activo
+  (la petición de Adobe DVAPR-4207094 sigue abierta) y sacar el ángulo equivocado sería peor que no
+  sacar nada; el aviso del diálogo los cuenta para que lo sepas antes de pulsar `Enter`. Si tienes un
+  multicámara a mano, busca *Probe Multicam Clip* con ese clip seleccionado y escribe un
+  `multicam-probe.txt` junto a los ajustes con todo lo que Premiere expone de él.
 - Desanidar necesita que la secuencia del nest esté en el proyecto (siempre lo está) y la localiza
   comparando `nodeId`. Un nest cuyo `nodeId` no coincida con ninguna secuencia se salta con un
   mensaje en vez de colocar algo a medias.
-- Que un nest esté **recortado** obliga a construir una secuencia temporal con la parte que se ve,
-  porque Copiar copia clips enteros. Se borra del proyecto al terminar. Si tu versión de Premiere no
-  sabe hacerla, ese nest se salta diciéndolo, en lugar de sacar más de lo que había.
+- Que un nest esté **recortado** no cuesta nada: cada clip se coloca apuntando su elemento de proyecto
+  al trozo de origen que mostraba, así que sale exactamente la parte que se veía. Un nest al que le
+  cambiaste la velocidad sí se salta diciéndolo, porque rebobinar eso cambiaría cuánto dura lo que hay
+  dentro.
 - **Suavizar keyframes dibuja la curva, no la describe**: un script puede decirle a Premiere qué tipo
   de interpolación tiene un keyframe, pero no dónde están sus manijas bezier. La única forma de que
   haya curva es rellenar los frames intermedios con valores tomados de ella —es lo que hace Easyfy— y
@@ -634,10 +663,11 @@ Dos herramientas que no son pruebas y por eso no están en `npm test`:
   la ruta a mano en el diálogo de exportación no te la va a pisar mientras sigas en la misma
   secuencia. Y *Export via Compass* **nunca pisa una exportación anterior**: si el archivo ya existe
   le añade `-2`, `-3`, igual que el pegado del portapapeles.
-- **Pegar el portapapeles necesita el ayudante nativo**, igual que desanidar, aunque a diferencia de
-  desanidar no pide ningún permiso: leer el portapapeles no es enviar pulsaciones. Si el ayudante
-  falta, la paleta lo dice y no pega nada. Y del portapapeles solo se sacan **imágenes**: texto,
-  archivos o clips copiados de la propia línea de tiempo no son cosa suya.
+- **Pegar el portapapeles necesita el ayudante nativo**, que es lo único que sabe leer el portapapeles
+  del sistema; no pide ningún permiso para hacerlo. Si el ayudante falta, la paleta lo dice y no pega
+  nada. Del portapapeles se sacan **imágenes y archivos** (un video copiado en el Finder o el
+  Explorador se copia a la carpeta `Paste`, se importa y sale con su duración real); el texto y los
+  clips copiados de la propia línea de tiempo no son cosa suya.
 - **Una imagen que llega sin alpha no lo recupera.** Si lo único que hay en el portapapeles es un
   `CF_BITMAP` de Windows o una captura plana, el PNG que se escribe es correcto y sin pérdida, pero
   su fondo es opaco porque nunca hubo transparencia que guardar. El diálogo lo avisa antes.
@@ -653,7 +683,7 @@ Dos herramientas que no son pruebas y por eso no están en `npm test`:
   ventana mida lo que mide el contenido, que es lo que hace la paleta.
 - La paleta tampoco puede elegir *dónde* aparece. CEP expone el título y el tamaño de la ventana, y
   nada más: no hay forma de posicionarla, así que abrirla junto al mouse tendría que hacerla mover
-  el helper nativo desde fuera, y en macOS eso pide permiso de Accesibilidad al sistema. Premiere
+  el helper nativo desde fuera, y en macOS eso pide un permiso del sistema que no vale la pena. Premiere
   tampoco guarda la posición en disco (el id de la extensión no aparece ni en el perfil, ni en los
   layouts, ni en el plist), así que la ventana sale donde el host decida.
 - Adobe declaró CEP superado por UXP a partir de Premiere 25.6 y planea retirarlo. FX Premiere es

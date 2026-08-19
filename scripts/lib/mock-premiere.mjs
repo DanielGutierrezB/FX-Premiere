@@ -45,6 +45,10 @@ export const makeProjectItem = ({
   nodeId = '',
   contents = null,
   multicam = false,
+  /** Footage with sound, which the project panel shows in its Audio Info column and nowhere else. */
+  withAudio = false,
+  /** Sound with no picture behind it, which lands as one audio clip wherever it is aimed. */
+  audioOnly = false,
   width = 0,
   height = 0,
   /** Whatever the editor typed into a project panel column, which is in the same XMP as the size. */
@@ -57,6 +61,8 @@ export const makeProjectItem = ({
     name,
     nodeId: nodeId || `node:${name}`,
     contents,
+    withAudio,
+    audioOnly,
     isSequence: () => contents !== null,
     isMulticamClip: () => multicam,
     getMediaPath: () => mediaPath,
@@ -64,6 +70,7 @@ export const makeProjectItem = ({
     // only place Premiere writes it down for a script.
     getProjectMetadata: () =>
       `<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF><rdf:Description` +
+      (withAudio ? ` premierePrivateProjectMetaData:Column.Intrinsic.AudioInfo="48000 Hz - Stereo"` : '') +
       (width > 0 ? ` premierePrivateProjectMetaData:Column.Intrinsic.VideoInfo="${width} x ${height} (1.0)"` : '') +
       (note === '' ? '' : ` premierePrivateProjectMetaData:Column.PropertyText.Comment="${note}"`) +
       ` premierePrivateProjectMetaData:Column.Intrinsic.MediaStart="00:00:00:00"/></rdf:RDF></x:xmpmeta>`,
@@ -277,10 +284,11 @@ export const buildWorld = () => {
 
   const world = {
     placements: [],
-    pasteCalls: [],
     subsequenceCalls: [],
     addTrackCalls: [],
+    removeTrackCalls: [],
     moveToTrackCalls: [],
+    setSpeedCalls: [],
     linkCalls: [],
     removeCalls: [],
     transitionCalls: [],
@@ -289,28 +297,8 @@ export const buildWorld = () => {
     persistCalls: [],
     projectItems: [itemA, nestItem],
     sequences: [],
-    pasteboard: kit.pasteboard,
-    /**
-     * Which tracks a paste lands on. There is no track targeting API in either DOM, so this stands
-     * for whatever the user last targeted and a test may put it anywhere. Track 0 is the *easiest*
-     * case, not the hardest: it is the only one where every destination is above its source, so a
-     * suite that only ever pastes there proves nothing about a target above the reserved run.
-     */
-    pasteTarget: { video: 0, audio: 0 },
-    /**
-     * Where a paste lands in time, when it is not the playhead. Null is the honest case; a number is
-     * a Premiere that took the playhead write and pasted somewhere else anyway, which is the one
-     * thing no read-back of the playhead can rule out.
-     */
-    pasteAt: null,
     /** Whether this Premiere accepts a playhead write and then keeps the playhead it had. */
     playheadFrozen: false,
-    /**
-     * Whether Premiere's Copy drags the linked half of a clip in. With linked selection on it does,
-     * which is the shipped default and therefore the default here; the flag exists so the other
-     * path stays covered.
-     */
-    copyBringsLinked: true,
     /**
      * Whether this Premiere will make another sequence current. A build that refuses leaves the
      * timeline on whatever it was showing, and every op that deletes by track index and start ticks
@@ -345,6 +333,26 @@ export const buildWorld = () => {
      * found there is checked against the clip that was sent.
      */
     qeMoveToTrackNoOp: false,
+    /** Whether this Premiere's QE can take an empty track away again, and with how many arguments. */
+    qeRemoveTrackSupported: true,
+    /** Whether a QE track item will change its own speed, with how many arguments, and honestly. */
+    qeSetSpeedSupported: true,
+    qeSetSpeedArity: 1,
+    qeSetSpeedNoOp: false,
+    /**
+     * How long media says it is when it arrives in the project. A still says something meaningless,
+     * which is why a paste gives it a length; footage says how long it really is, and a paste that
+     * ignored that would put a two-minute take on the timeline as a five-second clip.
+     */
+    importedDuration: 4,
+    /** Whether imported media brings sound, which is what makes a placement touch an audio track. */
+    importedHasAudio: false,
+    /**
+     * A build that will not say which tracks are targeted, or be told. Nothing can then steer the
+     * sound that comes with a clip, so what protects the timeline is the count taken around the
+     * placement rather than the steering.
+     */
+    trackTargetingUnsupported: false,
     /** Whether `Sequence.setInPoint` takes the media type argument, and whether subsequences work. */
     sequenceInOutArity: 2,
     subsequenceSupported: true,
@@ -502,6 +510,26 @@ export const buildWorld = () => {
       return true;
     },
     /**
+     * The clip's speed, which only QE offers and only on some builds. A rebuilt clip lands at the
+     * length of the source it shows, so this is what puts a retimed one back to the length it had.
+     */
+    setSpeed(...args) {
+      world.setSpeedCalls.push({ clip: clip.name, args });
+      if (!world.qeSetSpeedSupported) {
+        throw new Error('setSpeed is not available in this build');
+      }
+      if (args.length !== world.qeSetSpeedArity) {
+        throw new Error(`setSpeed takes ${world.qeSetSpeedArity} arguments in this Premiere`);
+      }
+      const rate = Number(args[0]);
+      if (!(rate > 0) || world.qeSetSpeedNoOp) {
+        return false;
+      }
+      const source = clip.outPoint.seconds - clip.inPoint.seconds;
+      clip.end = time(clip.start.seconds + source / rate);
+      return true;
+    },
+    /**
      * The only way a script moves a clip to another track. The signature is undocumented, so the mock
      * can refuse the shorter form and the host has to find the one that works.
      *
@@ -569,6 +597,21 @@ export const buildWorld = () => {
 
   const qeTrack = (items) => ({ numItems: items.length, getItemAt: (index) => items[index] });
 
+  /** Premiere refuses to remove a track that still holds something, and older builds have no call. */
+  const removeTrack = (audio, index) => {
+    world.removeTrackCalls.push({ audio, index });
+    if (!world.qeRemoveTrackSupported) {
+      throw new Error('removeTrack is not available in this build');
+    }
+    const list = audio ? world.current.audioTrackList : world.current.videoTrackList;
+    const track = list[Number(index)];
+    if (!track || track.clipList.length > 0) {
+      return false;
+    }
+    list.splice(Number(index), 1);
+    return true;
+  };
+
   /**
    * The first track of each kind of the parent sequence keeps its hand-built item list, gap and
    * transition included, so QE indexes never line up with the vanilla ones. Everything else is
@@ -624,6 +667,12 @@ export const buildWorld = () => {
           world.linkCalls.push('link');
           return true;
         },
+        /**
+         * Taking a track away again, which only QE offers. A run that had to add a track to catch a
+         * half nobody asked for takes it back off with this, and a build without it leaves the track.
+         */
+        removeVideoTrack: (index) => removeTrack(false, index),
+        removeAudioTrack: (index) => removeTrack(true, index),
         // The only way a script grows a sequence. New tracks arrive on top of the existing ones,
         // unless this Premiere is one of the ones that puts them underneath.
         addTracks: (...args) => {
@@ -686,8 +735,6 @@ export const buildWorld = () => {
   };
 
   /** Premiere's own Copy and Paste, which is all un-nesting has to reach them with. */
-  world.copySelection = () => kit.copySelection(world.current, world);
-  world.paste = () => kit.paste(world.current, world);
   world.expand = kit.expand;
 
   return world;
@@ -746,7 +793,12 @@ export const createHost = ({ hostScript, documentsRoot, withoutQE = false }) => 
           world.importCalls.push({ paths: [...paths], rest });
           const bin = world.bins.includes(rest[1]) ? rest[1] : null;
           for (const path of paths) {
-            const item = makeProjectItem({ name: basename(path), mediaPath: path });
+            const item = makeProjectItem({
+              name: basename(path),
+              mediaPath: path,
+              duration: world.importedDuration,
+              withAudio: world.importedHasAudio,
+            });
             const list = bin ? bin.itemList : world.projectItems;
             const take = () => {
               const at = list.indexOf(item);

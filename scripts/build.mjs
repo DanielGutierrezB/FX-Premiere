@@ -188,8 +188,8 @@ const buildWindowsHelper = () => {
   }
   const built = target();
   const attempts = [
-    ['g++', ['-O2', '-std=c++17', '-static', source, '-o', output, '-luser32', '-lgdiplus']],
-    ['cl', ['/EHsc', '/O2', '/std:c++17', source, `/Fe:${output}`, 'user32.lib', 'gdiplus.lib']],
+    ['g++', ['-O2', '-std=c++17', '-static', source, '-o', output, '-luser32', '-lgdiplus', '-lshell32']],
+    ['cl', ['/EHsc', '/O2', '/std:c++17', source, `/Fe:${output}`, 'user32.lib', 'gdiplus.lib', 'shell32.lib']],
   ];
   for (const [command, args] of attempts) {
     try {

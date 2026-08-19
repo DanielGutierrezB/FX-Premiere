@@ -1,18 +1,35 @@
 import { resizeSelf } from '@shared/cep';
 import { saveSettings } from '@shared/settings';
-import type { QuickGroup, Settings } from '@shared/types';
+import type { QuickGroup, Settings, WindowBox } from '@shared/types';
+import type { View } from './sheets';
 
-/** What the window is holding: the search list, or one of the sheets that sit on top of it. */
-export type Box = 'list' | 'sheet';
+/** What the window is holding: the search list, or whichever sheet is on top of it. */
+export type Box = View;
 
 /** Bounds for the window Premiere draws around us, in content pixels. */
 const MIN_HEIGHT = 120;
-const MAX_HEIGHT = 640;
+const MAX_HEIGHT = 1000;
 const MIN_WIDTH = 380;
-const MAX_WIDTH = 980;
+const MAX_WIDTH = 1400;
 
-/** Sheets are given a settled box instead of one that resizes under the cursor. */
-const SHEET_HEIGHT = 460;
+/**
+ * How much room each sheet is opened with, in content pixels at font scale 1.
+ *
+ * They are not one size, because they are not one kind of thing: Compass is a page of paths with a
+ * preview under it, and a transition is a number and two buttons. Opening the dense ones in the box
+ * the palette uses for a list of names is what makes them unreadable. Whatever anybody drags a sheet
+ * to is kept for that sheet alone, and these are only where each one starts.
+ */
+const SHEET_PLAN: Record<Exclude<Box, 'search'>, WindowBox> = {
+  transition: { width: 460, height: 300 },
+  unnest: { width: 540, height: 380 },
+  ease: { width: 500, height: 360 },
+  anchor: { width: 460, height: 240 },
+  paste: { width: 540, height: 360 },
+  compass: { width: 780, height: 640 },
+  settings: { width: 640, height: 620 },
+  inspect: { width: 660, height: 580 },
+};
 
 /**
  * The furniture the window is built from, in CSS pixels at font scale 1. These are the numbers in
@@ -59,15 +76,19 @@ export class WindowSize {
   private height = window.innerHeight;
   private saveTimer = 0;
 
+  /** What is on screen, so a drag is remembered against the view it was made in. */
+  private box: Box = 'search';
+
   constructor(
     private readonly settings: () => Settings,
     private readonly groups: () => QuickGroup[],
   ) {}
 
   apply(box: Box): void {
-    const settings = this.settings();
-    const height = settings.height ?? (box === 'list' ? this.plannedHeight() : SHEET_HEIGHT);
-    const width = settings.width ?? this.plannedWidth();
+    this.box = box;
+    const planned = this.plannedFor(box);
+    const height = planned.height;
+    const width = planned.width;
     // Within the slack the host would round away, the window is already the right size: asking for
     // it again would be a second sizing before the first paint, which is the flicker this whole
     // file exists to avoid. The manifest opens the palette at the size a fresh profile asks for, so
@@ -107,10 +128,39 @@ export class WindowSize {
     // Recorded at once, so nothing that repaints mid-drag can read the old size and snap back to
     // it. Only the trip to disk waits for the dragging to stop.
     const settings = this.settings();
-    settings.width = width;
-    settings.height = height;
+    if (this.box === 'search') {
+      settings.width = width;
+      settings.height = height;
+    } else {
+      settings.sheetSizes[this.box] = { width, height };
+    }
     window.clearTimeout(this.saveTimer);
     this.saveTimer = window.setTimeout(() => saveSettings(settings), SIZE_SAVE_DELAY_MS);
+  }
+
+  /**
+   * The size a view opens at: whatever it was last dragged to, or what it asks for. Clamped to the
+   * screen as well as to our own bounds, because the widest sheet is wider than a laptop.
+   */
+  private plannedFor(box: Box): WindowBox {
+    const settings = this.settings();
+    if (box === 'search') {
+      return this.fit({
+        width: settings.width ?? this.plannedWidth(),
+        height: settings.height ?? this.plannedHeight(),
+      });
+    }
+    return this.fit(settings.sheetSizes[box] ?? SHEET_PLAN[box]);
+  }
+
+  private fit(box: WindowBox): WindowBox {
+    const room = window.screen ?? { availWidth: MAX_WIDTH, availHeight: MAX_HEIGHT };
+    const across = room.availWidth > 0 ? room.availWidth - 80 : MAX_WIDTH;
+    const down = room.availHeight > 0 ? room.availHeight - 120 : MAX_HEIGHT;
+    return {
+      width: Math.round(Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, across, box.width))),
+      height: Math.round(Math.max(MIN_HEIGHT, Math.min(MAX_HEIGHT, down, box.height))),
+    };
   }
 
   private plannedHeight(): number {

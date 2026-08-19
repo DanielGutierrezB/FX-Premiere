@@ -2,11 +2,11 @@
  * Un-nesting: putting the clips that live inside a nested sequence back on the timeline the nest
  * sits in, stacked on the tracks above it.
  *
- * ExtendScript cannot copy or paste timeline clips and there is no API for track targeting, so the
- * clips are not rebuilt here: Premiere is made to Copy and Paste them itself, with the panel posting
- * the keystrokes through the native helper. This file is the part that can be reasoned about without
- * leaving the host — what qualifies, how much room it needs, what it holds that may not survive —
- * and `27-unnest-ops.jsx` is the run that interleaves with those keystrokes.
+ * ExtendScript cannot copy or paste timeline clips, so the contents are rebuilt: each clip inside is
+ * placed again from its own project item, trimmed to the piece the nest was showing, and the effects
+ * that were on it are written back. This file holds what the run is made of — what qualifies as a
+ * nest, how much room it needs, what it holds that may not survive — while `27-unnest-plan.jsx` turns
+ * one nest into placements and `29-unnest-run.jsx` carries them out.
  */
 
 /** Counting the selected nest as the first level, so a limit of one means "do not go inside". */
@@ -130,52 +130,6 @@ FXP.unnestMediaTypes = function (media) {
     return ['video', 'audio'];
 };
 
-/**
- * Where a sequence's in and out already are, so anything that has to move them can put them back.
- * Null when the build will not say, which is the signal not to promise a restore that cannot happen.
- */
-FXP.sequenceInOut = function (sequence) {
-    var from = 0;
-    var to = 0;
-    try {
-        from = Number(FXP.clipSeconds(sequence.getInPoint()));
-        to = Number(FXP.clipSeconds(sequence.getOutPoint()));
-    } catch (error) {
-        FXP.trace('sequence in/out unreadable: ' + FXP.errorText(error));
-        return null;
-    }
-    if (isNaN(from) || isNaN(to)) {
-        return null;
-    }
-    return { from: from, to: to };
-};
-
-/**
- * The in and out points of a whole sequence, which is what `createSubsequence` reads to decide what
- * it builds. Both signatures are tried: the media type argument arrived after the calls did.
- */
-FXP.setSequenceInOut = function (sequence, inSeconds, outSeconds) {
-    var attempts = [
-        function () {
-            sequence.setInPoint(inSeconds, FXP.ALL_MEDIA_TYPES);
-            sequence.setOutPoint(outSeconds, FXP.ALL_MEDIA_TYPES);
-        },
-        function () {
-            sequence.setInPoint(inSeconds);
-            sequence.setOutPoint(outSeconds);
-        }
-    ];
-    for (var i = 0; i < attempts.length; i++) {
-        try {
-            attempts[i]();
-            return true;
-        } catch (error) {
-            FXP.trace('setInPoint attempt ' + i + ' failed: ' + FXP.errorText(error));
-        }
-    }
-    return false;
-};
-
 FXP.trackClipCount = function (mediaType, trackIndex) {
     var tracks = FXP.tracksOf(mediaType);
     if (!tracks) {
@@ -201,55 +155,6 @@ FXP.trackEntry = function (mediaType, trackIndex, clipIndex, clip) {
         endSeconds: FXP.clipSeconds(clip.end),
         name: FXP.safeName(clip)
     };
-};
-
-/**
- * Everything sitting across the span on a run of tracks. Passing a count of zero means every track
- * of that kind, which is what finding freshly pasted clips needs: Paste lands wherever the user last
- * targeted, and the whole point of looking is that we were not told where.
- */
-FXP.clipsInSpan = function (mediaType, base, count, startSeconds, endSeconds) {
-    var tracks = FXP.tracksOf(mediaType);
-    var found = [];
-    if (!tracks) {
-        return found;
-    }
-    var total = count > 0 ? count : FXP.trackCount(mediaType) - base;
-    for (var offset = 0; offset < total; offset++) {
-        var index = base + offset;
-        var track = null;
-        try {
-            track = tracks[index];
-        } catch (error) {
-            track = null;
-        }
-        if (!track) {
-            continue;
-        }
-        var clipCount = 0;
-        try {
-            clipCount = Number(track.clips.numItems) || 0;
-        } catch (error) {
-            clipCount = 0;
-        }
-        for (var c = 0; c < clipCount; c++) {
-            var clip = null;
-            try {
-                clip = track.clips[c];
-            } catch (error) {
-                clip = null;
-            }
-            if (!clip) {
-                continue;
-            }
-            var from = FXP.clipSeconds(clip.start);
-            var to = FXP.clipSeconds(clip.end);
-            if (from < endSeconds - FXP.TIME_SLACK && to > startSeconds + FXP.TIME_SLACK) {
-                found[found.length] = FXP.trackEntry(mediaType, index, c, clip);
-            }
-        }
-    }
-    return found;
 };
 
 FXP.setClipDisabled = function (clip, state) {
@@ -322,58 +227,6 @@ FXP.deselectAll = function (sequence) {
         }
     }
     return cleared;
-};
-
-/**
- * Selects every clip of one media type inside a sequence, and reports the earliest start and the
- * lowest track among them. Paste anchors the group at the playhead and at the targeted track, so
- * those two numbers are what the arithmetic on the other side is measured from.
- */
-FXP.selectInside = function (sequence, mediaTypes) {
-    var picked = 0;
-    var earliest = -1;
-    var last = 0;
-    var lowest = { video: -1, audio: -1 };
-    for (var g = 0; g < mediaTypes.length; g++) {
-        var mediaType = mediaTypes[g];
-        var tracks = null;
-        var count = 0;
-        try {
-            tracks = mediaType === 'audio' ? sequence.audioTracks : sequence.videoTracks;
-            count = Number(tracks.numTracks) || 0;
-        } catch (error) {
-            count = 0;
-        }
-        for (var t = 0; t < count; t++) {
-            var clips = null;
-            var clipCount = 0;
-            try {
-                clips = tracks[t].clips;
-                clipCount = Number(clips.numItems) || 0;
-            } catch (error) {
-                clipCount = 0;
-            }
-            for (var c = 0; c < clipCount; c++) {
-                var clip = clips[c];
-                if (!FXP.setClipSelected(clip, true)) {
-                    continue;
-                }
-                picked++;
-                var from = FXP.clipSeconds(clip.start);
-                var to = FXP.clipSeconds(clip.end);
-                if (earliest < 0 || from < earliest) {
-                    earliest = from;
-                }
-                if (lowest[mediaType] < 0 || t < lowest[mediaType]) {
-                    lowest[mediaType] = t;
-                }
-                if (to > last) {
-                    last = to;
-                }
-            }
-        }
-    }
-    return { picked: picked, earliest: earliest < 0 ? 0 : earliest, lowest: lowest, last: last };
 };
 
 /**
@@ -477,8 +330,8 @@ FXP.qualifyingNests = function (selection) {
         var entry = selection[i];
         var item = FXP.projectItemOf(entry.clip);
         // A multicam source is a sequence, so it has to be turned away by name rather than by kind:
-        // opening one would stack every angle on the timeline. Copy and Paste already carry a
-        // multicam clip across on the angle that was showing, which is what was wanted from it.
+        // rebuilding one would stack every angle on the timeline, and no API says which angle was
+        // showing, so there is no honest way to put back the one clip the editor was watching.
         if (!FXP.itemIsSequence(item) || FXP.itemIsMulticam(item)) {
             continue;
         }

@@ -1,3 +1,4 @@
+import { chooseOnDisk } from '@shared/cep';
 import { activePaths, planCompass } from '@shared/compass';
 import {
   type CompassOverride,
@@ -129,6 +130,24 @@ export class CompassSheet {
             },
             onchange: () => this.host.save(),
           }),
+          el('button', {
+            class: 'compass__browse',
+            text: '\u2026',
+            title: 'Choose the .epr preset',
+            onclick: () => {
+              const chosen = chooseOnDisk({
+                folder: false,
+                title: 'Choose an export preset',
+                from: compass.presetFile,
+                types: ['epr'],
+              });
+              if (chosen !== null) {
+                compass.presetFile = chosen;
+                this.host.save();
+                this.rerender();
+              }
+            },
+          }),
         ]),
       ]),
     );
@@ -185,9 +204,32 @@ export class CompassSheet {
             this.rerender();
           },
         }),
+        el('button', {
+          class: 'compass__browse',
+          text: '\u2026',
+          title: 'Choose the folder',
+          onclick: () => this.browseFolder(entry.key, path),
+        }),
       ]),
       el('div', { class: 'compass__preview', 'data-preview': entry.key, text: resolved === '' ? '\u2014' : resolved }),
     ]);
+  }
+
+  /**
+   * A folder chosen in the system's dialog is an absolute one, so the path stops being relative: it
+   * would otherwise be hung off the Production folder and end up somewhere nobody picked. Wildcards
+   * already in the template are dropped with it — they described a different path.
+   */
+  private browseFolder(slot: Field, path: CompassPath): void {
+    const chosen = chooseOnDisk({ folder: true, title: 'Where exports go', from: path.template });
+    if (chosen === null) {
+      return;
+    }
+    path.template = chosen;
+    path.relative = false;
+    this.field = slot;
+    this.host.save();
+    this.rerender();
   }
 
   /** Clicking a wildcard puts it where the caret was, which is what makes them worth clicking. */

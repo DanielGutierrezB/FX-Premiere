@@ -12,12 +12,9 @@ import Darwin
 // Protocol: reads `HOTKEY <spec>`, `SETTINGS_HOTKEY <spec>` and `QUIT` on stdin,
 // writes `READY <spec>`, `TRIGGER`, `TRIGGER_SETTINGS` and `ERROR <message>` on stdout.
 //
-// The one-shot modes — `preflight`, `request`, `pasteboard`, `keys`, `clipboard` — run instead
-// of the listener, print `FXP_NAME=value` lines and exit. The first four exist because Premiere
-// has no scripting API for Copy and Paste, so the only way to reach its own clipboard commands
-// is to press the keys. Posting an event is gated on the permission macOS calls Accessibility,
-// so each mode reports what it found rather than acting on a guess. `clipboard` needs no
-// permission at all: it reads the pasteboard rather than driving it.
+// The one-shot `clipboard` mode runs instead of the listener, prints `FXP_NAME=value` lines and
+// exits. It asks macOS for no permission at all: it reads the pasteboard rather than driving it,
+// and nothing in this helper posts a keyboard event, so nothing here needs Accessibility.
 
 let keyCodes: [String: UInt32] = [
     "a": UInt32(kVK_ANSI_A), "b": UInt32(kVK_ANSI_B), "c": UInt32(kVK_ANSI_C),
@@ -55,144 +52,50 @@ let keyCodes: [String: UInt32] = [
     "insert": UInt32(kVK_Help),
 ]
 
-/** The modifiers as CoreGraphics sees them, which is a different set of constants from Carbon's. */
-let postFlags: [String: CGEventFlags] = [
-    "ctrl": .maskControl, "control": .maskControl,
-    "alt": .maskAlternate, "option": .maskAlternate, "opt": .maskAlternate,
-    "shift": .maskShift,
-    "meta": .maskCommand, "cmd": .maskCommand, "command": .maskCommand,
-]
-
-/** The modifier keys as keys, for the flagsChanged events some applications want to see. */
-let postModifierKeys: [String: CGKeyCode] = [
-    "ctrl": 0x3B, "control": 0x3B,
-    "alt": 0x3A, "option": 0x3A, "opt": 0x3A,
-    "shift": 0x38,
-    "meta": 0x37, "cmd": 0x37, "command": 0x37,
-]
-
-struct PostCombo {
-    let spec: String
-    let key: CGKeyCode
-    let flags: CGEventFlags
-    /** In the order they go down, so they can come back up in the reverse. */
-    let modifiers: [(code: CGKeyCode, flag: CGEventFlags)]
-}
-
-func parsePostCombo(_ spec: String) -> PostCombo? {
-    var flags: CGEventFlags = []
-    var modifiers: [(code: CGKeyCode, flag: CGEventFlags)] = []
-    var key: CGKeyCode?
-    for rawToken in spec.lowercased().split(separator: "+") {
-        let token = rawToken.trimmingCharacters(in: .whitespaces)
-        if token.isEmpty {
-            continue
-        }
-        if let flag = postFlags[token] {
-            flags.insert(flag)
-            if let code = postModifierKeys[token] {
-                modifiers.append((code, flag))
-            }
-            continue
-        }
-        guard let code = keyCodes[token] else {
-            return nil
-        }
-        key = CGKeyCode(code)
-    }
-    guard let code = key else {
-        return nil
-    }
-    return PostCombo(spec: spec, key: code, flags: flags, modifiers: modifiers)
-}
-
-/**
- * Who macOS holds responsible for what this process does. A helper launched by Premiere is
- * Premiere's responsibility, which is why the permission row names Adobe Premiere Pro and why
- * replacing this binary does not revoke the grant. The call is a private symbol, so it is looked
- * up rather than linked: a macOS that stops offering it reports nothing instead of failing to run.
- */
-func responsibleExecutable() -> String? {
-    typealias Responsible = @convention(c) (pid_t) -> pid_t
-    guard let handle = dlopen(nil, RTLD_NOW),
-          let symbol = dlsym(handle, "responsibility_get_pid_responsible_for_pid")
-    else {
-        return nil
-    }
-    let pid = unsafeBitCast(symbol, to: Responsible.self)(getpid())
-    if pid < 0 {
-        return nil
-    }
-    var buffer = [CChar](repeating: 0, count: 4096)
-    if proc_pidpath(pid, &buffer, UInt32(buffer.count)) > 0 {
-        return String(cString: buffer)
-    }
-    return nil
-}
-
-/**
- * A locked screen still accepts posted events and still has a frontmost application, so nothing
- * else here would notice. Copy and Paste sent at a login window are keystrokes nobody can see
- * going somewhere nobody can check, which is the one case worth refusing outright.
- */
-func screenIsLocked() -> Bool {
-    guard let session = CGSessionCopyCurrentDictionary() as? [String: Any] else {
-        return false
-    }
-    return (session["CGSSessionScreenIsLocked"] as? Bool) ?? false
-}
-
-func frontmostBundleID() -> String {
-    NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? ""
-}
-
 func report(_ name: String, _ value: String) {
     emit("FXP_\(name)=\(value)")
 }
 
 /**
- * Posts one combination the way a keyboard does: the modifiers go down as their own events, the
- * key goes down and up with the modifier flags set on *both* halves, and the modifiers come back
- * up in reverse. A key-up without the flags reads as a different chord, and an application that
- * watches for the modifier keys themselves sees nothing at all without the flagsChanged pair.
+ * The first real file on the pasteboard, or nil.
+ *
+ * Finder puts a file URL on the pasteboard and nothing else, so a copied movie has no image flavour
+ * to find: reading it as pixels is what would turn a video into a picture of its poster frame. The
+ * URL is only trusted once the file behind it is on disk, because a plain string that happens to
+ * look like a path can be coerced into an NSURL by the pasteboard itself.
  */
-func postCombo(_ combo: PostCombo, delayMs: UInt32, modifierEvents: Bool) {
-    let source = CGEventSource(stateID: .combinedSessionState)
-    let pause = { _ = usleep(delayMs * 1000) }
-    let send = { (event: CGEvent?) in
-        event?.post(tap: .cgSessionEventTap)
-        pause()
+func firstClipboardFile() -> String? {
+    let options: [NSPasteboard.ReadingOptionKey: Any] = [.urlReadingFileURLsOnly: true]
+    guard let urls = NSPasteboard.general.readObjects(forClasses: [NSURL.self], options: options) as? [URL] else {
+        return nil
     }
-    var held: CGEventFlags = []
-    if modifierEvents {
-        for modifier in combo.modifiers {
-            held.insert(modifier.flag)
-            let event = CGEvent(keyboardEventSource: source, virtualKey: modifier.code, keyDown: true)
-            event?.flags = held
-            event?.type = .flagsChanged
-            send(event)
+    for url in urls where url.isFileURL {
+        var isDirectory: ObjCBool = false
+        if FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory), !isDirectory.boolValue {
+            return url.path
         }
     }
-    let down = CGEvent(keyboardEventSource: source, virtualKey: combo.key, keyDown: true)
-    down?.flags = combo.flags
-    send(down)
-    let up = CGEvent(keyboardEventSource: source, virtualKey: combo.key, keyDown: false)
-    up?.flags = combo.flags
-    send(up)
-    if modifierEvents {
-        var releasing = combo.flags
-        for modifier in combo.modifiers.reversed() {
-            releasing.remove(modifier.flag)
-            let event = CGEvent(keyboardEventSource: source, virtualKey: modifier.code, keyDown: false)
-            event?.flags = releasing
-            event?.type = .flagsChanged
-            send(event)
-        }
+    return nil
+}
+
+func reportClipboardFile(_ path: String) {
+    var bytes = 0
+    if let size = try? FileManager.default.attributesOfItem(atPath: path)[.size] as? Int {
+        bytes = size
     }
+    report("CLIPBOARD_SOURCE", "file")
+    report("CLIPBOARD_ALPHA", "false")
+    report("WIDTH", "0")
+    report("HEIGHT", "0")
+    report("PATH", path)
+    report("BYTES", String(bytes))
+    report("OK", "true")
+    exit(0)
 }
 
 /**
- * Writes whatever image is on the pasteboard to `file` as a PNG and reports where it came from.
+ * Writes whatever image is on the pasteboard to `file` as a PNG and reports where it came from, or
+ * hands back the path of a file that was copied instead.
  *
  * The pasteboard holds one image in several flavours at once and only some of them carry an alpha
  * channel, so the order here is the order of how much survives. PNG is taken byte for byte: it is
@@ -201,6 +104,9 @@ func postCombo(_ combo: PostCombo, delayMs: UInt32, modifierEvents: Bool) {
  * lossless — PNG always is — but only preserves transparency the source actually had.
  */
 func writeClipboardImage(to file: String) {
+    if let copied = firstClipboardFile() {
+        reportClipboardFile(copied)
+    }
     let board = NSPasteboard.general
     var png: Data?
     var rep: NSBitmapImageRep?
@@ -250,14 +156,10 @@ func writeClipboardImage(to file: String) {
     exit(0)
 }
 
-let oneShotModes = ["preflight", "request", "pasteboard", "keys", "clipboard"]
+let oneShotModes = ["clipboard"]
 
 struct OneShot {
     var mode = ""
-    var combo = "cmd+c"
-    var bundlePrefix = "com.adobe.PremierePro"
-    var delayMs: UInt32 = 24
-    var modifierEvents = true
     var out = ""
 }
 
@@ -269,45 +171,14 @@ func readOneShot(_ arguments: [String]) -> OneShot {
         let flag = arguments[index]
         let value = index + 1 < arguments.count ? arguments[index + 1] : nil
         switch flag {
-        case "--combo":
-            if let value = value { options.combo = value }
-            index += 2
-        case "--target", "--bundle-prefix":
-            if let value = value { options.bundlePrefix = value }
-            index += 2
-        case "--delay":
-            if let value = value, let ms = UInt32(value) { options.delayMs = ms }
-            index += 2
         case "--out":
             if let value = value { options.out = value }
             index += 2
-        case "--no-modifier-events":
-            options.modifierEvents = false
-            index += 1
         default:
             index += 1
         }
     }
     return options
-}
-
-/** Everything the panel needs to decide whether pressing keys is allowed, and who would own it. */
-func reportAccess(_ options: OneShot) -> (granted: Bool, locked: Bool, frontIsTarget: Bool) {
-    let granted = CGPreflightPostEventAccess()
-    let locked = screenIsLocked()
-    let front = frontmostBundleID()
-    let frontIsTarget = front.hasPrefix(options.bundlePrefix)
-    report("PLATFORM", "darwin")
-    report("POST_ACCESS", granted ? "granted" : "denied")
-    report("SCREEN_LOCKED", locked ? "true" : "false")
-    report("FRONTMOST", front.isEmpty ? "unknown" : front)
-    report("FRONT_IS_TARGET", frontIsTarget ? "true" : "false")
-    report("RESPONSIBLE", responsibleExecutable() ?? "unknown")
-    return (granted, locked, frontIsTarget)
-}
-
-func reportPasteboard() {
-    report("PASTEBOARD", String(NSPasteboard.general.changeCount))
 }
 
 /**
@@ -325,26 +196,6 @@ func runOneShot(_ arguments: [String]) {
         report("OK", "false")
         report("ERROR", "unknown-mode")
         exit(2)
-    case "preflight":
-        _ = reportAccess(options)
-        reportPasteboard()
-        report("OK", "true")
-        exit(0)
-    case "request":
-        // Asking a second time after the grant would show nothing and is worth avoiding anyway:
-        // CGRequestPostEventAccess opens System Settings, which takes the user out of Premiere.
-        let before = CGPreflightPostEventAccess()
-        let granted = before ? true : CGRequestPostEventAccess()
-        report("PLATFORM", "darwin")
-        report("REQUESTED", before ? "false" : "true")
-        report("POST_ACCESS", granted ? "granted" : "denied")
-        report("OK", "true")
-        exit(0)
-    case "pasteboard":
-        report("PLATFORM", "darwin")
-        reportPasteboard()
-        report("OK", "true")
-        exit(0)
     case "clipboard":
         report("PLATFORM", "darwin")
         if options.out.isEmpty {
@@ -353,37 +204,6 @@ func runOneShot(_ arguments: [String]) {
             exit(0)
         }
         writeClipboardImage(to: options.out)
-    case "keys":
-        let access = reportAccess(options)
-        guard let combo = parsePostCombo(options.combo) else {
-            report("OK", "false")
-            report("ERROR", "bad-combo")
-            exit(0)
-        }
-        // Three refusals rather than one, because the panel says something different for each and
-        // a keystroke sent into the wrong application is not something to find out about later.
-        if !access.granted {
-            report("OK", "false")
-            report("ERROR", "no-access")
-            exit(0)
-        }
-        if access.locked {
-            report("OK", "false")
-            report("ERROR", "screen-locked")
-            exit(0)
-        }
-        if !access.frontIsTarget {
-            report("OK", "false")
-            report("ERROR", "not-frontmost")
-            exit(0)
-        }
-        postCombo(combo, delayMs: options.delayMs, modifierEvents: options.modifierEvents)
-        report("POSTED", combo.spec)
-        // Read after posting, so the caller can tell a Copy that reached Premiere from one that
-        // was swallowed on the way. CGEventPost itself answers nothing.
-        reportPasteboard()
-        report("OK", "true")
-        exit(0)
     default:
         return
     }

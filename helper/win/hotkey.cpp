@@ -1,4 +1,4 @@
-// FX Premiere hotkey listener (Windows), plus the one-shot modes un-nesting needs.
+// FX Premiere hotkey listener (Windows), plus the one-shot mode that reads the clipboard.
 //
 // Premiere cannot bind a keyboard shortcut to a CEP panel, so this agent owns the shortcut.
 // The combo is only registered while Premiere is the foreground application, which keeps the
@@ -7,20 +7,17 @@
 // Protocol: reads `HOTKEY <spec>`, `SETTINGS_HOTKEY <spec>` and `QUIT` on stdin,
 // writes `READY <spec>`, `TRIGGER`, `TRIGGER_SETTINGS` and `ERROR <message>` on stdout.
 //
-// The one-shot modes — `preflight`, `request`, `pasteboard`, `keys`, `clipboard` — run instead of
-// the listener, print `FXP_NAME=value` lines and exit. Most of them are there because Premiere has
-// no scripting API for Copy and Paste, so the only way to reach its own clipboard commands is to
-// press the keys. Windows grants no permission for that up front and offers no way to ask, but it
-// does refuse the injection outright when the target runs at a higher integrity level, so the
-// permission is reported unknown until an attempt answers it. `clipboard` covers the other half of
-// the same gap: Premiere cannot read an image back off the clipboard either, so the helper reads it
-// and hands over a file.
+// The one-shot `clipboard` mode runs instead of the listener, prints `FXP_NAME=value` lines and
+// exits. It is there because Premiere cannot read an image back off the clipboard: the helper reads
+// it and hands over a file. Nothing here injects input, so nothing here needs a permission.
 
 #include <windows.h>
 
 #include <objidl.h>
 // After objidl.h, whose COM types gdiplus.h refers to without declaring them itself.
 #include <gdiplus.h>
+// For DragQueryFileW, which is how a file copied in Explorer is read back off the clipboard.
+#include <shellapi.h>
 
 #include <algorithm>
 #include <cstddef>
@@ -260,125 +257,8 @@ void handleCommand(const std::string& raw) {
   emit("ERROR unknown command " + command);
 }
 
-struct PostCombo {
-  std::string spec;
-  WORD key = 0;
-  /** In the order they go down, so they can come back up in the reverse. */
-  std::vector<WORD> modifiers;
-  bool valid = false;
-};
-
-PostCombo parsePostCombo(const std::string& spec) {
-  PostCombo combo;
-  combo.spec = spec;
-  const std::string remaining = toLower(spec);
-  std::string keyName;
-  size_t start = 0;
-  while (start <= remaining.size()) {
-    const size_t plus = remaining.find('+', start);
-    const std::string token =
-        trim(remaining.substr(start, plus == std::string::npos ? std::string::npos : plus - start));
-    if (token == "ctrl" || token == "control") {
-      combo.modifiers.push_back(VK_CONTROL);
-    } else if (token == "alt" || token == "option") {
-      combo.modifiers.push_back(VK_MENU);
-    } else if (token == "shift") {
-      combo.modifiers.push_back(VK_SHIFT);
-    } else if (token == "meta" || token == "cmd" || token == "command" || token == "win") {
-      combo.modifiers.push_back(VK_LWIN);
-    } else if (!token.empty()) {
-      keyName = token;
-    }
-    if (plus == std::string::npos) {
-      break;
-    }
-    start = plus + 1;
-  }
-  combo.key = static_cast<WORD>(keyFromName(keyName));
-  combo.valid = combo.key != 0;
-  return combo;
-}
-
-/** How much of a combination reached the input queue, and whether Windows itself refused it. */
-struct PostResult {
-  UINT asked = 0;
-  UINT sent = 0;
-  bool refused = false;
-};
-
-void sendKey(WORD key, bool down, PostResult* result) {
-  INPUT input = {};
-  input.type = INPUT_KEYBOARD;
-  input.ki.wVk = key;
-  input.ki.wScan = static_cast<WORD>(MapVirtualKeyW(key, MAPVK_VK_TO_VSC));
-  input.ki.dwFlags = down ? 0 : KEYEVENTF_KEYUP;
-  SetLastError(ERROR_SUCCESS);
-  const UINT inserted = SendInput(1, &input, sizeof(INPUT));
-  result->asked += 1;
-  result->sent += inserted;
-  // UIPI refuses injection into a process of higher integrity than this one, which is what a
-  // Premiere started as administrator is. It is the one short insert that has a cause worth naming.
-  if (inserted == 0 && GetLastError() == ERROR_ACCESS_DENIED) {
-    result->refused = true;
-  }
-}
-
-/**
- * Presses one combination the way a keyboard does: modifiers down, key down and up, modifiers back
- * up in reverse. The scan code goes along with the virtual key because applications that read the
- * raw scan code see nothing without it.
- *
- * The releases are attempted even after an insert that failed: giving up half way through would
- * leave a modifier held down across the whole session.
- */
-PostResult postCombo(const PostCombo& combo, DWORD delayMs) {
-  PostResult result;
-  for (const WORD modifier : combo.modifiers) {
-    sendKey(modifier, true, &result);
-    Sleep(delayMs);
-  }
-  sendKey(combo.key, true, &result);
-  Sleep(delayMs);
-  sendKey(combo.key, false, &result);
-  Sleep(delayMs);
-  for (auto it = combo.modifiers.rbegin(); it != combo.modifiers.rend(); ++it) {
-    sendKey(*it, false, &result);
-    Sleep(delayMs);
-  }
-  return result;
-}
-
 void report(const std::string& name, const std::string& value) {
   emit("FXP_" + name + "=" + value);
-}
-
-void reportClipboard() {
-  report("PASTEBOARD", std::to_string(GetClipboardSequenceNumber()));
-}
-
-/** Set once an injection has come back refused, which is the only proof Windows ever offers. */
-bool g_postRefused = false;
-
-/**
- * Windows has no API that answers whether this process may inject input before it tries: UIPI is
- * decided per target window, at the moment of the call. So the answer is unknown until an attempt
- * has been made, and denied from the moment one has come back refused.
- */
-const char* postAccess() {
-  return g_postRefused ? "denied" : "unknown";
-}
-
-/** Everything the panel needs to decide whether pressing keys is allowed. */
-bool reportAccess() {
-  const std::string process = foregroundProcessName();
-  const bool frontIsTarget = !process.empty() && process.find(g_targetProcess) != std::string::npos;
-  report("PLATFORM", "win32");
-  report("POST_ACCESS", postAccess());
-  report("SCREEN_LOCKED", "false");
-  report("FRONTMOST", process.empty() ? "unknown" : process);
-  report("FRONT_IS_TARGET", frontIsTarget ? "true" : "false");
-  report("RESPONSIBLE", "self");
-  return frontIsTarget;
 }
 
 struct PngInfo {
@@ -408,6 +288,20 @@ std::wstring widePath(const std::string& utf8) {
   std::wstring wide(static_cast<size_t>(size - 1), L'\0');
   MultiByteToWideChar(CP_UTF8, 0, utf8.c_str(), -1, wide.data(), size);
   return wide;
+}
+
+/** The way back, for the paths Windows hands over as wide characters. */
+std::string narrowPath(const std::wstring& wide) {
+  if (wide.empty()) {
+    return "";
+  }
+  const int size = WideCharToMultiByte(CP_UTF8, 0, wide.c_str(), -1, nullptr, 0, nullptr, nullptr);
+  if (size <= 1) {
+    return "";
+  }
+  std::string utf8(static_cast<size_t>(size - 1), '\0');
+  WideCharToMultiByte(CP_UTF8, 0, wide.c_str(), -1, utf8.data(), size, nullptr, nullptr);
+  return utf8;
 }
 
 bool writeFile(const std::wstring& path, const void* data, size_t size) {
@@ -695,6 +589,49 @@ bool openClipboard() {
  * Photoshop and Chrome all put a real PNG there, and decoding it only to encode it again would
  * cost quality for nothing.
  */
+/**
+ * The first real file on the clipboard, or an empty string.
+ *
+ * Explorer puts CF_HDROP there and no image flavour at all, so a copied movie would otherwise be
+ * read as pixels and arrive as a picture of one frame. A directory is not something to import, and
+ * a path whose file has since gone is worse than none.
+ */
+std::string firstClipboardFile() {
+  const ClipboardBlob drop = lockFormat(CF_HDROP);
+  std::string found;
+  if (drop.handle != nullptr) {
+    const HDROP handle = static_cast<HDROP>(drop.handle);
+    const UINT count = DragQueryFileW(handle, 0xFFFFFFFF, nullptr, 0);
+    for (UINT i = 0; i < count && found.empty(); ++i) {
+      const UINT length = DragQueryFileW(handle, i, nullptr, 0);
+      if (length == 0) {
+        continue;
+      }
+      std::wstring wide(length + 1, L'\0');
+      if (DragQueryFileW(handle, i, wide.data(), length + 1) == 0) {
+        continue;
+      }
+      wide.resize(length);
+      const DWORD attributes = GetFileAttributesW(wide.c_str());
+      if (attributes == INVALID_FILE_ATTRIBUTES || (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0) {
+        continue;
+      }
+      found = narrowPath(wide);
+    }
+  }
+  unlockFormat(drop);
+  return found;
+}
+
+/** How big the copied file is, for the one line that says what is about to be imported. */
+long long fileBytes(const std::string& path) {
+  WIN32_FILE_ATTRIBUTE_DATA data;
+  if (GetFileAttributesExW(widePath(path).c_str(), GetFileExInfoStandard, &data) == 0) {
+    return 0;
+  }
+  return (static_cast<long long>(data.nFileSizeHigh) << 32) | data.nFileSizeLow;
+}
+
 int runClipboard(const std::string& outPath) {
   report("PLATFORM", "win32");
   const std::wstring path = widePath(outPath);
@@ -705,6 +642,18 @@ int runClipboard(const std::string& outPath) {
   } else if (!openClipboard()) {
     written.error = "clipboard-busy";
   } else {
+    const std::string copied = firstClipboardFile();
+    if (!copied.empty()) {
+      CloseClipboard();
+      report("CLIPBOARD_SOURCE", "file");
+      report("CLIPBOARD_ALPHA", "false");
+      report("WIDTH", "0");
+      report("HEIGHT", "0");
+      report("PATH", copied);
+      report("BYTES", std::to_string(fileBytes(copied)));
+      report("OK", "true");
+      return 0;
+    }
     const ClipboardBlob png = lockFormat(RegisterClipboardFormatW(L"PNG"));
     if (png.size > 0) {
       source = "png";
@@ -759,8 +708,7 @@ int runClipboard(const std::string& outPath) {
  */
 int runOneShot(int argc, char** argv) {
   const std::string mode = argc > 1 ? argv[1] : "";
-  if (mode != "preflight" && mode != "request" && mode != "pasteboard" && mode != "keys" &&
-      mode != "clipboard") {
+  if (mode != "clipboard") {
     if (mode.empty() || mode.rfind("-", 0) == 0) {
       return -1;
     }
@@ -769,80 +717,17 @@ int runOneShot(int argc, char** argv) {
     report("ERROR", "unknown-mode");
     return 2;
   }
-  std::string comboSpec = "ctrl+c";
   std::string outPath;
-  DWORD delayMs = 24;
   for (int i = 2; i < argc; ++i) {
     const std::string flag = argv[i];
     const std::string value = i + 1 < argc ? argv[i + 1] : "";
-    if (flag == "--combo" && !value.empty()) {
-      comboSpec = value;
-      ++i;
-    } else if ((flag == "--target" || flag == "--process") && !value.empty()) {
-      g_targetProcess = toLower(value);
-      ++i;
-    } else if (flag == "--delay" && !value.empty()) {
-      delayMs = static_cast<DWORD>(std::stoul(value));
-      ++i;
-    } else if (flag == "--out" && !value.empty()) {
+    if (flag == "--out" && !value.empty()) {
       outPath = value;
       ++i;
     }
   }
 
-  if (mode == "preflight") {
-    reportAccess();
-    reportClipboard();
-    report("OK", "true");
-    return 0;
-  }
-  if (mode == "request") {
-    report("PLATFORM", "win32");
-    report("REQUESTED", "false");
-    report("POST_ACCESS", postAccess());
-    report("OK", "true");
-    return 0;
-  }
-  if (mode == "pasteboard") {
-    report("PLATFORM", "win32");
-    reportClipboard();
-    report("OK", "true");
-    return 0;
-  }
-  if (mode == "clipboard") {
-    return runClipboard(outPath);
-  }
-
-  const bool frontIsTarget = reportAccess();
-  const PostCombo combo = parsePostCombo(comboSpec);
-  if (!combo.valid) {
-    report("OK", "false");
-    report("ERROR", "bad-combo");
-    return 0;
-  }
-  if (!frontIsTarget) {
-    report("OK", "false");
-    report("ERROR", "not-frontmost");
-    return 0;
-  }
-  const PostResult posted = postCombo(combo, delayMs);
-  report("EVENTS_ASKED", std::to_string(posted.asked));
-  report("EVENTS_SENT", std::to_string(posted.sent));
-  if (posted.sent < posted.asked) {
-    g_postRefused = posted.refused;
-    // Said again now that there is an answer, which is the line the panel keeps.
-    report("POST_ACCESS", postAccess());
-    report("OK", "false");
-    report("ERROR", posted.refused ? "input-blocked" : "input-short");
-    return 0;
-  }
-  report("POSTED", combo.spec);
-  // Read after posting as well, because a Copy that Premiere never acted on leaves the sequence
-  // number alone. A Paste leaves it alone either way, which is why the count above is the only
-  // evidence that half of un-nesting has of having happened at all.
-  reportClipboard();
-  report("OK", "true");
-  return 0;
+  return runClipboard(outPath);
 }
 
 void stdinLoop() {

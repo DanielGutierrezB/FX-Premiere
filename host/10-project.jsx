@@ -48,6 +48,26 @@ FXP.qeSequence = function () {
     }
 };
 
+/** Takes a project item out of the project. The newer call first, the older one as a fallback. */
+FXP.deleteProjectItem = function (projectItem) {
+    if (!projectItem) {
+        return true;
+    }
+    try {
+        projectItem.deleteBin();
+        return true;
+    } catch (error) {
+        FXP.trace('deleteBin failed: ' + FXP.errorText(error));
+    }
+    try {
+        projectItem.parent.deleteItem(projectItem);
+        return true;
+    } catch (error) {
+        FXP.trace('deleteItem failed: ' + FXP.errorText(error));
+        return false;
+    }
+};
+
 FXP.ticksPerFrame = function (sequence) {
     var ticks = 0;
     try {

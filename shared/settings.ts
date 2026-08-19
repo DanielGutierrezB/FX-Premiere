@@ -19,6 +19,7 @@ import {
   type UnnestMedia,
   type UnnestOptions,
   type UnnestOriginal,
+  type WindowBox,
 } from './types';
 
 
@@ -119,6 +120,7 @@ export const defaultSettings = (): Settings => ({
   favoriteSlots: 4,
   width: null,
   height: null,
+  sheetSizes: {},
 });
 
 /** Choices offered in the settings sheet. Anything else in the file is pulled back into range. */
@@ -256,7 +258,30 @@ const mergeSettings = (raw: Partial<Settings> | null): Settings => {
     width: raw.width && raw.width !== LEGACY_WIDTH ? inRange(raw.width, 440, 320, 1400) : null,
     // Zero was how an earlier release wrote "follow the resting list"; it reads as null now.
     height: raw.height ? inRange(raw.height, 400, 120, 1400) : null,
+    sheetSizes: sheetSizesFrom(raw.sheetSizes),
   };
+};
+
+/**
+ * Sizes are read one entry at a time and anything unreadable is dropped, rather than a bad file
+ * being handed to the resize call: a sheet that opened at NaN by NaN is a window nobody can find.
+ */
+const sheetSizesFrom = (raw: unknown): Record<string, WindowBox> => {
+  const sizes: Record<string, WindowBox> = {};
+  if (!raw || typeof raw !== 'object') {
+    return sizes;
+  }
+  for (const [view, box] of Object.entries(raw as Record<string, unknown>)) {
+    const size = (box ?? {}) as Partial<WindowBox>;
+    if (typeof size.width !== 'number' || typeof size.height !== 'number') {
+      continue;
+    }
+    if (!Number.isFinite(size.width) || !Number.isFinite(size.height)) {
+      continue;
+    }
+    sizes[view] = { width: inRange(size.width, 440, 320, 2400), height: inRange(size.height, 400, 120, 2000) };
+  }
+  return sizes;
 };
 
 /**

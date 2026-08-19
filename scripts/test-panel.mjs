@@ -15,7 +15,6 @@ import { createCepWindow, settle, waitFor } from './lib/mock-cep.mjs';
 import { writePresetFixture } from './lib/mock-files.mjs';
 import { createHost } from './lib/mock-premiere.mjs';
 import { easeAndAnchorDialogs } from './lib/panel-dialogs.mjs';
-import { createKeysFake, realKeysBridge } from './lib/panel-keys.mjs';
 import { createClipboardFake, pasteAndCompassViews } from './lib/panel-new-views.mjs';
 import { panelUnnest } from './lib/panel-unnest.mjs';
 import { laterOpens } from './lib/panel-later-opens.mjs';
@@ -55,8 +54,6 @@ const { window, calls: cepCalls } = cep;
 
 // Premiere's Copy and Paste, which un-nesting can only reach as keystrokes. Installed before the
 // bundle boots, the way the update endpoint is: everything around the keystroke is the real thing.
-const keysFake = createKeysFake(world);
-window.__fxpKeys = keysFake.keys;
 
 // The clipboard needs a desktop with an image on it, so the same seam stands in for the helper.
 const clipboard = createClipboardFake(stage);
@@ -184,6 +181,45 @@ check(
   window.innerWidth === 620 && window.innerHeight === 500,
   `${window.innerWidth}x${window.innerHeight}`,
 );
+
+// A page of export paths and a list of effect names are not the same window to work in. One size for
+// both is what left the dense sheets unreadable in a box meant for a seven row list.
+console.log('\nEvery sheet at the size it needs');
+await type('compass export paths');
+await press('Enter');
+await settle(30);
+const openedSheet = resizes().at(-1) ?? [0, 0];
+check('a dense sheet opens bigger than the palette it came from', openedSheet[0] > 620 && openedSheet[1] > 500, JSON.stringify(openedSheet));
+cep.dragWindow(900, 700);
+await settle(500);
+check(
+  'dragging a sheet is remembered against that sheet',
+  savedSettings().sheetSizes?.compass?.width === 900 && savedSettings().sheetSizes?.compass?.height === 700,
+  JSON.stringify(savedSettings().sheetSizes),
+);
+check(
+  'and not as the size of the palette',
+  savedSettings().width === 620 && savedSettings().height === 500,
+  JSON.stringify([savedSettings().width, savedSettings().height]),
+);
+await press('Escape');
+await settle(30);
+check(
+  'leaving it puts the palette back where it was',
+  window.innerWidth === 620 && window.innerHeight === 500,
+  `${window.innerWidth}x${window.innerHeight}`,
+);
+await type('compass export paths');
+await press('Enter');
+await settle(30);
+check(
+  'and the sheet opens again at the size it was dragged to',
+  window.innerWidth === 900 && window.innerHeight === 700,
+  `${window.innerWidth}x${window.innerHeight}`,
+);
+await press('Escape');
+await settle(20);
+await type('');
 
 console.log('\nFuzzy search and keyboard navigation');
 await type('gblr');
@@ -400,7 +436,6 @@ await panelUnnest({
   world,
   cep,
   cepCalls,
-  keysFake,
   settingsDir,
   type,
   press,
@@ -498,16 +533,11 @@ check(
 await press('Escape');
 check('Escape cancels recording', !window.document.querySelector('.button--recording'));
 
-// Un-nesting is the one thing that needs it, so the state belongs where every other permission and
-// switch is rather than only in the dialog that trips over it.
-const keysRow = () =>
-  [...window.document.querySelectorAll('.sheet .field')]
-    .find((row) => row.querySelector('.field__label')?.textContent === 'Permission to press keys')
-    ?.textContent ?? '';
-await waitFor(() => /Granted/.test(keysRow()), 3000);
-check('settings says whether the keystroke permission is there', /Granted/.test(keysRow()), keysRow());
-check('and whose name the permission row carries', /Adobe Premiere Pro/.test(keysRow()), keysRow());
-check('with what it is for, and that nothing is read', /Copy and Paste/.test(keysRow()) && /does not read what you type/.test(keysRow()), keysRow());
+// Un-nesting asks the operating system for nothing now that it rebuilds through Premiere's own API,
+// so the row that used to explain the Accessibility permission has no business being here.
+const rowLabels = () =>
+  [...window.document.querySelectorAll('.sheet .field__label')].map((node) => node.textContent).join(' | ');
+check('settings carries no permission for the operating system', !/Permission to press keys/.test(rowLabels()), rowLabels());
 
 console.log('\nA newer release is offered');
 const versionButton = () => {
@@ -586,9 +616,11 @@ const widthButton = seg('Window width').find((node) => node.textContent === '380
 widthButton.click();
 await settle(40);
 check('choosing a width saves it', savedSettings().width === 380, String(savedSettings().width));
+// The width is the palette's, and the settings sheet is not the palette: resizing the sheet under
+// the click would shrink the page being read to the size of a list of effect names.
 check(
-  'and the window is asked for it right away',
-  (cepCalls.resizes.at(-1) ?? [])[0] === 380,
+  'the sheet being read is left at its own size',
+  (cepCalls.resizes.at(-1) ?? [])[0] !== 380,
   JSON.stringify(cepCalls.resizes.at(-1)),
 );
 
@@ -888,12 +920,11 @@ await type('zzzzqqq');
 check('an empty result set shows guidance', Boolean(window.document.querySelector('.empty')), '');
 
 await easeAndAnchorDialogs({ window, world, cep, cepCalls, stage, type, press, savedSettings, toastText });
-await pasteAndCompassViews({ window, world, cep, stage, type, press, savedSettings, toastText, clipboard });
+await pasteAndCompassViews({ window, world, cep, cepCalls, stage, type, press, savedSettings, toastText, clipboard });
 
 console.log('\nOpening it again');
 cep.close();
 await laterOpens({ hostScript, panelHtml, panelBundle, stage, storage, presetFixture, settingsDir });
-await realKeysBridge({ panelHtml, panelBundle, distRoot: join(root, 'dist'), home: stage, evalScript: evalInHost });
 
 releaseServer.close();
 rmSync(stage, { recursive: true, force: true });

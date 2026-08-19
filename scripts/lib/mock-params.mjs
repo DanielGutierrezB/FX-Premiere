@@ -37,9 +37,24 @@ const ticksOf = (at) => {
 
 const secondsOf = (ticks) => ticks / TICKS_PER_SECOND;
 
-export const makeParam = (displayName, value) => ({
+/**
+ * Rounds the way a parameter that only holds whole steps does. Premiere has integer-typed parameters
+ * — a count, a level, an index into a list — and a script that writes 3.4 to one gets a 3 back, so a
+ * curve drawn through it steps instead of easing. There is no API that says which parameters those
+ * are; writing to one and reading it back is the only way to find out, and `snaps` is the fixture
+ * that makes that findable.
+ */
+const held = (param, value) => {
+  if (!param.snaps) {
+    return value;
+  }
+  return Array.isArray(value) ? value.map((part) => Math.round(part)) : Math.round(value);
+};
+
+export const makeParam = (displayName, value, options = {}) => ({
   displayName,
   calls: [],
+  snaps: options.snaps === true,
   current: value,
   timeVarying: false,
   keys: [],
@@ -50,7 +65,7 @@ export const makeParam = (displayName, value) => ({
   },
   setValue(next, updateUI) {
     this.calls.push(['setValue', next]);
-    this.current = next;
+    this.current = held(this, next);
     if (updateUI) {
       this.repaints += 1;
     }
@@ -89,8 +104,8 @@ export const makeParam = (displayName, value) => ({
     if (!existing) {
       throw new Error(`no keyframe at ${at} to set a value on`);
     }
-    existing.value = next;
-    this.current = next;
+    existing.value = held(this, next);
+    this.current = existing.value;
     if (updateUI) {
       this.repaints += 1;
     }

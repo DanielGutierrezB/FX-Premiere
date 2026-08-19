@@ -218,6 +218,27 @@ FXP.keyRemove = function (param, at) {
     return false;
 };
 
+/**
+ * Reads a keyframe's value back through the same two forms `keyWrite` writes through. `undefined`
+ * is a build that answered neither, which is not the same answer as a value: a caller checking that
+ * a write landed has to be able to tell "it came back changed" from "it cannot be asked".
+ */
+FXP.keyValueAt = function (param, at) {
+    try {
+        return param.getValueAtKey(at);
+    } catch (error) {
+        FXP.trace('getValueAtKey failed: ' + FXP.errorText(error));
+    }
+    if (at === null || typeof at !== 'object' || at.seconds === undefined) {
+        return undefined;
+    }
+    try {
+        return param.getValueAtKey(at.seconds);
+    } catch (error) {
+        return undefined;
+    }
+};
+
 /** Reads the type back through the same two forms `keyWrite` writes through, and for the same reason. */
 FXP.keyInterpolationAt = function (param, at) {
     try {

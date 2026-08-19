@@ -2,25 +2,18 @@
  * Running the native helper once and reading what it says.
  *
  * The helper answers in `FXP_NAME=value` lines on stdout whatever mode it was asked for, so the
- * spawning and the parsing are the same for keystrokes and for the clipboard. How long a mode may
- * take is not, and neither is what its fields mean, which is why this stops at the field list.
+ * spawning and the parsing are the same whichever it was. How long a mode may take is not, and
+ * neither is what its fields mean, which is why this stops at the field list.
  */
 import { systemPath } from './cep';
 import { nodeRequire } from './node';
 import { appendLog } from './paths';
 
 /** The one-shot modes both platforms' helpers answer to. */
-export type HelperMode = 'preflight' | 'request' | 'pasteboard' | 'keys' | 'clipboard';
+export type HelperMode = 'clipboard';
 
-/**
- * A keystroke is half a dozen key events a few milliseconds apart, and asking either platform what
- * the frontmost application is answers immediately. Everything past a second here is a hang, and
- * waiting it out only stalls the un-nest loop that is driving it.
- */
-export const HELPER_KEYS_TIMEOUT_MS = 4000;
-
-/** Asking for the permission puts a system prompt up and opens System Settings behind it. */
-export const HELPER_REQUEST_TIMEOUT_MS = 12000;
+/** Anything that is not the clipboard is a question about this machine, answered immediately. */
+export const HELPER_QUICK_TIMEOUT_MS = 4000;
 
 /**
  * The clipboard can hold a full-resolution still, and turning one into a PNG is real compression
@@ -34,21 +27,15 @@ export const HELPER_KILL_GRACE_MS = 1000;
 /** How much of a helper's stderr is worth keeping for the log; the rest is drained and dropped. */
 const HELPER_STDERR_KEPT = 2000;
 
-const HELPER_MODES: readonly HelperMode[] = ['preflight', 'request', 'pasteboard', 'keys', 'clipboard'];
+const HELPER_MODES: readonly HelperMode[] = ['clipboard'];
 
 /** What the run is allowed to take, which depends entirely on what the mode actually does. */
 export const helperTimeoutMs = (args: string[]): number => {
   const mode = HELPER_MODES.find((candidate) => candidate === args[0]);
   if (mode === undefined) {
-    return HELPER_KEYS_TIMEOUT_MS;
+    return HELPER_QUICK_TIMEOUT_MS;
   }
   switch (mode) {
-    case 'preflight':
-    case 'pasteboard':
-    case 'keys':
-      return HELPER_KEYS_TIMEOUT_MS;
-    case 'request':
-      return HELPER_REQUEST_TIMEOUT_MS;
     case 'clipboard':
       return HELPER_CLIPBOARD_TIMEOUT_MS;
     default: {

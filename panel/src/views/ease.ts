@@ -8,10 +8,11 @@ const MAX_INFLUENCE = 100;
 const clamp = (value: number): number => Math.min(MAX_INFLUENCE, Math.max(MIN_INFLUENCE, Math.round(value)));
 
 /**
- * The properties a bake draws a curve through. Anything else keyframed on the clip is left as it
- * is: an integer-coded dropdown interpolated into 3.13 becomes an unrelated compositing mode.
+ * What a bake draws through, which is the one thing about the tool an editor has to know before
+ * pressing Enter: where the playhead is decides which pair gets the curve, and every property with
+ * keyframes on both sides of it gets one.
  */
-const EASED = 'Position, Scale, Scale Width, Rotation, Opacity and Anchor Point';
+const EASED = 'every property with keyframes on both sides of the playhead';
 
 /**
  * A bake is one Premiere write per keyframe and the undo list is thirty-two entries deep, so even a
@@ -83,7 +84,7 @@ export class EaseDialog {
     container.appendChild(
       el('div', {
         class: 'transition__meta',
-        text: `${clips} clip(s) selected \u00b7 ${EASED} get a keyframe on every frame along the curve`,
+        text: `${clips} clip(s) selected \u00b7 ${EASED} gets a keyframe on every frame along the curve`,
       }),
     );
     container.appendChild(el('div', { class: 'ease__warning', text: NO_UNDO }));

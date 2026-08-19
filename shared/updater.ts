@@ -222,6 +222,39 @@ const sweepRetired = (root: string): void => {
   }
 };
 
+const PROBE_FILE = '.fxp-write-probe';
+
+/**
+ * Releases up to 1.6.2 installed macOS system-wide, under /Library, owned by root; the Windows
+ * installer went into Program Files. Unpacking a release over either of those fails partway
+ * through with a bare EACCES that means nothing to an editor, and the only honest answer is to
+ * send them to the installer, which does have the rights. Escalating from a panel is out of the
+ * question: it would mean prompting for a password inside Premiere.
+ *
+ * Probed by writing rather than with accessSync, because on Windows the write bit only reflects
+ * the read-only attribute and says nothing about the ACL that actually refuses the write.
+ */
+const ensureWritable = (root: string): void => {
+  const fs = nodeRequire()('fs') as typeof import('fs');
+  const path = nodeRequire()('path') as typeof import('path');
+  const probe = path.join(root, PROBE_FILE);
+  try {
+    fs.writeFileSync(probe, '');
+  } catch {
+    throw new Error(
+      `The extension folder ${root} is not writable. FX Premiere was installed system-wide there, ` +
+        'so the update has to come from the installer: download the latest one from the releases ' +
+        'page and run it.',
+    );
+  } finally {
+    try {
+      fs.rmSync(probe, { force: true });
+    } catch {
+      /* the probe was never created, or something else already removed it */
+    }
+  }
+};
+
 /**
  * A .zxp is a signed zip, so the update is applied by unpacking it over the installed
  * extension. Premiere keeps the old files in memory until the panel reloads.
@@ -230,6 +263,9 @@ export const applyUpdate = async (downloadUrl: string): Promise<void> => {
   if (isDevInstall()) {
     throw new Error('This is a development install (symlink). Update it with npm run install-dev.');
   }
+  // Before the download, not after: an editor on a system-wide install should not sit through
+  // several megabytes to be told the folder was never writable in the first place.
+  ensureWritable(extensionRoot());
   const fs = nodeRequire()('fs') as typeof import('fs');
   const os = nodeRequire()('os') as typeof import('os');
   const path = nodeRequire()('path') as typeof import('path');

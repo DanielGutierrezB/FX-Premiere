@@ -1,0 +1,27 @@
+FX Premiere - activar el modo depuración de CEP
+===============================================
+
+Esto solo hace falta si instalas el archivo .zxp.
+
+El .zxp va firmado con un certificado propio, no con uno de Adobe. Premiere no carga
+extensiones firmadas así hasta que el modo depuración de CEP está activado, y mientras
+esté apagado el panel no aparece en Ventana > Extensiones aunque el .zxp se haya
+instalado sin errores.
+
+Qué ejecutar
+------------
+
+  macOS    doble clic en  activar-modo-depuracion-mac.command
+           Si macOS avisa de que no se puede abrir, haz clic derecho > Abrir.
+
+  Windows  doble clic en  activar-modo-depuracion-windows.bat
+           No hace falta ejecutarlo como administrador.
+
+Después cierra Premiere Pro del todo y vuelve a abrirlo. Luego:
+Ventana > Extensiones > FX Premiere, o el atajo Ctrl + Space.
+
+Se ejecuta una sola vez por ordenador. Las actualizaciones siguientes, ya sean desde el
+propio panel o instalando otro .zxp, no lo necesitan otra vez.
+
+Si instalaste el .pkg (macOS) o el .exe (Windows) no tienes que hacer nada: esos
+instaladores activan el modo depuración ellos mismos.

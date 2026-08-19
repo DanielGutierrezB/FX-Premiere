@@ -22,6 +22,8 @@ const sourceLabel = (source: ClipboardSource): string => {
       return 'DIBV5 bitmap';
     case 'bitmap':
       return 'Bitmap';
+    case 'file':
+      return 'File from the clipboard';
     case 'none':
       return 'Nothing';
     default: {
@@ -55,7 +57,9 @@ export class PasteDialog {
   open(item: CatalogItem, probe: PasteProbe): void {
     this.item = item;
     this.probe = probe;
-    this.seconds = clamp(probe.seconds);
+    // Zero is kept as zero rather than clamped up to a tenth of a second: it is not a duration at
+    // all, it is footage saying it already has one.
+    this.seconds = probe.seconds > 0 ? clamp(probe.seconds) : 0;
   }
 
   clear(): void {
@@ -87,17 +91,21 @@ export class PasteDialog {
     container.appendChild(
       el('div', {
         class: 'transition__meta',
-        text: `${sourceLabel(probe.grab.source)} \u00b7 ${probe.grab.width}\u00d7${probe.grab.height}`,
+        text: probe.fromFile
+          ? sourceLabel(probe.grab.source)
+          : `${sourceLabel(probe.grab.source)} \u00b7 ${probe.grab.width}\u00d7${probe.grab.height}`,
       }),
     );
-    container.appendChild(
-      el('div', {
-        class: `paste__alpha${probe.grab.alpha ? ' paste__alpha--on' : ''}`,
-        text: probe.grab.alpha
-          ? 'With transparency: the PNG keeps its alpha channel.'
-          : 'No transparency: what is on the clipboard is opaque.',
-      }),
-    );
+    if (!probe.fromFile) {
+      container.appendChild(
+        el('div', {
+          class: `paste__alpha${probe.grab.alpha ? ' paste__alpha--on' : ''}`,
+          text: probe.grab.alpha
+            ? 'With transparency: the PNG keeps its alpha channel.'
+            : 'No transparency: what is on the clipboard is opaque.',
+        }),
+      );
+    }
 
     container.appendChild(
       el('div', { class: 'paste__target' }, [
@@ -108,32 +116,41 @@ export class PasteDialog {
       ]),
     );
 
-    container.appendChild(
-      el('label', { class: 'influence influence--active' }, [
-        el('span', { class: 'influence__label', text: 'Dur.' }),
-        el('input', {
-          class: 'influence__value',
-          type: 'number',
-          min: String(MIN_SECONDS),
-          max: String(MAX_SECONDS),
-          step: '0.5',
-          value: String(this.seconds),
-          oninput: (event: Event) => {
-            const value = Number((event.target as HTMLInputElement).value);
-            if (!Number.isNaN(value)) {
-              this.seconds = clamp(value);
-            }
-          },
-        }),
-        el('span', { class: 'influence__hint', text: 'seconds on the timeline' }),
-      ]),
-    );
+    // Footage lands at its own length, so there is nothing here to set: offering a duration for it
+    // would be offering to cut it, which is not what pasting something is.
+    if (this.seconds > 0) {
+      container.appendChild(
+        el('label', { class: 'influence influence--active' }, [
+          el('span', { class: 'influence__label', text: 'Dur.' }),
+          el('input', {
+            class: 'influence__value',
+            type: 'number',
+            min: String(MIN_SECONDS),
+            max: String(MAX_SECONDS),
+            step: '0.5',
+            value: String(this.seconds),
+            oninput: (event: Event) => {
+              const value = Number((event.target as HTMLInputElement).value);
+              if (!Number.isNaN(value)) {
+                this.seconds = clamp(value);
+              }
+            },
+          }),
+          el('span', { class: 'influence__hint', text: 'seconds on the timeline' }),
+        ]),
+      );
+    }
 
     container.appendChild(
-      buttonRow('\u2191\u2193 changes the duration, Enter pastes, Esc goes back.', [
-        el('button', { class: 'button', text: 'Back', onclick: () => this.host.back() }),
-        el('button', { class: 'button button--primary', text: 'Paste', onclick: () => this.confirm() }),
-      ]),
+      buttonRow(
+        this.seconds > 0
+          ? '\u2191\u2193 changes the duration, Enter pastes, Esc goes back.'
+          : 'Enter pastes it at its own length, Esc goes back.',
+        [
+          el('button', { class: 'button', text: 'Back', onclick: () => this.host.back() }),
+          el('button', { class: 'button button--primary', text: 'Paste', onclick: () => this.confirm() }),
+        ],
+      ),
     );
   }
 
@@ -168,6 +185,9 @@ export class PasteDialog {
   }
 
   nudge(amount: number): void {
+    if (this.seconds === 0) {
+      return;
+    }
     this.seconds = clamp(this.seconds + amount);
     this.rerender();
   }

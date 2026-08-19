@@ -89,7 +89,7 @@ console.log('\nWhen there is nothing to paste');
   const nothing = clipboard.parseGrab(REPORTS.empty);
   check('an empty clipboard is a failure, not an empty success', nothing.ok === false && nothing.error === 'no-image');
   check('and the source is none', nothing.source === 'none');
-  check('which the panel says in a sentence', clipboard.clipboardError(nothing) === 'There is no image on the clipboard.');
+  check('which the panel says in a sentence', clipboard.clipboardError(nothing) === 'There is nothing on the clipboard to paste.');
   check('a helper that printed nothing at all is not read as a success', clipboard.parseGrab('').error === 'helper-silent');
   check('nor is one that said yes without saying where', clipboard.parseGrab('FXP_OK=true').error === 'write-failed');
   check('an unknown source word is not trusted', clipboard.parseGrab('FXP_CLIPBOARD_SOURCE=jpeg\nFXP_OK=true\nFXP_PATH=/x').source === 'none');
@@ -189,6 +189,55 @@ console.log('\nImporting the still and putting it on the timeline');
   check('and the bin count stays at one however many times it is used', world.createBinCalls.length === 1);
   check('the one before it made its track busy, so this goes a track higher', third.data.track === 3, String(third.data.track));
   check('and none of them overwrote anything', world.tracks.video.every((track) => track.clipList.length <= 4));
+}
+
+// The mock timeline has A.wav across the playhead on A1, and a fresh sequence targets A1: footage
+// with sound placed on a video track lands its audio there unless something says otherwise.
+console.log('\nFootage that brings its own sound');
+const movie = join(stage, 'take.mov');
+writeFileSync(movie, 'a path Premiere can be handed, with sound behind it', 'utf8');
+{
+  const { world, call } = fresh();
+  world.importedHasAudio = true;
+  world.importedDuration = 9;
+  const placed = call({ op: 'pasteStill', path: movie, bin: 'Pasted', seconds: 0 });
+  check('it goes on at the length the footage really is', placed.ok && placed.data.seconds === 9, JSON.stringify(placed));
+  check('the sound went to a track that was checked for room', world.tracks.audio[1].clipList.some((clip) => clip.name === 'take.mov'), JSON.stringify(world.tracks.audio.map((track) => track.clipList.map((clip) => clip.name))));
+  check(
+    'and the sound that was already on A1 is untouched',
+    world.tracks.audio[0].clipList.some((clip) => clip.name === 'A.wav'),
+    JSON.stringify(world.tracks.audio[0].clipList.map((clip) => clip.name)),
+  );
+  check('the targeting the editor left is put back', world.tracks.audio[0].targeted === true && world.tracks.audio[1].targeted === false, JSON.stringify(world.tracks.audio.map((track) => track.targeted)));
+  check('no audio track had to be added for it', world.tracks.audio.length === 3, String(world.tracks.audio.length));
+}
+
+// Nothing can steer the sound on a build with no targeting, so the paste has to be caught after the
+// fact. A refusal that leaves the clip on top of the editor's audio would be the worst of both.
+{
+  const { world, call } = fresh();
+  world.importedHasAudio = true;
+  world.importedDuration = 9;
+  world.trackTargetingUnsupported = true;
+  const refused = call({ op: 'pasteStill', path: movie, bin: 'Pasted', seconds: 0 });
+  check('a paste that went over something is refused', !refused.ok, JSON.stringify(refused));
+  check('and it names what it landed on', /A\.wav/.test(refused.error ?? ''), refused.error ?? '');
+  check('with the one thing that can bring it back', /Cmd\+Z/.test(refused.error ?? ''), refused.error ?? '');
+  check(
+    'nothing of the paste is left on the timeline',
+    world.tracks.video.every((track) => !track.clipList.some((clip) => clip.name === 'take.mov')) &&
+      world.tracks.audio.every((track) => !track.clipList.some((clip) => clip.name === 'take.mov')),
+    JSON.stringify(world.tracks.audio.map((track) => track.clipList.map((clip) => clip.name))),
+  );
+  check('and the import is taken back out of the project', world.deletedItems.includes('take.mov'), world.deletedItems.join(','));
+}
+
+// A silent still must not cost an audio track: this is what the un-nest used to get wrong.
+{
+  const { world, call } = fresh();
+  const placed = call({ op: 'pasteStill', path: png, bin: 'Pasted', seconds: 4 });
+  check('a still with no sound leaves the audio tracks alone', placed.ok && world.tracks.audio.length === 3, String(world.tracks.audio.length));
+  check('and none of them gained a clip', world.tracks.audio[1].clipList.length === 0 && world.tracks.audio[2].clipList.length === 0);
 }
 
 // A locked track holds no clips and is still not room: Premiere refuses the write. Counting only
@@ -304,7 +353,7 @@ console.log('\nWhen it cannot be done at all');
 {
   const { call } = fresh();
   const nothing = call({ op: 'pasteStill', path: '', bin: 'Pasted', seconds: 4 });
-  check('a paste with no file refuses', !nothing.ok && nothing.error.includes('no image to paste'), nothing.error);
+  check('a paste with no file refuses', !nothing.ok && nothing.error.includes('nothing to paste'), nothing.error);
 }
 
 {

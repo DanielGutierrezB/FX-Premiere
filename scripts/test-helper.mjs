@@ -1,5 +1,5 @@
-// The native helper contract: how a run is bounded, what a blocked keystroke injection reports, and
-// that the build refuses to ship a helper it could not compile.
+// The native helper contract: how a run is bounded, that a misbehaving helper is given up on rather
+// than waited out or left behind, and that the build refuses to ship a helper it could not compile.
 // Usage: node scripts/test-helper.mjs
 
 import { execFileSync } from 'node:child_process';
@@ -29,7 +29,6 @@ const runner = await loadShared('shared/helper-run.ts', [
   'helperTimeoutMs',
   'runHelper',
 ]);
-const copy = await loadShared('panel/src/keys-copy.ts', ['keysRefusal']);
 
 const logFile = () => join(process.env.HOME, 'Library', 'Application Support', 'FX Premiere', 'fx-premiere.log');
 const logText = () => (existsSync(logFile()) ? readFileSync(logFile(), 'utf8') : '');
@@ -52,12 +51,11 @@ const runFake = (home, args) => {
 
 console.log('How long a helper run is given');
 {
-  const keys = runner.helperTimeoutMs(['keys', '--combo', 'cmd+c']);
+  const quick = runner.helperTimeoutMs(['whatever']);
   const clipboard = runner.helperTimeoutMs(['clipboard', '--out', '/tmp/x.png']);
-  check('a keystroke and a clipboard encode are not held to the same budget', keys !== clipboard, `${keys} vs ${clipboard}`);
-  check('pressing a key is measured in seconds, because it is a few key events', keys <= 5000, String(keys));
-  check('encoding a full-resolution still is given far longer than that', clipboard >= 20000, String(clipboard));
-  check('an unrecognised mode still gets a budget rather than running forever', runner.helperTimeoutMs([]) > 0);
+  check('a clipboard encode is not held to the same budget as everything else', quick !== clipboard, `${quick} vs ${clipboard}`);
+  check('encoding a full-resolution still is given a long time', clipboard >= 20000, String(clipboard));
+  check('an unrecognised mode still gets a budget rather than running forever', quick > 0 && quick <= 8000, String(quick));
 }
 
 console.log('\nA helper that misbehaves');
@@ -73,16 +71,16 @@ const deaf = fakeHelper(
 process.on('SIGTERM', () => {});
 setInterval(() => {}, 1000);`,
 );
-const slowKeys = fakeHelper('slow-keys', `setTimeout(() => process.stdout.write('FXP_OK=true\\n'), 5500);`);
+const slow = fakeHelper('slow', `setTimeout(() => process.stdout.write('FXP_OK=true\\n'), 8500);`);
 const slowClipboard = fakeHelper('slow-clip', `setTimeout(() => process.stdout.write('FXP_OK=true\\n'), 9000);`);
 
 const pidFile = join(stage, 'deaf.pid');
 process.env.FXP_PID_FILE = pidFile;
 
-const [flooded, ignored, pressed, encoded] = await Promise.all([
-  runFake(flood, ['keys', '--combo', 'cmd+c']),
-  runFake(deaf, ['keys', '--combo', 'cmd+c']),
-  runFake(slowKeys, ['keys', '--combo', 'cmd+c']),
+const [flooded, ignored, dawdled, encoded] = await Promise.all([
+  runFake(flood, ['clipboard', '--out', join(stage, 'flood.png')]),
+  runFake(deaf, ['clipboard', '--out', join(stage, 'deaf.png')]),
+  runFake(slow, ['whatever']),
   runFake(slowClipboard, ['clipboard', '--out', join(stage, 'out.png')]),
 ]);
 
@@ -115,9 +113,9 @@ const [flooded, ignored, pressed, encoded] = await Promise.all([
 
 {
   check(
-    'a keystroke that has taken five seconds has already gone wrong, so it is not waited out',
-    pressed.error === 'helper-timeout',
-    JSON.stringify(pressed),
+    'anything but an encode that has taken eight seconds has already gone wrong, so it is not waited out',
+    dawdled.error === 'helper-timeout',
+    JSON.stringify(dawdled),
   );
   check(
     'while an encode that takes nine seconds is allowed to finish',
@@ -126,69 +124,21 @@ const [flooded, ignored, pressed, encoded] = await Promise.all([
   );
 }
 
-console.log('\nWhat the Windows helper is allowed to claim');
-const windowsSource = readFileSync(join(root, 'helper', 'win', 'hotkey.cpp'), 'utf8');
+console.log('\nWhat the helpers are allowed to do at all');
 {
-  const accessLines = windowsSource.match(/report\("POST_ACCESS",[^;]*;/g) ?? [];
-  check('it reports the permission at all', accessLines.length > 0);
-  check(
-    'never as a word written into the source, because Windows cannot be asked',
-    accessLines.every((line) => !/"[a-z]+"\s*\)/.test(line)),
-    accessLines.join(' | '),
-  );
-  check('unknown is a word it can say, since that is the truth before an attempt', windowsSource.includes('"unknown"'));
-  check('and denied once an injection has actually been refused', windowsSource.includes('"denied"'));
-
-  const injections = windowsSource.split('\n').filter((line) => line.includes('SendInput('));
-  check('there is a keystroke injection to check at all', injections.length > 0);
-  check(
-    'every injection has its result read rather than discarded',
-    injections.every((line) => /(=|==|<|>|return|if\s*\()\s*SendInput\(/.test(line.trim())),
-    injections.map((line) => line.trim()).join(' | '),
-  );
-  check(
-    'a refusal by Windows itself is told apart from a short write',
-    windowsSource.includes('ERROR_ACCESS_DENIED'),
-  );
-  check('and the count that really went in is reported', /report\("EVENTS_SENT"/.test(windowsSource));
-}
-
-console.log('\nWhat a blocked injection reads as');
-{
-  // The helper prints the permission once before pressing and again once it knows, so the last
-  // word has to be the one the panel keeps.
-  const blocked = [
-    'FXP_PLATFORM=win32',
-    'FXP_POST_ACCESS=unknown',
-    'FXP_FRONT_IS_TARGET=true',
-    'FXP_EVENTS_ASKED=6',
-    'FXP_EVENTS_SENT=0',
-    'FXP_POST_ACCESS=denied',
-    'FXP_OK=false',
-    'FXP_ERROR=input-blocked',
-  ].join('\n');
-  const fields = runner.helperFields(blocked);
-  check('the permission the helper learned wins over the one it guessed', fields.POST_ACCESS === 'denied', fields.POST_ACCESS);
-  check('the run is a failure, not a success with a note', fields.OK === 'false' && fields.ERROR === 'input-blocked');
-  check('and it says how many of the events it asked for actually went in', fields.EVENTS_SENT === '0' && fields.EVENTS_ASKED === '6');
-
-  // Asserted against the fallback rather than for the code itself: a sentence that reads "The key
-  // could not be pressed: input-blocked." does contain the code and tells the editor nothing.
-  const codes = ['input-blocked', 'input-short'];
-  for (const code of codes) {
-    const sentence = copy.keysRefusal({ error: code });
-    check(`${code} reaches the user as a sentence, not as its own name`, !sentence.includes(code), sentence);
-    check(`and not as the sentence any unknown code gets`, sentence !== copy.keysRefusal({ error: 'whatever' }), sentence);
+  // Un-nesting rebuilds through Premiere's own API now, so nothing needs to press a key at Premiere
+  // — and a helper that can still inject input is a helper macOS will keep asking about.
+  for (const [label, file] of [
+    ['the macOS helper', join(root, 'helper', 'mac', 'Hotkey.swift')],
+    ['the Windows helper', join(root, 'helper', 'win', 'hotkey.cpp')],
+  ]) {
+    const source = readFileSync(file, 'utf8');
+    const posting = ['CGEventPost', 'CGRequestPostEventAccess', 'CGPreflightPostEventAccess', 'SendInput('].filter((call) =>
+      source.includes(call),
+    );
+    check(`${label} presses no keys`, posting.length === 0, posting.join(' | '));
+    check(`${label} has no mode that would ask the system for a permission`, !/"(preflight|request|keys)"/.test(source), file);
   }
-  check(
-    'the one Windows can act on says what to do about it',
-    /administrator/.test(copy.keysRefusal({ error: 'input-blocked' })),
-    copy.keysRefusal({ error: 'input-blocked' }),
-  );
-  check(
-    'and the two are not the same sentence',
-    copy.keysRefusal({ error: codes[0] }) !== copy.keysRefusal({ error: codes[1] }),
-  );
 }
 
 console.log('\nWhat the build is allowed to ship');
