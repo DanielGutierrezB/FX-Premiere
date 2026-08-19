@@ -2,11 +2,19 @@ import { resizeSelf } from '@shared/cep';
 import { saveSettings } from '@shared/settings';
 import type { QuickGroup, Settings, View, WindowBox } from '@shared/types';
 
-/** Bounds for the window Premiere draws around us, in content pixels. */
-const MIN_HEIGHT = 120;
-const MAX_HEIGHT = 1000;
-const MIN_WIDTH = 380;
-const MAX_WIDTH = 1400;
+/**
+ * Bounds for the window Premiere draws around us, in content pixels.
+ *
+ * The manifest has to allow all of this: CEP clamps `resizeContent` to the geometry declared there,
+ * and a dialog whose max and min are the same is one the mouse cannot resize at all. Exported so a
+ * test can hold CSXS/manifest.xml to these numbers rather than the two drifting apart in silence.
+ */
+export const WINDOW_BOUNDS = { minWidth: 380, minHeight: 120, maxWidth: 1400, maxHeight: 1000 };
+
+const MIN_HEIGHT = WINDOW_BOUNDS.minHeight;
+const MAX_HEIGHT = WINDOW_BOUNDS.maxHeight;
+const MIN_WIDTH = WINDOW_BOUNDS.minWidth;
+const MAX_WIDTH = WINDOW_BOUNDS.maxWidth;
 
 /**
  * How much room each sheet is opened with, in content pixels at font scale 1.

@@ -40,8 +40,11 @@
         <UI>
           <Type>Modeless</Type>
           <Menu>FX Premiere</Menu>
-          <!-- The panel resizes itself to whatever it is showing, so the minimum has to be small
-               enough for a two row list. The host clamps anything below it. -->
+          <!-- Everything the panel is ever allowed to be. CEP clamps resizeContent to these, so a
+               sheet asking for more than the maximum opens quietly cut down to it, and a dialog
+               whose maximum equals its minimum cannot be resized by hand at all: the border does
+               not even take a resize cursor. They pair with WINDOW_BOUNDS in window-size.ts, and
+               scripts/test-panel.mjs fails if the two stop agreeing. -->
           <Geometry>
             <!-- What the palette asks for on a first run, with four slots and nothing used yet: the
                  window opens at it instead of being resized a moment later. Once there are recents
@@ -53,9 +56,13 @@
               <Width>534</Width>
               <Height>332</Height>
             </Size>
+            <MaxSize>
+              <Width>1400</Width>
+              <Height>1000</Height>
+            </MaxSize>
             <MinSize>
               <Width>380</Width>
-              <Height>96</Height>
+              <Height>120</Height>
             </MinSize>
           </Geometry>
           <Icons>

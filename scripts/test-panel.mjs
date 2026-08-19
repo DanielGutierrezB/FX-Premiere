@@ -10,6 +10,7 @@ import { fileURLToPath } from 'node:url';
 
 import { createServer } from 'node:http';
 
+import { loadShared } from './lib/bundle-shared.mjs';
 import { check, finish } from './lib/check.mjs';
 import { createCepWindow, settle, waitFor } from './lib/mock-cep.mjs';
 import { writePresetFixture } from './lib/mock-files.mjs';
@@ -134,6 +135,39 @@ const savedSettings = () => JSON.parse(readFileSync(join(settingsDir, 'settings.
 // The title bar is Premiere's, but the box under it is ours to size: a modeless extension may
 // state its content height. It is planned from the settings rather than measured from the rows, so
 // it can be asked for before the first paint and never moves while you type.
+// None of that reaches the screen further than the manifest allows: CEP clamps a resize to the
+// geometry declared there, and it only lets the mouse resize a dialog whose maximum differs from its
+// minimum. A panel asking for sizes its own manifest forbids fails silently, so it is checked here.
+{
+  const { WINDOW_BOUNDS } = await loadShared('panel/src/window-size.ts', ['WINDOW_BOUNDS']);
+  const manifest = readFileSync(join(root, 'CSXS', 'manifest.xml'), 'utf8');
+  const geometry = /<Geometry>([\s\S]*?)<\/Geometry>/.exec(manifest)?.[1] ?? '';
+  const box = (tag) => {
+    const found = /<Width>(\d+)<\/Width>\s*<Height>(\d+)<\/Height>/.exec(
+      new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`).exec(geometry)?.[1] ?? '',
+    );
+    return found ? { width: Number(found[1]), height: Number(found[2]) } : null;
+  };
+  const max = box('MaxSize');
+  const min = box('MinSize');
+  check('the manifest states a maximum, without which the window cannot be resized by hand', max !== null, geometry);
+  check(
+    'and it is not the minimum, which would be the same as stating none',
+    max !== null && min !== null && max.width > min.width && max.height > min.height,
+    JSON.stringify({ max, min }),
+  );
+  check(
+    'every size the panel can ask for is a size the manifest allows',
+    max !== null &&
+      min !== null &&
+      max.width >= WINDOW_BOUNDS.maxWidth &&
+      max.height >= WINDOW_BOUNDS.maxHeight &&
+      min.width <= WINDOW_BOUNDS.minWidth &&
+      min.height <= WINDOW_BOUNDS.minHeight,
+    JSON.stringify({ max, min, WINDOW_BOUNDS }),
+  );
+}
+
 const resizes = () => cepCalls.resizes;
 const opening = resizes()[0] ?? [0, 0];
 check('the size is asked for once, on the way up', resizes().length === 1, JSON.stringify(resizes()));
