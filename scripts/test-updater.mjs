@@ -241,6 +241,14 @@ check('and sends the reader to the installer instead', /installer/i.test(readOnl
 check('the probe file is not left behind', !existsSync(join(installed, '.fxp-write-probe')));
 check('the working install is untouched', readFileSync(join(installed, 'version.json'), 'utf8').includes('9.9.9'));
 
+// The same answer, before an update is offered: settings uses it to say so in the version row rather
+// than to hand out a button that spends a download to fail.
+fs.chmodSync(installed, 0o500);
+check('an install that cannot be written to is known before anything is pressed', updater.installerOnly() === true);
+fs.chmodSync(installed, 0o700);
+check('and an ordinary install is not flagged', updater.installerOnly() === false);
+check('asking does not leave a probe file behind either', !existsSync(join(installed, '.fxp-write-probe')));
+
 const devInstall = join(stage, 'dev', 'com.fxpremiere.suite');
 mkdirSync(join(stage, 'dev'), { recursive: true });
 symlinkSync(join(root, 'dist'), devInstall);

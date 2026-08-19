@@ -12,7 +12,7 @@ import {
   sameModifiers,
 } from '@shared/settings';
 import type { Modifiers, Settings } from '@shared/types';
-import { applyUpdate, checkForUpdate, isDevInstall, localVersion, type UpdateCheck } from '@shared/updater';
+import { applyUpdate, checkForUpdate, installerOnly, isDevInstall, localVersion, type UpdateCheck } from '@shared/updater';
 import { clear, el } from '../dom';
 import { buttonRow, fieldRow, segmented, swatches, switchNode } from '../widgets';
 
@@ -468,6 +468,16 @@ export class SettingsSheet {
     }
     if (this.update?.available) {
       const headline = this.update.notes.split('\n')[0].trim();
+      // An install this cannot write to can only be updated by the installer, and that is worth
+      // saying before the button is pressed rather than after the download has run.
+      if (installerOnly()) {
+        return fieldRow(
+          'Version',
+          `${current} \u2192 ${this.update.remote} available, but this copy was installed for the ` +
+            'whole system: download the installer from the releases page and run it.',
+          el('button', { class: 'button', text: 'Installer only', disabled: true }),
+        );
+      }
       return fieldRow(
         'Version',
         `${current} \u2192 ${this.update.remote} available.${headline ? ` ${headline}` : ''}`,

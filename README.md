@@ -267,8 +267,10 @@ a propósito para no pisarte el repo: ahí actualizas con `npm run install-dev`.
 Actualizar desde el panel consiste en descomprimir el `.zxp` nuevo encima de la carpeta desde la
 que la extensión se está ejecutando, así que solo funciona si esa carpeta es tuya. Las versiones
 hasta la 1.6.2 se instalaban para todo el sistema (`/Library/...` en macOS, `Common Files` en
-Windows), y esas carpetas son de `root` o de administrador: ahí el botón no puede hacer nada y lo
-dice, nombrando la carpeta, en vez de fallar con un error de permisos sin explicación.
+Windows), y esas carpetas son de `root` o de administrador: ahí el botón no puede hacer nada. La fila
+de *Updates* lo dice **antes**, en cuanto encuentra una versión nueva —el botón queda desactivado y
+en su lugar te manda al instalador—, así que nadie se pasa una descarga entera para acabar en un
+error de permisos sin explicación.
 
 La salida es descargar el instalador de la última versión y ejecutarlo. Deja la extensión en tu
 carpeta de usuario y a partir de ahí el botón del panel ya funciona.

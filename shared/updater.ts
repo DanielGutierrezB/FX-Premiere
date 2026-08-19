@@ -234,18 +234,15 @@ const PROBE_FILE = '.fxp-write-probe';
  * Probed by writing rather than with accessSync, because on Windows the write bit only reflects
  * the read-only attribute and says nothing about the ACL that actually refuses the write.
  */
-const ensureWritable = (root: string): void => {
+const canWriteInto = (root: string): boolean => {
   const fs = nodeRequire()('fs') as typeof import('fs');
   const path = nodeRequire()('path') as typeof import('path');
   const probe = path.join(root, PROBE_FILE);
   try {
     fs.writeFileSync(probe, '');
+    return true;
   } catch {
-    throw new Error(
-      `The extension folder ${root} is not writable. FX Premiere was installed system-wide there, ` +
-        'so the update has to come from the installer: download the latest one from the releases ' +
-        'page and run it.',
-    );
+    return false;
   } finally {
     try {
       fs.rmSync(probe, { force: true });
@@ -253,6 +250,23 @@ const ensureWritable = (root: string): void => {
       /* the probe was never created, or something else already removed it */
     }
   }
+};
+
+/**
+ * Whether this install can replace itself at all, answered before an update is offered rather than
+ * once one has been pressed. A development install is left out of it: that one has its own row.
+ */
+export const installerOnly = (): boolean => !isDevInstall() && !canWriteInto(extensionRoot());
+
+const ensureWritable = (root: string): void => {
+  if (canWriteInto(root)) {
+    return;
+  }
+  throw new Error(
+    `The extension folder ${root} is not writable. FX Premiere was installed system-wide there, ` +
+      'so the update has to come from the installer: download the latest one from the releases ' +
+      'page and run it.',
+  );
 };
 
 /**
