@@ -309,6 +309,51 @@ export const hostUnnestTests = (fresh) => {
     );
   }
 
+  // The numbers are the ones a real timeline reported: a 29.97 camera file asked for a range worked
+  // out on a 30 grid, which came back 310.0097-362.9626 for a request of 310.0333-362.9667. Refusing
+  // that as "would not point it at the part of it the nest shows" made every nest holding real
+  // footage unopenable, which is what the recursive pass ran into first.
+  console.log('\nA source range Premiere puts on the source\u2019s own frames');
+  {
+    const { world, call } = fresh();
+    const camera = makeProjectItem({
+      name: 'C5749.MP4',
+      mediaPath: '/media/C5749.MP4',
+      duration: 637.637,
+      frameSeconds: 1001 / 30000,
+      needsMediaType: true,
+    });
+    const cam = world.addSequence('CAM', [
+      { name: 'C5749.MP4', start: 0, end: 52.933333, track: 0, audio: false, item: camera, sourceIn: 310.033333 },
+    ]);
+    world.addClip({ name: 'CAM', start: 20, end: 72.933333, projectItem: cam.projectItem });
+    world.select('CAM');
+    const result = run(call, { media: 'video' });
+    check('the nest comes out rather than being refused over a fraction of a frame', result.ok && result.outcome.applied === 1, messages(result));
+    const placed = world.tracks.video[1].clipList[0];
+    check('the clip is there', placed?.name === 'C5749.MP4', JSON.stringify(names(world, 'video', 1)));
+    check(
+      'it starts where the nest had it',
+      placed && Math.abs(placed.start.seconds - 20) < 0.0005,
+      String(placed?.start.seconds),
+    );
+    check(
+      'and it is never longer than the room the nest gave it, so it cannot nick what sits beside it',
+      placed && placed.end.seconds - placed.start.seconds <= 52.933333 + 0.0005,
+      String(placed && placed.end.seconds - placed.start.seconds),
+    );
+    check(
+      'nor shorter than a frame of it',
+      placed && 52.933333 - (placed.end.seconds - placed.start.seconds) <= 1001 / 30000,
+      String(placed && 52.933333 - (placed.end.seconds - placed.start.seconds)),
+    );
+    check(
+      'it shows the piece of source it was showing, on the source\u2019s own frames',
+      placed && Math.abs(placed.inPoint.seconds - 310.0097) < 0.001,
+      String(placed?.inPoint.seconds),
+    );
+  }
+
   console.log('\nWhat was on the clips comes with them');
   {
     const { world, call } = fresh();

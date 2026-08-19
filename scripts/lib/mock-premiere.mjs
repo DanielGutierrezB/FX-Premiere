@@ -64,8 +64,18 @@ export const makeProjectItem = ({
    * 26 answers the one-argument form with "Not Enough Parameters".
    */
   needsMediaType = false,
+  /**
+   * This source's own frame duration. An in or an out point lands on it, so a range worked out from a
+   * clip on a timeline whose frames are not the source's never comes back as it was asked for: real
+   * 29.97 footage answers a request made on a 30 grid a fraction earlier, in both directions.
+   */
+  frameSeconds = 0,
 }) => {
-  const asTime = (value) => time(Math.max(mediaStart, Number(value?.seconds ?? value)));
+  const onFrame = (seconds) =>
+    frameSeconds > 0
+      ? mediaStart + Math.floor((seconds - mediaStart) / frameSeconds + 1e-9) * frameSeconds
+      : seconds;
+  const asTime = (value) => time(onFrame(Math.max(mediaStart, Number(value?.seconds ?? value))));
   const timecode = (seconds) => {
     const whole = Math.floor(seconds);
     const pad = (part) => String(part).padStart(2, '0');

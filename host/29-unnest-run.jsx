@@ -14,6 +14,18 @@
 /** setInPoint grew a media type argument after the call itself existed. 4 is every stream at once. */
 FXP.ALL_MEDIA_TYPES = 4;
 
+/**
+ * How far off a source range is allowed to come back and still be the range that was asked for: a
+ * frame of the slowest footage anybody cuts with, at twenty a second.
+ *
+ * An in and an out point land on the source's own frames, the source's frame rate is nowhere in the
+ * DOM, and a range worked out from a clip on a timeline whose frames are not the source's is never on
+ * the source's grid. So a number is what has to separate a range Premiere snapped from a range it
+ * refused, and it is worth more than a frame of any real footage to keep from calling a snap a
+ * refusal — which is what left every clip of 29.97 footage inside a nest unplaceable.
+ */
+FXP.SOURCE_FRAME = 0.05;
+
 FXP.unnestPlacedLength = function (piece) {
     return piece.srcOut - piece.srcIn;
 };
@@ -49,20 +61,20 @@ FXP.setItemRange = function (item, from, to) {
     var bases = [0];
     var tried = [];
     for (var b = 0; b < bases.length; b++) {
-        var base = bases[b];
-        var forms = FXP.itemRangeForms(item, base + from, base + to);
-        for (var i = 0; i < forms.length; i++) {
+        for (var form = 0; form < FXP.ITEM_RANGE_FORMS; form++) {
+            var asked = { from: bases[b] + from, to: bases[b] + to };
             try {
-                forms[i]();
+                FXP.pointItem(item, form, asked.from, asked.to);
             } catch (error) {
-                tried[tried.length] = 'form ' + i + ' at ' + base + ': ' + FXP.errorText(error);
+                tried[tried.length] = 'form ' + form + ' at ' + bases[b] + ': ' + FXP.errorText(error);
                 continue;
             }
             var now = FXP.itemRange(item);
-            if (now && Math.abs((now.to - now.from) - wanted) <= FXP.TIME_SLACK) {
-                return { ok: true, had: had };
+            var settled = FXP.settleItemRange(item, form, asked, now, wanted);
+            if (settled) {
+                return { ok: true, had: had, from: settled.from, to: settled.to };
             }
-            tried[tried.length] = 'form ' + i + ' at ' + base + ' gave ' +
+            tried[tried.length] = 'form ' + form + ' at ' + bases[b] + ' gave ' +
                 (now ? now.from + '-' + now.to : 'nothing');
             // Two bases learnt is plenty, and a build that answers with a new number every time is
             // one to stop asking rather than to keep following.
@@ -79,17 +91,49 @@ FXP.setItemRange = function (item, from, to) {
 };
 
 /** The shapes of the in and out setters, longest first: the media type argument came later. */
-FXP.itemRangeForms = function (item, from, to) {
-    return [
-        function () {
-            item.setInPoint(from, FXP.ALL_MEDIA_TYPES);
-            item.setOutPoint(to, FXP.ALL_MEDIA_TYPES);
-        },
-        function () {
-            item.setInPoint(from);
-            item.setOutPoint(to);
-        }
-    ];
+FXP.ITEM_RANGE_FORMS = 2;
+
+FXP.pointItem = function (item, form, from, to) {
+    if (form === 0) {
+        item.setInPoint(from, FXP.ALL_MEDIA_TYPES);
+        item.setOutPoint(to, FXP.ALL_MEDIA_TYPES);
+        return;
+    }
+    item.setInPoint(from);
+    item.setOutPoint(to);
+};
+
+/**
+ * Whether an item ended up pointing at the piece that was asked for, and at what exactly.
+ *
+ * A range that comes back a fraction off in both directions was snapped to the source's own frames,
+ * not refused, and the length is then asked for again from where the in point landed. Asking again is
+ * what keeps the clip from arriving *longer* than the place kept for it on the timeline, where it
+ * would overwrite the clip already placed beside it: from a frame boundary, a length can only be
+ * rounded down, and a frame short is a frame nobody goes looking for.
+ */
+FXP.settleItemRange = function (item, form, asked, now, wanted) {
+    if (!now) {
+        return null;
+    }
+    var length = now.to - now.from;
+    if (Math.abs(length - wanted) <= FXP.TIME_SLACK) {
+        return now;
+    }
+    if (Math.abs(now.from - asked.from) > FXP.SOURCE_FRAME || Math.abs(length - wanted) > FXP.SOURCE_FRAME) {
+        return null;
+    }
+    try {
+        FXP.pointItem(item, form, now.from, now.from + wanted);
+    } catch (error) {
+        return null;
+    }
+    var again = FXP.itemRange(item);
+    if (!again) {
+        return null;
+    }
+    var settled = again.to - again.from;
+    return settled > 0 && wanted - settled >= -FXP.TIME_SLACK && wanted - settled <= FXP.SOURCE_FRAME ? again : null;
 };
 
 FXP.nearAny = function (numbers, value) {
@@ -257,7 +301,9 @@ FXP.unnestSetSpeed = function (entry, piece) {
             FXP.trace('setSpeed attempt ' + i + ' failed: ' + FXP.errorText(error));
             continue;
         }
-        if (Math.abs(FXP.clipSeconds(entry.clip.end) - piece.end) <= FXP.TIME_SLACK) {
+        // A frame of room, because the clip landed at the length of a source range that was snapped
+        // to the source's own frames: the question here is whether the speed took, and it took.
+        if (Math.abs(FXP.clipSeconds(entry.clip.end) - piece.end) <= FXP.SOURCE_FRAME) {
             entry.endSeconds = FXP.clipSeconds(entry.clip.end);
             entry.endTicks = FXP.clipTicks(entry.clip.end);
             return true;
@@ -304,14 +350,20 @@ FXP.unnestCleanSpills = function (state) {
  * error, and the caller takes everything this nest placed back off.
  */
 FXP.unnestPlacePiece = function (state, piece) {
-    var where = FXP.unnestWhere(state, piece);
-    if (where.error) {
-        return { error: where.error };
-    }
+    // The source range is settled before the room is looked for, because the range Premiere accepts
+    // is a frame or so off the one that was asked for and what lands is the range it accepted: room
+    // kept for the other one is room measured against a clip that is not the clip arriving.
     var ranged = FXP.setItemRange(piece.item, piece.srcIn, piece.srcOut);
     if (!ranged.ok) {
         FXP.restoreItemRange(piece.item, ranged.had);
         return { error: 'this Premiere would not point "' + piece.name + '" at the part of it the nest shows' };
+    }
+    piece.srcIn = ranged.from;
+    piece.srcOut = ranged.to;
+    var where = FXP.unnestWhere(state, piece);
+    if (where.error) {
+        FXP.restoreItemRange(piece.item, ranged.had);
+        return { error: where.error };
     }
     var written = FXP.unnestOverwrite(state, piece, where.dest, where.videoDest, where.audioDest);
     FXP.restoreItemRange(piece.item, ranged.had);
