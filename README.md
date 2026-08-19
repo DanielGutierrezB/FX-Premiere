@@ -407,10 +407,10 @@ no, deja que Media Encoder aplique el suyo.
 CSXS/manifest.xml      dos extensiones: panel visible + servicio invisible
 panel/                 UI de la paleta (TypeScript; el CSS va en panel/css/, un archivo por vista)
 service/               extensión invisible que gobierna el helper
-shared/                tipos, puente CEP, atajos, ajustes, búsqueda difusa, teclas, comodines
+shared/                tipos, puente CEP, atajos, ajustes, búsqueda difusa, portapapeles, comodines
 host/                  ExtendScript (ES3) que habla con Premiere
-helper/mac/            Hotkey.swift  (RegisterEventHotKey para el atajo; CGEventPost para desanidar)
-helper/win/            hotkey.cpp    (RegisterHotKey + ventana en primer plano; SendInput)
+helper/mac/            Hotkey.swift  (RegisterEventHotKey para el atajo; NSPasteboard para pegar)
+helper/win/            hotkey.cpp    (RegisterHotKey + ventana en primer plano; portapapeles Win32)
 scripts/               build, instalación de desarrollo, firma, instaladores, pruebas
 tools/                 activadores del modo depuración de CEP, para quien instale el .zxp
 ```
