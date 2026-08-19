@@ -450,7 +450,11 @@ export const pasteAndCompassViews = async ({ window, world, cep, cepCalls, stage
       savedSettings().compass.media.relative === false,
     JSON.stringify(savedSettings().compass.media),
   );
-  check('and there is nothing left to warn about', warnText() === '', warnText());
+  // Only the complaint about the path itself: whether a folder on an external disk is mounted on the
+  // machine running this is not something the test can decide, and the quiet note that says so is the
+  // right answer when it is not.
+  const shapeWarn = () => rows()[0].querySelector('.compass__warn--on:not(.compass__warn--quiet)')?.textContent ?? '';
+  check('and there is nothing left to warn about', shapeWarn() === '', shapeWarn());
   check('the preview is the folder that was typed', previews()[0] === '/Volumes/Extreme_SSD/2607_bi-deep-research-ai/Project/', previews()[0]);
 
   // The same mistake with the slash in place, which R turns into a path bolted onto another one.
