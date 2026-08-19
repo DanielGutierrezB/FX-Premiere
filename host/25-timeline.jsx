@@ -8,29 +8,114 @@
 /** Two clips that only touch at a frame boundary do not overlap, and ticks do not divide evenly. */
 FXP.TIME_SLACK = 0.0005;
 
-FXP.tracksOf = function (mediaType) {
-    var sequence = FXP.activeSequence();
+/** Both kinds of track, in the order everything here works through them. */
+FXP.BOTH_MEDIA = ['video', 'audio'];
+
+/**
+ * The tracks of one kind in any sequence, or null when Premiere will not hand the list over. Takes
+ * the sequence rather than assuming the active one: a nest is read from the sequence behind it, which
+ * is never the sequence on screen.
+ */
+FXP.tracksIn = function (sequence, mediaType) {
     if (!sequence) {
         return null;
     }
     try {
         return mediaType === 'audio' ? sequence.audioTracks : sequence.videoTracks;
     } catch (error) {
-        FXP.trace('tracksOf failed: ' + FXP.errorText(error));
+        FXP.trace('tracks unavailable: ' + FXP.errorText(error));
         return null;
+    }
+};
+
+FXP.tracksOf = function (mediaType) {
+    return FXP.tracksIn(FXP.activeSequence(), mediaType);
+};
+
+FXP.countOf = function (list, field) {
+    try {
+        return Number(list[field]) || 0;
+    } catch (error) {
+        return 0;
     }
 };
 
 FXP.trackCount = function (mediaType) {
     var tracks = FXP.tracksOf(mediaType);
+    return tracks ? FXP.countOf(tracks, 'numTracks') : 0;
+};
+
+FXP.trackClipCount = function (mediaType, trackIndex) {
+    var tracks = FXP.tracksOf(mediaType);
     if (!tracks) {
         return 0;
     }
     try {
-        return Number(tracks.numTracks) || 0;
+        return FXP.countOf(tracks[trackIndex].clips, 'numItems');
     } catch (error) {
         return 0;
     }
+};
+
+/**
+ * Hands every track of the given kinds to `visit(track, mediaType, trackIndex)`.
+ *
+ * Reading a sequence means three nested loops and a try/catch around every step of them, and that
+ * shape was written out seven times before this existed: the survey, the census, the plan and the
+ * rest each had their own copy, each with its own idea of what to do when Premiere declined to
+ * answer. Returning anything at all from `visit` stops the walk and hands that value back, which is
+ * how a caller that is looking for one thing, or refusing over one thing, gets out early.
+ */
+FXP.eachTrack = function (sequence, mediaTypes, visit) {
+    for (var g = 0; g < mediaTypes.length; g++) {
+        var mediaType = mediaTypes[g];
+        var tracks = FXP.tracksIn(sequence, mediaType);
+        var count = tracks ? FXP.countOf(tracks, 'numTracks') : 0;
+        for (var t = 0; t < count; t++) {
+            var track = null;
+            try {
+                track = tracks[t];
+            } catch (error) {
+                track = null;
+            }
+            if (!track) {
+                continue;
+            }
+            var answer = visit(track, mediaType, t);
+            if (answer !== undefined) {
+                return answer;
+            }
+        }
+    }
+    return undefined;
+};
+
+/** Hands every clip of the given kinds to `visit(clip, mediaType, trackIndex, clipIndex)`. */
+FXP.eachClip = function (sequence, mediaTypes, visit) {
+    return FXP.eachTrack(sequence, mediaTypes, function (track, mediaType, trackIndex) {
+        var count = 0;
+        try {
+            count = FXP.countOf(track.clips, 'numItems');
+        } catch (error) {
+            count = 0;
+        }
+        for (var c = 0; c < count; c++) {
+            var clip = null;
+            try {
+                clip = track.clips[c];
+            } catch (error) {
+                clip = null;
+            }
+            if (!clip) {
+                continue;
+            }
+            var answer = visit(clip, mediaType, trackIndex, c);
+            if (answer !== undefined) {
+                return answer;
+            }
+        }
+        return undefined;
+    });
 };
 
 /**

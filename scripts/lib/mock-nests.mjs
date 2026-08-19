@@ -152,10 +152,7 @@ export const createSequenceKit = ({ collection, time, makeClip, makeProjectItem,
       projectItem: contentItem(entry),
     });
 
-  /**
-   * One sequence: tracks, clips, the two placement calls, in and out points, a QE view and the
-   * ability to build a subsequence from what is between those points.
-   */
+  /** One sequence: tracks, clips, the two placement calls, in and out points, and a QE view. */
   const makeSequence = ({ name, projectItem, contents = [], videoTracks = 1, audioTracks = 1, world }) => {
     const videoTrackList = [];
     const audioTrackList = [];
@@ -363,33 +360,6 @@ export const createSequenceKit = ({ collection, time, makeClip, makeProjectItem,
         }
         world.current = sequence;
         return true;
-      },
-      /**
-       * A new sequence holding whatever is between the in and out points, which is how a trimmed
-       * nest is made copyable: Premiere's Copy copies whole clips and does not trim to in and out.
-       */
-      createSubsequence(...args) {
-        world.subsequenceCalls.push({ sequence: name, args, from: inPoint.seconds, to: outPoint.seconds });
-        if (!world.subsequenceSupported) {
-          throw new Error('createSubsequence is not available in this build');
-        }
-        const from = inPoint.seconds;
-        const to = outPoint.seconds > from ? outPoint.seconds : spanEnd();
-        const carried = [];
-        walk(sequence, (clip, index, audio) => {
-          if (clip.end.seconds <= from + slack || clip.start.seconds >= to - slack) {
-            return;
-          }
-          carried.push({
-            name: clip.name,
-            start: Math.max(clip.start.seconds, from) - from,
-            end: Math.min(clip.end.seconds, to) - from,
-            track: index,
-            audio,
-            item: clip.projectItem,
-          });
-        });
-        return world.addSequence(`${name} Sub`, carried);
       },
       grow,
       growUnder,

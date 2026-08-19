@@ -4,16 +4,13 @@
  *
  * ExtendScript cannot copy or paste timeline clips, so the contents are rebuilt: each clip inside is
  * placed again from its own project item, trimmed to the piece the nest was showing, and the effects
- * that were on it are written back. This file holds what the run is made of — what qualifies as a
- * nest, how much room it needs, what it holds that may not survive — while `27-unnest-plan.jsx` turns
- * one nest into placements and `29-unnest-run.jsx` carries them out.
+ * that were on it are written back. This file holds what a run is made of — what counts as a nest, its
+ * two linked halves, what happens to it afterwards, and what it holds that may not survive — while
+ * `27-unnest-plan.jsx` turns one nest into placements and `29-unnest-run.jsx` carries them out.
  */
 
 /** Counting the selected nest as the first level, so a limit of one means "do not go inside". */
 FXP.UNNEST_MAX_DEPTH = 8;
-
-/** setInPoint grew a media type argument after the call itself existed. 4 is every stream at once. */
-FXP.ALL_MEDIA_TYPES = 4;
 
 FXP.projectItemOf = function (clip) {
     try {
@@ -89,36 +86,6 @@ FXP.sequenceForItem = function (projectItem) {
     return null;
 };
 
-/**
- * How many tracks of one kind the contents will span: one past the highest track inside the nest
- * that carries a clip, rather than how many of them carry one. A nest with something on V1 and V3
- * and nothing between still lands its top clip two tracks up, and reserving two tracks for it would
- * put that clip on somebody else's.
- */
-FXP.usedTrackSpan = function (sequence, mediaType) {
-    var tracks = null;
-    var count = 0;
-    try {
-        tracks = mediaType === 'audio' ? sequence.audioTracks : sequence.videoTracks;
-        count = Number(tracks.numTracks) || 0;
-    } catch (error) {
-        return 0;
-    }
-    var span = 0;
-    for (var i = 0; i < count; i++) {
-        var items = 0;
-        try {
-            items = Number(tracks[i].clips.numItems) || 0;
-        } catch (error) {
-            items = 0;
-        }
-        if (items > 0) {
-            span = i + 1;
-        }
-    }
-    return span;
-};
-
 /** Which media types a choice covers, in the order they are worked through. */
 FXP.unnestMediaTypes = function (media) {
     if (media === 'video') {
@@ -127,34 +94,7 @@ FXP.unnestMediaTypes = function (media) {
     if (media === 'audio') {
         return ['audio'];
     }
-    return ['video', 'audio'];
-};
-
-FXP.trackClipCount = function (mediaType, trackIndex) {
-    var tracks = FXP.tracksOf(mediaType);
-    if (!tracks) {
-        return 0;
-    }
-    try {
-        return Number(tracks[trackIndex].clips.numItems) || 0;
-    } catch (error) {
-        return 0;
-    }
-};
-
-/** The same shape `FXP.collectSelection` builds, so the QE bridge and the recursion accept it. */
-FXP.trackEntry = function (mediaType, trackIndex, clipIndex, clip) {
-    return {
-        mediaType: mediaType,
-        trackIndex: trackIndex,
-        clipIndex: clipIndex,
-        clip: clip,
-        startTicks: FXP.clipTicks(clip.start),
-        endTicks: FXP.clipTicks(clip.end),
-        startSeconds: FXP.clipSeconds(clip.start),
-        endSeconds: FXP.clipSeconds(clip.end),
-        name: FXP.safeName(clip)
-    };
+    return FXP.BOTH_MEDIA;
 };
 
 FXP.setClipDisabled = function (clip, state) {
@@ -188,44 +128,24 @@ FXP.setClipSelected = function (clip, state) {
 };
 
 /**
- * Clears the selection of a whole sequence. Load-bearing rather than tidy: a Cmd+C that arrives while
- * the nest is still selected copies the nest itself.
+ * Clears the selection of a whole sequence, so that what the run selects afterwards is only ever what
+ * it put there: the nest the editor clicked is still selected when the rebuild starts, and leaving it
+ * that way would hand the next step the nest along with its own contents.
  */
 FXP.deselectAll = function (sequence) {
-    var groups = ['video', 'audio'];
     var cleared = 0;
-    for (var g = 0; g < groups.length; g++) {
-        var tracks = null;
-        var count = 0;
+    FXP.eachClip(sequence, FXP.BOTH_MEDIA, function (clip) {
+        var selected = false;
         try {
-            tracks = groups[g] === 'audio' ? sequence.audioTracks : sequence.videoTracks;
-            count = Number(tracks.numTracks) || 0;
+            selected = FXP.isSelected(clip);
         } catch (error) {
-            count = 0;
+            selected = false;
         }
-        for (var t = 0; t < count; t++) {
-            var clips = null;
-            var clipCount = 0;
-            try {
-                clips = tracks[t].clips;
-                clipCount = Number(clips.numItems) || 0;
-            } catch (error) {
-                clipCount = 0;
-            }
-            for (var c = 0; c < clipCount; c++) {
-                try {
-                    if (!FXP.isSelected(clips[c])) {
-                        continue;
-                    }
-                } catch (error) {
-                    continue;
-                }
-                if (FXP.setClipSelected(clips[c], false)) {
-                    cleared++;
-                }
-            }
+        if (selected && FXP.setClipSelected(clip, false)) {
+            cleared++;
         }
-    }
+        return undefined;
+    });
     return cleared;
 };
 
@@ -264,9 +184,9 @@ FXP.removeClipAt = function (entry) {
 };
 
 /**
- * Gets rid of clips this run put on the timeline and does not want. Only ever called on clips that
- * were pasted into a span that was empty a moment earlier, so a build that will not delete leaves
- * them disabled instead: visible and reversible, which nothing of the user's ever needs to be.
+ * Gets rid of clips this run put on the timeline and does not want. Only ever called on clips this run
+ * placed itself, so a build that will not delete leaves them disabled instead: visible and reversible,
+ * which nothing of the user's ever needs to be.
  */
 FXP.discardClips = function (entries, outcome, reason) {
     if (entries.length === 0) {
@@ -383,47 +303,31 @@ FXP.qualifyingNests = function (selection) {
  * other one playing the media that was just extracted from it.
  */
 FXP.attachNestHalves = function (sequence, nests) {
-    var mediaTypes = ['video', 'audio'];
     for (var n = 0; n < nests.length; n++) {
         var entry = nests[n];
-        var wanted = FXP.nodeIdOf(FXP.projectItemOf(entry.clip));
-        for (var g = 0; g < mediaTypes.length; g++) {
-            var mediaType = mediaTypes[g];
-            if (FXP.nestHalfOf(entry, mediaType)) {
+        for (var g = 0; g < FXP.BOTH_MEDIA.length; g++) {
+            if (FXP.nestHalfOf(entry, FXP.BOTH_MEDIA[g])) {
                 continue;
             }
-            var tracks = null;
-            var count = 0;
-            try {
-                tracks = mediaType === 'audio' ? sequence.audioTracks : sequence.videoTracks;
-                count = Number(tracks.numTracks) || 0;
-            } catch (error) {
-                count = 0;
-            }
-            for (var t = 0; t < count; t++) {
-                var clipCount = 0;
-                try {
-                    clipCount = Number(tracks[t].clips.numItems) || 0;
-                } catch (error) {
-                    clipCount = 0;
-                }
-                for (var c = 0; c < clipCount; c++) {
-                    var clip = tracks[t].clips[c];
-                    if (FXP.nodeIdOf(FXP.projectItemOf(clip)) !== wanted) {
-                        continue;
-                    }
-                    var candidate = FXP.trackEntry(mediaType, t, c, clip);
-                    if (candidate.startTicks !== entry.startTicks) {
-                        continue;
-                    }
-                    entry.halves[entry.halves.length] = candidate;
-                    t = count;
-                    break;
-                }
+            var found = FXP.findNestHalf(sequence, FXP.BOTH_MEDIA[g], entry);
+            if (found) {
+                entry.halves[entry.halves.length] = found;
             }
         }
     }
     return nests;
+};
+
+/** The clip that stands for the same nest, of the other kind, starting at the same moment. */
+FXP.findNestHalf = function (sequence, mediaType, entry) {
+    var wanted = FXP.nodeIdOf(FXP.projectItemOf(entry.clip));
+    return FXP.eachClip(sequence, [mediaType], function (clip, kind, trackIndex, clipIndex) {
+        if (FXP.nodeIdOf(FXP.projectItemOf(clip)) !== wanted) {
+            return undefined;
+        }
+        var candidate = FXP.trackEntry(kind, trackIndex, clipIndex, clip);
+        return candidate.startTicks === entry.startTicks ? candidate : undefined;
+    }) || null;
 };
 
 FXP.nestHalfOf = function (entry, mediaType) {
@@ -479,9 +383,10 @@ FXP.retireNestHalf = function (half, options, outcome) {
 };
 
 /**
- * Whether a clip is a title or a graphic made in the timeline rather than something imported. Those
- * are the most common thing inside a real nest and the reason clips cannot simply be rebuilt, so the
- * survey counts them: a project item with no media behind it and no sequence behind it either.
+ * Whether a clip is a title or a graphic made in the timeline rather than something imported: a project
+ * item with no media behind it and no sequence behind it either. The survey counts them because they
+ * are the most common thing inside a real nest that a rebuild cannot put back, so somebody should be
+ * told how many are at stake before pressing Enter.
  */
 FXP.clipIsTimelineGraphic = function (clip) {
     var projectItem = FXP.projectItemOf(clip);
@@ -508,84 +413,32 @@ FXP.clipHasSpeedChange = function (clip) {
 };
 
 /**
- * Counts what one nest holds that Copy and Paste may not carry across. It reads the vanilla DOM
+ * Counts what one nest holds that a rebuild may not be able to put back. It reads the vanilla DOM
  * only: the QE DOM answers for the active sequence, and making a nest active to look inside it is
  * exactly the kind of thing a survey has no business doing.
  */
 FXP.surveyNest = function (nested, mediaTypes, into) {
-    for (var g = 0; g < mediaTypes.length; g++) {
-        var tracks = null;
-        var count = 0;
+    FXP.eachTrack(nested, mediaTypes, function (track) {
         try {
-            tracks = mediaTypes[g] === 'audio' ? nested.audioTracks : nested.videoTracks;
-            count = Number(tracks.numTracks) || 0;
+            into.transitions += Number(track.transitions.numItems) || 0;
         } catch (error) {
-            count = 0;
+            /* a build that does not expose them counts none rather than refusing to survey */
         }
-        for (var t = 0; t < count; t++) {
-            var track = tracks[t];
-            var clipCount = 0;
-            try {
-                clipCount = Number(track.clips.numItems) || 0;
-            } catch (error) {
-                clipCount = 0;
-            }
-            for (var c = 0; c < clipCount; c++) {
-                var clip = track.clips[c];
-                into.clips++;
-                if (FXP.clipIsTimelineGraphic(clip)) {
-                    into.titles++;
-                }
-                if (FXP.clipHasSpeedChange(clip)) {
-                    into.speedChanges++;
-                }
-                if (FXP.itemIsMulticam(FXP.projectItemOf(clip))) {
-                    into.multicam++;
-                }
-            }
-            try {
-                into.transitions += Number(track.transitions.numItems) || 0;
-            } catch (error) {
-                /* a build that does not expose them counts none rather than refusing to survey */
-            }
+        return undefined;
+    });
+    FXP.eachClip(nested, mediaTypes, function (clip) {
+        into.clips++;
+        if (FXP.clipIsTimelineGraphic(clip)) {
+            into.titles++;
         }
-    }
-};
-
-/** Whether the clip shows less than the whole sequence behind it, which Copy cannot express. */
-FXP.nestIsTrimmed = function (clip, nested) {
-    var from = FXP.clipSeconds(clip.inPoint);
-    var to = FXP.clipSeconds(clip.outPoint);
-    if (from > FXP.TIME_SLACK) {
-        return true;
-    }
-    var whole = 0;
-    var mediaTypes = ['video', 'audio'];
-    for (var g = 0; g < mediaTypes.length; g++) {
-        var tracks = null;
-        var count = 0;
-        try {
-            tracks = mediaTypes[g] === 'audio' ? nested.audioTracks : nested.videoTracks;
-            count = Number(tracks.numTracks) || 0;
-        } catch (error) {
-            count = 0;
+        if (FXP.clipHasSpeedChange(clip)) {
+            into.speedChanges++;
         }
-        for (var t = 0; t < count; t++) {
-            var clipCount = 0;
-            try {
-                clipCount = Number(tracks[t].clips.numItems) || 0;
-            } catch (error) {
-                clipCount = 0;
-            }
-            for (var c = 0; c < clipCount; c++) {
-                var end = FXP.clipSeconds(tracks[t].clips[c].end);
-                if (end > whole) {
-                    whole = end;
-                }
-            }
+        if (FXP.itemIsMulticam(FXP.projectItemOf(clip))) {
+            into.multicam++;
         }
-    }
-    return whole > 0 && to > 0 && to < whole - FXP.TIME_SLACK;
+        return undefined;
+    });
 };
 
 /**
@@ -600,7 +453,6 @@ FXP.unnestSurvey = function (request) {
         transitions: 0,
         multicam: 0,
         speedChanges: 0,
-        trimmed: 0,
         missing: 0,
         // Which nests these numbers are about, so the run can refuse a selection that has since
         // changed rather than act on whatever is selected by the time Enter is pressed.
@@ -619,126 +471,8 @@ FXP.unnestSurvey = function (request) {
             continue;
         }
         report.nests++;
-        if (FXP.nestIsTrimmed(nests[i].clip, nested)) {
-            report.trimmed++;
-        }
         FXP.surveyNest(nested, mediaTypes, report);
     }
     FXP.trace('survey: ' + FXP.json.stringify(report));
     return report;
-};
-
-FXP.probeValue = function (param) {
-    var value = FXP.paramValue(param);
-    if (value === null || value === undefined) {
-        return '';
-    }
-    if (value instanceof Array) {
-        return FXP.json.stringify(value);
-    }
-    if (typeof value === 'object') {
-        return FXP.json.stringify(value);
-    }
-    return String(value);
-};
-
-/**
- * Names an active-angle query could plausibly hide behind. There is no documented one, so the point
- * of the list is to find out whether any of them answer on a real multicam clip.
- */
-FXP.MULTICAM_CANDIDATES = [
-    'getMulticamAngle',
-    'getActiveAngle',
-    'multicamAngle',
-    'activeAngle',
-    'videoAngle',
-    'audioAngle',
-    'getMultiCamSource',
-    'isMultiCamEnabled'
-];
-
-FXP.probeCandidate = function (target, label, name) {
-    var value = null;
-    try {
-        value = target[name];
-    } catch (error) {
-        return { name: label + '.' + name, value: 'threw: ' + FXP.errorText(error) };
-    }
-    if (value === undefined) {
-        return null;
-    }
-    if (typeof value === 'function') {
-        try {
-            return { name: label + '.' + name + '()', value: FXP.json.stringify(value.call(target)) };
-        } catch (error) {
-            return { name: label + '.' + name + '()', value: 'threw: ' + FXP.errorText(error) };
-        }
-    }
-    return { name: label + '.' + name, value: String(value) };
-};
-
-/**
- * Dumps everything a selected clip will say about itself. It exists because the active multicam
- * angle is not in any documented API and the only way to find out whether it is reachable at all is
- * to look on a machine with a real multicam clip on the timeline.
- */
-FXP.probeMulticamClip = function () {
-    var selection = FXP.requireSelection();
-    var entry = selection[0];
-    var clip = FXP.freshClip(entry);
-    var projectItem = FXP.projectItemOf(clip);
-    var components = [];
-    var list = null;
-    var count = 0;
-    try {
-        list = clip.components;
-        count = Number(list.numItems) || 0;
-    } catch (error) {
-        count = 0;
-    }
-    for (var i = 0; i < count; i++) {
-        var component = list[i];
-        var described = FXP.describeComponent(component);
-        var params = [];
-        var properties = null;
-        var total = 0;
-        try {
-            properties = component.properties;
-            total = Number(properties.numItems) || 0;
-        } catch (error) {
-            total = 0;
-        }
-        for (var p = 0; p < total; p++) {
-            var name = '';
-            try {
-                name = String(properties[p].displayName);
-            } catch (error) {
-                name = '#' + p;
-            }
-            params[params.length] = { name: name, value: FXP.probeValue(properties[p]) };
-        }
-        components[components.length] = { matchName: described.matchName, name: described.name, params: params };
-    }
-    var candidates = [];
-    for (var c = 0; c < FXP.MULTICAM_CANDIDATES.length; c++) {
-        var onClip = FXP.probeCandidate(clip, 'clip', FXP.MULTICAM_CANDIDATES[c]);
-        if (onClip) {
-            candidates[candidates.length] = onClip;
-        }
-        if (!projectItem) {
-            continue;
-        }
-        var onItem = FXP.probeCandidate(projectItem, 'projectItem', FXP.MULTICAM_CANDIDATES[c]);
-        if (onItem) {
-            candidates[candidates.length] = onItem;
-        }
-    }
-    return {
-        clipName: entry.name,
-        projectItemName: projectItem ? String(projectItem.name) : '',
-        isSequence: FXP.itemIsSequence(projectItem),
-        isMulticam: FXP.itemIsMulticam(projectItem),
-        components: components,
-        candidates: candidates
-    };
 };

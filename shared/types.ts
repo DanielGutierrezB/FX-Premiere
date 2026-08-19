@@ -136,8 +136,6 @@ export interface UnnestSurvey {
   transitions: number;
   multicam: number;
   speedChanges: number;
-  /** Nests whose clip on the timeline is shorter than the sequence behind it. */
-  trimmed: number;
   /** Nests whose sequence is not in this project, which are refused rather than warned about. */
   missing: number;
   /**

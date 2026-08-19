@@ -58,11 +58,7 @@ interface ApplyHost {
   openEase(item: CatalogItem): void;
   openAnchor(item: CatalogItem): void;
   undo(): Promise<void>;
-  /**
-   * Un-nesting is not one crossing of the bridge: it is a loop with Premiere's own Copy and Paste
-   * pressed in the middle of it. It comes through here rather than being called from inside `send`
-   * so the keystrokes are something a test can stand in for.
-   */
+  /** Rebuilds the selected nests on the timeline they sit in, once the dialog has been answered. */
   unnest(): Promise<HostResponse<ApplyOutcome>>;
   openPaste(item: CatalogItem): Promise<void>;
   openCompass(): Promise<void>;

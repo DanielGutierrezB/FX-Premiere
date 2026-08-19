@@ -284,7 +284,6 @@ export const buildWorld = () => {
 
   const world = {
     placements: [],
-    subsequenceCalls: [],
     addTrackCalls: [],
     removeTrackCalls: [],
     moveToTrackCalls: [],
@@ -353,9 +352,8 @@ export const buildWorld = () => {
      * placement rather than the steering.
      */
     trackTargetingUnsupported: false,
-    /** Whether `Sequence.setInPoint` takes the media type argument, and whether subsequences work. */
+    /** Whether `Sequence.setInPoint` takes the media type argument. */
     sequenceInOutArity: 2,
-    subsequenceSupported: true,
     clipQuirks,
   };
 
@@ -734,7 +732,7 @@ export const buildWorld = () => {
     });
   };
 
-  /** Premiere's own Copy and Paste, which is all un-nesting has to reach them with. */
+  /** How a project item turns into clips, which is what the un-nest rebuild places one at a time. */
   world.expand = kit.expand;
 
   return world;
@@ -747,8 +745,8 @@ export const buildWorld = () => {
 export const createHost = ({ hostScript, documentsRoot, withoutQE = false }) => {
   const world = buildWorld();
   fileReads.length = 0;
-  // Read through rather than copied: a subsequence built mid-run has to be findable, and the active
-  // sequence has to be whichever one the host just made current.
+  // Read through rather than copied: the sequence a nest stands for is looked up by node id while a
+  // run is in flight, and the active sequence has to be whichever one the host just made current.
   const sequences = new Proxy(
     {},
     {

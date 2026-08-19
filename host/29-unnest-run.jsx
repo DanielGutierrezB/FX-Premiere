@@ -11,6 +11,9 @@
  * the active angle of a multicam clip, and any clip Premiere will not describe.
  */
 
+/** setInPoint grew a media type argument after the call itself existed. 4 is every stream at once. */
+FXP.ALL_MEDIA_TYPES = 4;
+
 FXP.unnestPlacedLength = function (piece) {
     return piece.srcOut - piece.srcIn;
 };
@@ -169,9 +172,13 @@ FXP.unnestOverwrite = function (state, piece, dest, videoDest, audioDest) {
         } catch (error) {
             FXP.trace('overwrite attempt ' + i + ' failed: ' + FXP.errorText(error));
         }
-        var made = FXP.censusNewEntries(state.parent, before);
+        var after = FXP.clipCensus(state.parent);
+        var made = FXP.censusArrived(before, after);
         if (made.length > 0) {
-            return { made: made, lost: FXP.censusLosses(state.parent, before, {}) };
+            // A clip the overwrite only shortened is both gone and arrived: gone as the clip it was,
+            // arrived as the stub that is left. The caller reads the losses first, so a nick out of
+            // somebody's tail stops the run instead of being mistaken for something this placed.
+            return { made: made, lost: FXP.censusGone(before, after) };
         }
     }
     return { error: 'this Premiere placed nothing for it', made: [] };
@@ -259,16 +266,16 @@ FXP.unnestSpill = function (state, mediaType, from, to) {
  * empty audio track was told about a service they did not ask for.
  */
 FXP.unnestCleanSpills = function (state) {
-    var mediaTypes = ['video', 'audio'];
-    for (var g = 0; g < mediaTypes.length; g++) {
-        var spill = state.spills[mediaTypes[g]];
+    for (var g = 0; g < FXP.BOTH_MEDIA.length; g++) {
+        var mediaType = FXP.BOTH_MEDIA[g];
+        var spill = state.spills[mediaType];
         if (!spill || !spill.added) {
             continue;
         }
-        if (FXP.trackClipCount(mediaTypes[g], spill.index) === 0) {
-            FXP.removeTrackAt(mediaTypes[g], spill.index);
+        if (FXP.trackClipCount(mediaType, spill.index) === 0) {
+            FXP.removeTrackAt(mediaType, spill.index);
         }
-        state.spills[mediaTypes[g]] = null;
+        state.spills[mediaType] = null;
     }
 };
 
@@ -334,7 +341,7 @@ FXP.unnestPlacePiece = function (state, piece) {
     if (written.lost.length > 0) {
         return {
             stop: written.lost.length + ' clip(s) on the timeline were overwritten while placing "' +
-                piece.name + '": ' + FXP.describeCensusKeys(state.parent, state.census, written.lost) +
+                piece.name + '": ' + FXP.describeClips(state.parent, written.lost, 4) +
                 '. Press Cmd+Z in Premiere to take this back.'
         };
     }
@@ -469,7 +476,7 @@ FXP.unnestOne = function (state, job) {
             return FXP.unnestRefused(state, entry, done.error);
         }
     }
-    if (plan.spans.transitions) {
+    if (plan.hasTransitions) {
         state.outcome.messages[state.outcome.messages.length] =
             'Transitions inside "' + entry.name + '" were not carried over: Premiere has no API that makes one.';
     }
@@ -550,7 +557,6 @@ FXP.unnestRun = function (request) {
         options: options,
         outcome: outcome,
         notes: { missing: [], unmatched: 0 },
-        census: FXP.clipCensus(parent),
         queue: [],
         placed: [],
         spills: { video: null, audio: null },
@@ -570,9 +576,6 @@ FXP.unnestRun = function (request) {
             outcome.messages[outcome.messages.length] = state.stop;
             break;
         }
-        // Tracks this nest grew into are part of the timeline now, so the next nest is measured
-        // against a timeline that has them.
-        state.census = FXP.clipCensus(parent);
     }
     if (state.notes.missing.length > 0) {
         outcome.messages[outcome.messages.length] =

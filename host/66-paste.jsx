@@ -172,26 +172,6 @@ FXP.pasteStill = function (request) {
     }
 };
 
-/**
- * Whether the media brings sound with it.
- *
- * The DOM will not say, so the project panel's own columns are asked, as XMP: `AudioInfo` is what
- * the Audio Info column shows and it is only filled in for media that has any. A build that says
- * nothing is believed rather than guessed at — the census taken around the placement is what catches
- * a wrong answer here, and reserving an audio track for silent footage is how the un-nest used to
- * leave empty audio tracks behind.
- */
-FXP.mediaHasAudio = function (item) {
-    var xmp = '';
-    try {
-        xmp = String(item.getProjectMetadata() || '');
-    } catch (error) {
-        return false;
-    }
-    var found = xmp.match(/Column\.Intrinsic\.AudioInfo="([^"]*)"/);
-    return !!found && FXP.trim(found[1]) !== '';
-};
-
 FXP.readTargeting = function (mediaType) {
     var tracks = FXP.tracksOf(mediaType);
     var count = 0;
@@ -304,7 +284,7 @@ FXP.placeStillOn = function (sequence, item, placed, playhead) {
     // Both reservations are already made, so this is a reading of the timeline whose tracks are the
     // ones the clip is about to land between: a track added after it would move every clip's index
     // and turn the comparison afterwards into a list of losses that never happened.
-    var before = FXP.pasteSpans(sequence);
+    var before = FXP.clipCensus(sequence);
     try {
         track.overwriteClip(item, playhead);
     } finally {
@@ -327,92 +307,19 @@ FXP.placeStillOn = function (sequence, item, placed, playhead) {
     };
 };
 
-/**
- * Every clip in the sequence with the span it occupies.
- *
- * Not the census the un-nest takes: that one knows a clip by where it starts, and an overwrite eats
- * the tail of the clip before it and the head of the clip after it. The first keeps its key while
- * losing seconds off the end, and the second gets a new key while still being the editor's — one
- * damage that would go unseen and one clip that a rollback would then delete for being unfamiliar.
- */
-FXP.pasteSpans = function (sequence) {
-    var mediaTypes = ['video', 'audio'];
-    var spans = [];
-    for (var g = 0; g < mediaTypes.length; g++) {
-        var tracks = null;
-        var count = 0;
-        try {
-            tracks = mediaTypes[g] === 'audio' ? sequence.audioTracks : sequence.videoTracks;
-            count = Number(tracks.numTracks) || 0;
-        } catch (error) {
-            count = 0;
-        }
-        for (var t = 0; t < count; t++) {
-            var clipCount = 0;
-            try {
-                clipCount = Number(tracks[t].clips.numItems) || 0;
-            } catch (error) {
-                clipCount = 0;
-            }
-            for (var c = 0; c < clipCount; c++) {
-                var clip = tracks[t].clips[c];
-                spans[spans.length] = {
-                    mediaType: mediaTypes[g],
-                    trackIndex: t,
-                    name: FXP.safeName(clip),
-                    start: FXP.clipSeconds(clip.start),
-                    end: FXP.clipSeconds(clip.end)
-                };
-            }
-        }
-    }
-    return spans;
-};
-
-FXP.pasteSpanIsIn = function (spans, wanted) {
-    for (var i = 0; i < spans.length; i++) {
-        if (spans[i].mediaType === wanted.mediaType && spans[i].trackIndex === wanted.trackIndex &&
-            spans[i].name === wanted.name &&
-            Math.abs(spans[i].start - wanted.start) < FXP.TIME_SLACK &&
-            Math.abs(spans[i].end - wanted.end) < FXP.TIME_SLACK) {
-            return true;
-        }
-    }
-    return false;
-};
-
 /** The clips on the timeline that came from the item this run imported, and nothing else. */
 FXP.pasteClipsOf = function (sequence, item) {
     var wanted = FXP.nodeIdOf(item);
-    var mediaTypes = ['video', 'audio'];
     var mine = [];
     if (wanted === '') {
         return mine;
     }
-    for (var g = 0; g < mediaTypes.length; g++) {
-        var tracks = null;
-        var count = 0;
-        try {
-            tracks = mediaTypes[g] === 'audio' ? sequence.audioTracks : sequence.videoTracks;
-            count = Number(tracks.numTracks) || 0;
-        } catch (error) {
-            count = 0;
+    FXP.eachClip(sequence, FXP.BOTH_MEDIA, function (clip, mediaType, trackIndex, clipIndex) {
+        if (FXP.nodeIdOf(FXP.projectItemOf(clip)) === wanted) {
+            mine[mine.length] = FXP.trackEntry(mediaType, trackIndex, clipIndex, clip);
         }
-        for (var t = 0; t < count; t++) {
-            var clipCount = 0;
-            try {
-                clipCount = Number(tracks[t].clips.numItems) || 0;
-            } catch (error) {
-                clipCount = 0;
-            }
-            for (var c = 0; c < clipCount; c++) {
-                var clip = tracks[t].clips[c];
-                if (FXP.nodeIdOf(clip.projectItem) === wanted) {
-                    mine[mine.length] = FXP.trackEntry(mediaTypes[g], t, c, clip);
-                }
-            }
-        }
-    }
+        return undefined;
+    });
     return mine;
 };
 
@@ -425,31 +332,15 @@ FXP.pasteClipsOf = function (sequence, item) {
  * off, and the caller then removes the import too, so a refusal adds nothing to the project.
  */
 FXP.pasteKeepWhatWasThere = function (sequence, before, item) {
-    var now = FXP.pasteSpans(sequence);
-    var harmed = [];
-    for (var i = 0; i < before.length; i++) {
-        if (!FXP.pasteSpanIsIn(now, before[i])) {
-            harmed[harmed.length] = before[i];
-        }
-    }
+    var harmed = FXP.censusGone(before, FXP.clipCensus(sequence));
     if (harmed.length === 0) {
         return;
     }
     var outcome = { messages: [] };
     FXP.discardClips(FXP.pasteClipsOf(sequence, item), outcome, 'pasted');
-    var where = [];
-    for (i = 0; i < harmed.length && i < 4; i++) {
-        where[where.length] = FXP.describePlace(
-            sequence,
-            harmed[i].mediaType,
-            harmed[i].trackIndex,
-            harmed[i].start,
-            harmed[i].name
-        );
-    }
     var said = 'The paste went over ' + harmed.length + ' clip(s) that were already there: ' +
-        where.join(', ') + '. What it put down was taken back off, but Premiere had already ' +
-        'overwritten them: press Cmd+Z to get them back.';
+        FXP.describeClips(sequence, harmed, 4) + '. What it put down was taken back off, but Premiere ' +
+        'had already overwritten them: press Cmd+Z to get them back.';
     if (outcome.messages.length > 0) {
         said += ' ' + outcome.messages.join(' ') + '.';
     }

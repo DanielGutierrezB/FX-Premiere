@@ -26,29 +26,6 @@ FXP.unnestWindow = function (clip) {
 };
 
 /**
- * Whether the media behind a project item carries a picture. It decides where a clip has to be
- * placed from, so an item that will not say is treated as though it does: placing an audio clip from
- * the audio side sends any picture it turns out to have to whichever video track Premiere prefers,
- * and the answer to that is a spare track to catch it, not a guess that there is nothing to catch.
- */
-FXP.mediaHasVideo = function (item) {
-    var xmp = '';
-    try {
-        xmp = String(item.getProjectMetadata() || '');
-    } catch (error) {
-        return true;
-    }
-    var video = xmp.match(/Column\.Intrinsic\.VideoInfo="([^"]*)"/);
-    if (video) {
-        return FXP.trim(video[1]) !== '';
-    }
-    // Sound with no picture: Premiere fills the audio column in and leaves the video one out. Media
-    // that says neither is treated as having a picture, which costs a spare track and nothing else.
-    var audio = xmp.match(/Column\.Intrinsic\.AudioInfo="([^"]*)"/);
-    return !audio || FXP.trim(audio[1]) === '';
-};
-
-/**
  * One clip inside the nest, turned into a placement. Returns null when the clip is outside the part
  * of the sequence the nest plays, and an error when it is inside it and cannot be rebuilt.
  */
@@ -149,63 +126,62 @@ FXP.unnestPlanNest = function (nested, entry, mediaTypes) {
     if (FXP.clipHasSpeedChange(entry.clip)) {
         return { error: 'the nest itself is retimed, and rebuilding it would change how long its contents run' };
     }
+    for (var g = 0; g < mediaTypes.length; g++) {
+        if (!FXP.tracksIn(nested, mediaTypes[g])) {
+            return { error: 'Premiere would not read the ' + mediaTypes[g] + ' tracks inside it' };
+        }
+    }
     var window = FXP.unnestWindow(entry.clip);
     var pieces = [];
     var spans = { video: 0, audio: 0 };
-    for (var g = 0; g < mediaTypes.length; g++) {
-        var mediaType = mediaTypes[g];
-        var tracks = null;
-        var count = 0;
-        try {
-            tracks = mediaType === 'audio' ? nested.audioTracks : nested.videoTracks;
-            count = Number(tracks.numTracks) || 0;
-        } catch (error) {
-            return { error: 'Premiere would not read the ' + mediaType + ' tracks inside it' };
+    var refused = FXP.eachClip(nested, mediaTypes, function (clip, mediaType, trackIndex) {
+        var read = FXP.unnestPieceOf(clip, mediaType, trackIndex, window, entry);
+        if (!read) {
+            return undefined;
         }
-        for (var t = 0; t < count; t++) {
-            var track = tracks[t];
-            var clipCount = 0;
-            try {
-                clipCount = Number(track.clips.numItems) || 0;
-            } catch (error) {
-                clipCount = 0;
-            }
-            for (var c = 0; c < clipCount; c++) {
-                var read = FXP.unnestPieceOf(track.clips[c], mediaType, t, window, entry);
-                if (!read) {
-                    continue;
-                }
-                if (read.error) {
-                    return { error: read.error };
-                }
-                if (pieces.length >= FXP.UNNEST_MAX_CLIPS) {
-                    return {
-                        error: 'it holds more than ' + FXP.UNNEST_MAX_CLIPS +
-                            ' clips, which is more than this can rebuild in one go'
-                    };
-                }
-                pieces[pieces.length] = read.piece;
-                // One past the highest track that carries something, so a nest with a gap in its
-                // stack still lands its top clip on its own track instead of on somebody else's.
-                if (t + 1 > spans[mediaType]) {
-                    spans[mediaType] = t + 1;
-                }
-            }
-            // A transition is not a clip and there is no API that makes one, so it is named rather
-            // than dropped quietly: an editor who sees the crossfade gone should have been told.
-            try {
-                if (Number(track.transitions.numItems) > 0) {
-                    spans.transitions = true;
-                }
-            } catch (error) {
-                /* a build that will not list them is not worth refusing over */
-            }
+        if (read.error) {
+            return read.error;
         }
+        if (pieces.length >= FXP.UNNEST_MAX_CLIPS) {
+            return 'it holds more than ' + FXP.UNNEST_MAX_CLIPS +
+                ' clips, which is more than this can rebuild in one go';
+        }
+        pieces[pieces.length] = read.piece;
+        // One past the highest track that carries something, so a nest with a gap in its stack still
+        // lands its top clip on its own track instead of on somebody else's.
+        if (trackIndex + 1 > spans[mediaType]) {
+            spans[mediaType] = trackIndex + 1;
+        }
+        return undefined;
+    });
+    if (refused) {
+        return { error: refused };
     }
     if (pieces.length === 0) {
         return { error: 'there is nothing of that kind inside it' };
     }
-    return { pieces: FXP.unnestPairUp(pieces), spans: spans, window: window };
+    return {
+        pieces: FXP.unnestPairUp(pieces),
+        spans: spans,
+        window: window,
+        hasTransitions: FXP.nestHasTransitions(nested, mediaTypes)
+    };
+};
+
+/**
+ * Whether anything inside is joined by a transition. A transition is not a clip and there is no API
+ * that makes one, so it is named rather than dropped quietly: an editor who finds the crossfade gone
+ * should have been told it would be.
+ */
+FXP.nestHasTransitions = function (nested, mediaTypes) {
+    return FXP.eachTrack(nested, mediaTypes, function (track) {
+        try {
+            return Number(track.transitions.numItems) > 0 ? true : undefined;
+        } catch (error) {
+            /* a build that will not list them is not worth refusing over */
+            return undefined;
+        }
+    }) === true;
 };
 
 /**
@@ -233,23 +209,23 @@ FXP.unnestReserveRooms = function (plan, entry) {
  * a new one, and a track this had to add is remembered so it can be taken back off afterwards.
  */
 FXP.unnestSpillTrack = function (mediaType, from, to, avoid) {
-    var count = FXP.trackCount(mediaType);
-    for (var index = count - 1; index >= 0; index--) {
-        if (FXP.contains(avoid, index) || !FXP.trackIsFree(mediaType, index, from, to)) {
-            continue;
-        }
-        return { index: index, added: false };
+    var found = FXP.topFreeTrack(mediaType, from, to, avoid);
+    if (found !== null) {
+        return { index: found, added: false };
     }
-    var added = FXP.addTracks(mediaType, 1);
-    if (added === 0) {
+    if (FXP.addTracks(mediaType, 1) === 0) {
         return null;
     }
-    var grown = FXP.trackCount(mediaType);
-    for (var fresh = grown - 1; fresh >= 0; fresh--) {
-        if (FXP.contains(avoid, fresh) || !FXP.trackIsFree(mediaType, fresh, from, to)) {
-            continue;
+    found = FXP.topFreeTrack(mediaType, from, to, avoid);
+    return found === null ? null : { index: found, added: true };
+};
+
+/** The highest track free across the span that the plan is not already using, or null if there is none. */
+FXP.topFreeTrack = function (mediaType, from, to, avoid) {
+    for (var index = FXP.trackCount(mediaType) - 1; index >= 0; index--) {
+        if (!FXP.contains(avoid, index) && FXP.trackIsFree(mediaType, index, from, to)) {
+            return index;
         }
-        return { index: fresh, added: true };
     }
     return null;
 };

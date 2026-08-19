@@ -214,6 +214,35 @@ export const hostUnnestGuardTests = (fresh) => {
     );
   }
 
+  console.log('\nWhen a placement only nicks the clip next to it');
+  {
+    const { world, call } = fresh();
+    // The damage a start-keyed census cannot see: an overwrite that lands over the tail of a longer
+    // clip leaves it in place, with its name and its start, seconds shorter. The clip is the editor's
+    // and the seconds are gone, so it counts as a loss like any other.
+    const tracks = world.tracks.video;
+    const honest = tracks.map((track) => track.overwriteClip.bind(track));
+    tracks.forEach((track, index) => {
+      if (index > 0) {
+        track.overwriteClip = (item, at) => honest[1](item, at);
+      }
+    });
+    world.tracks.video[1].clipList = [];
+    world.addClip({ name: 'Long take.mp4', start: 8, end: 13, track: 1 });
+    world.select('Nested Sequence');
+    const result = run(call, { media: 'video' });
+    tracks.forEach((track, index) => {
+      track.overwriteClip = honest[index];
+    });
+    check('the run stops instead of reporting success', result.outcome.applied === 0 && result.outcome.failed >= 1, JSON.stringify(result.outcome));
+    check(
+      'and the clip it shortened is named as overwritten',
+      /were overwritten/.test(messages(result)) && /Long take\.mp4/.test(messages(result)),
+      messages(result),
+    );
+    check('the nest is still a nest', world.clips.nestClip.disabled === false);
+  }
+
   console.log('\nA Premiere that cannot be told where the sound goes');
   {
     const { world, call } = fresh();
