@@ -118,6 +118,65 @@ FXP.eachClip = function (sequence, mediaTypes, visit) {
     });
 };
 
+/** Which tracks of one kind are targeted, or null when Premiere will not say for all of them. */
+FXP.readTargeting = function (mediaType) {
+    var tracks = FXP.tracksOf(mediaType);
+    if (!tracks) {
+        return null;
+    }
+    var count = FXP.countOf(tracks, 'numTracks');
+    var wanted = [];
+    for (var i = 0; i < count; i++) {
+        try {
+            wanted[i] = tracks[i].isTargeted() === true;
+        } catch (error) {
+            return null;
+        }
+    }
+    return wanted;
+};
+
+/** Sets the targeting back to a list `readTargeting` gave. Null is nothing to do, not a failure. */
+FXP.applyTargeting = function (mediaType, wanted) {
+    if (!wanted) {
+        return false;
+    }
+    var tracks = FXP.tracksOf(mediaType);
+    var done = true;
+    for (var i = 0; i < wanted.length; i++) {
+        try {
+            tracks[i].setTargeted(wanted[i] === true, true);
+        } catch (error) {
+            done = false;
+        }
+    }
+    return done;
+};
+
+/**
+ * Targets one track and nothing else, answering with the targeting to put back afterwards.
+ *
+ * Premiere places both halves of a linked clip wherever it likes and sends the sound to whichever
+ * track is targeted, so this is the only thing that keeps a paste or an un-nest off the editor's A1.
+ * Null means the build would not say, or would not be told: nothing was changed, so there is nothing
+ * to restore, and the caller has to place through a form that names both tracks outright.
+ */
+FXP.targetOnly = function (mediaType, index) {
+    var was = FXP.readTargeting(mediaType);
+    if (!was) {
+        return null;
+    }
+    var wanted = [];
+    for (var i = 0; i < was.length; i++) {
+        wanted[i] = i === index;
+    }
+    if (!FXP.applyTargeting(mediaType, wanted)) {
+        FXP.applyTargeting(mediaType, was);
+        return null;
+    }
+    return was;
+};
+
 /**
  * A locked track is not somewhere anything can be put. Premiere refuses the write, and an empty
  * locked track at the top of the stack would otherwise be counted as room and reserved, leaving the

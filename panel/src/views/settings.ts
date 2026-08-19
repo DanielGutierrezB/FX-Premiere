@@ -12,7 +12,15 @@ import {
   sameModifiers,
 } from '@shared/settings';
 import type { Modifiers, Settings } from '@shared/types';
-import { applyUpdate, checkForUpdate, installerOnly, isDevInstall, localVersion, type UpdateCheck } from '@shared/updater';
+import {
+  applyUpdate,
+  checkForUpdate,
+  INSTALLER_ONLY_REASON,
+  installerOnly,
+  isDevInstall,
+  localVersion,
+  type UpdateCheck,
+} from '@shared/updater';
 import { clear, el } from '../dom';
 import { buttonRow, fieldRow, segmented, swatches, switchNode } from '../widgets';
 
@@ -58,6 +66,13 @@ export class SettingsSheet {
   private update: UpdateCheck | null = null;
 
   private state: 'idle' | 'checking' | 'installing' = 'idle';
+
+  /**
+   * Whether this copy can only be updated by running the installer. Answered once with the update
+   * check, not on every render: finding out means writing a file into the extension folder and
+   * deleting it again, and the sheet re-renders on every switch, swatch and keystroke.
+   */
+  private installerOnly = false;
 
   private container: HTMLElement | null = null;
 
@@ -466,11 +481,10 @@ export class SettingsSheet {
       const headline = this.update.notes.split('\n')[0].trim();
       // An install this cannot write to can only be updated by the installer, and that is worth
       // saying before the button is pressed rather than after the download has run.
-      if (installerOnly()) {
+      if (this.installerOnly) {
         return fieldRow(
           'Version',
-          `${current} \u2192 ${this.update.remote} available, but this copy was installed for the ` +
-            'whole system: download the installer from the releases page and run it.',
+          `${current} \u2192 ${this.update.remote} available, but ${INSTALLER_ONLY_REASON}`,
           el('button', { class: 'button', text: 'Installer only', disabled: true }),
         );
       }
@@ -504,6 +518,8 @@ export class SettingsSheet {
     this.state = 'checking';
     this.rerender();
     this.update = await checkForUpdate();
+    // Only worth asking when there is something to install, and only once per answer.
+    this.installerOnly = this.update.available && installerOnly();
     this.state = 'idle';
     this.host.flagUpdate(this.update.available, this.update.remote);
     this.rerender();

@@ -401,7 +401,7 @@ export type HostRequest =
   | { op: 'anchor'; options: AnchorOptions; bounds: AnchorBounds[] }
   | { op: 'projectContext' }
   /** `seconds` at zero means the media has a length of its own and is to be placed at it. */
-  | { op: 'pasteStill'; path: string; bin: string; seconds: number }
+  | { op: 'pasteItem'; path: string; bin: string; seconds: number }
   | { op: 'compassApply'; media: string; frame: string }
   | { op: 'compassExport'; path: string; fileName: string; preset: string }
   | { op: 'probeMulticam' }

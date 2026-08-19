@@ -86,28 +86,6 @@ FXP.unlinkSelection = function (on) {
 };
 
 /**
- * Sends the sound that comes with a clip to one particular track. Premiere places both halves of a
- * linked clip whatever the call asks for and puts the sound wherever the timeline is targeted, so this
- * is what keeps it off the editor's A1. Null means the build would not say, and the caller then places
- * through the form that names both tracks outright.
- */
-FXP.unnestTargetAudio = function (index) {
-    var was = FXP.readTargeting('audio');
-    if (!was) {
-        return null;
-    }
-    var wanted = [];
-    for (var i = 0; i < was.length; i++) {
-        wanted[i] = i === index;
-    }
-    if (!FXP.applyTargeting('audio', wanted)) {
-        FXP.applyTargeting('audio', was);
-        return null;
-    }
-    return was;
-};
-
-/**
  * Places one project item and reports every clip that turned up anywhere on the timeline because of
  * it. The forms are tried in turn and only a form that placed nothing at all moves on to the next: a
  * placement that landed somewhere unexpected is for the caller to deal with, and trying again on top
@@ -135,7 +113,7 @@ FXP.unnestOverwrite = function (state, piece, dest, videoDest, audioDest) {
     // first instead, because the plain call sends any picture to whichever video track it likes.
     if (piece.mediaType === 'video' && audioDest !== null) {
         attempts[attempts.length] = function () {
-            var was = FXP.unnestTargetAudio(audioDest);
+            var was = FXP.targetOnly('audio', audioDest);
             if (was === null) {
                 return false;
             }

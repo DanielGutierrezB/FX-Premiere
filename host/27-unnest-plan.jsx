@@ -48,6 +48,13 @@ FXP.unnestPieceOf = function (clip, mediaType, trackIndex, window, entry) {
                 'so rebuilding it would put the wrong one on your timeline'
         };
     }
+    // Null is not "nothing on it": it is Premiere declining to list what is on it. A clip rebuilt on
+    // that basis comes out bare, and the nest it came from is about to be switched off or deleted, so
+    // the effects would be gone with nothing to say they ever existed.
+    var effects = FXP.captureClipEffects(clip);
+    if (effects === null) {
+        return { error: 'Premiere would not say what effects are on "' + name + '" inside it' };
+    }
     var sourceIn = FXP.clipSeconds(clip.inPoint);
     var sourceSpan = FXP.clipSeconds(clip.outPoint) - sourceIn;
     var onTimeline = clipEnd - clipStart;
@@ -68,7 +75,7 @@ FXP.unnestPieceOf = function (clip, mediaType, trackIndex, window, entry) {
             start: entry.startSeconds + (from - window.from),
             end: entry.startSeconds + (to - window.from),
             disabled: clip.disabled === true,
-            effects: FXP.captureClipEffects(clip),
+            effects: effects,
             hasAudio: FXP.mediaHasAudio(item),
             hasVideo: FXP.mediaHasVideo(item),
             // Filled in by the pairing below: where the other half of a linked clip has to land, and

@@ -242,10 +242,14 @@ export class Sheets {
           { key: '\u21b5', label: 'move anchor', run: () => this.anchorDialog.confirm() },
         ];
       case 'paste':
-        return [
-          { key: '\u2191\u2193', label: 'duration', run: () => this.pasteDialog.nudge(0.5) },
-          { key: '\u21b5', label: 'paste', run: () => this.pasteDialog.confirm() },
-        ];
+        // Footage brings its own length, and a footer offering to change a duration that is not on
+        // the sheet reads as a control that has stopped working.
+        return this.pasteDialog.hasDuration()
+          ? [
+              { key: '\u2191\u2193', label: 'duration', run: () => this.pasteDialog.nudge(0.5) },
+              { key: '\u21b5', label: 'paste', run: () => this.pasteDialog.confirm() },
+            ]
+          : [{ key: '\u21b5', label: 'paste', run: () => this.pasteDialog.confirm() }];
       case 'compass':
         return [
           { key: '\u21e5', label: 'media / frame', run: () => this.compassSheet.moveField(1) },
@@ -312,8 +316,10 @@ export class Sheets {
   async openPaste(item: CatalogItem): Promise<void> {
     const probe = await probePaste(this.host.settings());
     this.pasteProbe = probe;
-    this.enter('paste');
+    // The dialog is loaded before the view changes, because changing it draws the footer and the
+    // footer asks the dialog whether there is a duration on it.
     this.pasteDialog.open(item, probe);
+    this.enter('paste');
     this.pasteDialog.render(this.host.body());
   }
 

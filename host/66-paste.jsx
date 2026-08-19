@@ -137,7 +137,7 @@ FXP.setStillLength = function (item, seconds) {
     return false;
 };
 
-FXP.pasteStill = function (request) {
+FXP.pasteItem = function (request) {
     var sequence = FXP.activeSequence();
     if (!sequence) {
         throw new Error('Open a sequence before pasting.');
@@ -165,50 +165,16 @@ FXP.pasteStill = function (request) {
     // Anything that goes wrong from here leaves the project holding a picture that was never placed,
     // and the panel deletes the file it points at, so the import is undone before the reason is told.
     try {
-        return FXP.placeStill(sequence, item, seconds);
+        return FXP.placeItem(sequence, item, seconds);
     } catch (error) {
         FXP.deleteProjectItem(item);
         throw error;
     }
 };
 
-FXP.readTargeting = function (mediaType) {
-    var tracks = FXP.tracksOf(mediaType);
-    var count = 0;
-    try {
-        count = Number(tracks.numTracks) || 0;
-    } catch (error) {
-        return null;
-    }
-    var wanted = [];
-    for (var i = 0; i < count; i++) {
-        try {
-            wanted[i] = tracks[i].isTargeted() === true;
-        } catch (error) {
-            return null;
-        }
-    }
-    return wanted;
-};
-
-FXP.applyTargeting = function (mediaType, wanted) {
-    if (!wanted) {
-        return false;
-    }
-    var tracks = FXP.tracksOf(mediaType);
-    var done = true;
-    for (var i = 0; i < wanted.length; i++) {
-        try {
-            tracks[i].setTargeted(wanted[i] === true, true);
-        } catch (error) {
-            done = false;
-        }
-    }
-    return done;
-};
-
 /**
- * Sends the audio that comes with a clip to a track that was checked for room.
+ * Sends the audio that comes with a clip to a track that was checked for room, answering with the
+ * targeting to put back afterwards.
  *
  * Premiere puts linked audio where the timeline is targeted, and the paste has only ever reserved a
  * video track: on a timeline targeting A1, footage with sound lands its audio over whatever A1 was
@@ -218,26 +184,15 @@ FXP.pasteReserveAudio = function (item, from, to) {
     if (!FXP.mediaHasAudio(item)) {
         return null;
     }
-    var slot = null;
     try {
-        slot = FXP.reserveTracks('audio', 1, from, to);
+        return FXP.targetOnly('audio', FXP.reserveTracks('audio', 1, from, to).base);
     } catch (error) {
         FXP.trace('no audio room could be reserved: ' + FXP.errorText(error));
         return null;
     }
-    var was = FXP.readTargeting('audio');
-    var wanted = [];
-    for (var i = 0; i < (was ? was.length : 0); i++) {
-        wanted[i] = i === slot.base;
-    }
-    if (!FXP.applyTargeting('audio', wanted)) {
-        FXP.applyTargeting('audio', was);
-        return { slot: slot, was: null };
-    }
-    return { slot: slot, was: was };
 };
 
-FXP.placeStill = function (sequence, item, seconds) {
+FXP.placeItem = function (sequence, item, seconds) {
     if (seconds > 0) {
         FXP.setStillLength(item, seconds);
     }
@@ -260,7 +215,7 @@ FXP.placeStill = function (sequence, item, seconds) {
     // charged the editor for a paste that never happened.
     var had = { video: FXP.trackCount('video'), audio: FXP.trackCount('audio') };
     try {
-        return FXP.placeStillOn(sequence, item, placed, playhead);
+        return FXP.placeItemOn(sequence, item, placed, playhead);
     } catch (error) {
         FXP.shrinkTracksTo('video', had.video);
         FXP.shrinkTracksTo('audio', had.audio);
@@ -269,9 +224,10 @@ FXP.placeStill = function (sequence, item, seconds) {
 };
 
 /** The placement itself, once the length and the playhead are known. */
-FXP.placeStillOn = function (sequence, item, placed, playhead) {
+FXP.placeItemOn = function (sequence, item, placed, playhead) {
+    var name = FXP.safeName(item);
     var slot = FXP.reserveTracks('video', 1, playhead, playhead + placed);
-    var audio = FXP.pasteReserveAudio(item, playhead, playhead + placed);
+    var restore = FXP.pasteReserveAudio(item, playhead, playhead + placed);
     var track = FXP.tracksOf('video')[slot.base];
     if (!track) {
         throw new Error('The reserved video track was not found.');
@@ -279,7 +235,8 @@ FXP.placeStillOn = function (sequence, item, placed, playhead) {
     // An overwrite is exactly that, and the only clip this may land on is one nobody asked it to
     // touch. The track was free when it was reserved; this is the last moment it can be checked.
     if (!FXP.runIsFree('video', slot.base, 1, playhead, playhead + placed)) {
-        throw new Error('Video track ' + (slot.base + 1) + ' is no longer free where the still would go.');
+        throw new Error('Video track ' + (slot.base + 1) + ' is no longer free where "' + name +
+            '" would go.');
     }
     // Both reservations are already made, so this is a reading of the timeline whose tracks are the
     // ones the clip is about to land between: a track added after it would move every clip's index
@@ -288,15 +245,13 @@ FXP.placeStillOn = function (sequence, item, placed, playhead) {
     try {
         track.overwriteClip(item, playhead);
     } finally {
-        if (audio) {
-            FXP.applyTargeting('audio', audio.was);
-        }
+        FXP.applyTargeting('audio', restore);
     }
     // Premiere's overwriteClip can come back without having placed anything. The caller undoes the
-    // import when this throws, and a still that only the project panel knows about is worse than a
+    // import when this throws, and a clip that only the project panel knows about is worse than a
     // refusal that says where it was meant to go.
     if (FXP.runIsFree('video', slot.base, 1, playhead, playhead + placed)) {
-        throw new Error('Premiere did not put the still on video track ' + (slot.base + 1) + '.');
+        throw new Error('Premiere did not put "' + name + '" on video track ' + (slot.base + 1) + '.');
     }
     FXP.pasteKeepWhatWasThere(sequence, before, item);
     return {

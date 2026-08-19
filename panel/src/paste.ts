@@ -1,11 +1,14 @@
 /**
  * The Paste Clipboard flow, from the clipboard to a clip on the timeline.
  *
- * It is deliberately in two halves. Probing reads the clipboard into a scratch file and works out
- * where the paste would go, which is what the dialog needs to say "PNG with transparency, going
- * here" before anybody has agreed to anything. Committing is what actually creates the folder,
- * names the file and asks Premiere to place it — so a dialog dismissed with Esc leaves nothing
- * behind but a temporary file the system will clear up.
+ * It is deliberately in two halves. Probing reads the clipboard — writing a picture out to a scratch
+ * file, or simply noting where a copied file already is — and works out where the paste would go,
+ * which is what the dialog needs to say "PNG with transparency, going here" before anybody has agreed
+ * to anything. Committing is what creates the folder, names the file and asks Premiere to place it, so
+ * a dialog dismissed with Esc leaves nothing behind that the system will not clear up itself.
+ *
+ * The two kinds of paste are told apart by `kind` rather than by a duration of zero: a still is given
+ * a length here, and footage brings its own.
  */
 import { callHost } from '@shared/cep';
 import { clipboardError } from '@shared/clipboard';
@@ -24,24 +27,30 @@ import {
 import { expandWildcards, resolveExportPath, safeFileName, separatorFor } from '@shared/wildcards';
 import { clipboardBridge } from './clipboard-bridge';
 
-/** Everything the dialog shows and everything committing needs, worked out in one pass. */
-export interface PasteProbe {
+interface PasteTarget {
   grab: ClipboardGrab;
   context: ProjectContext;
-  /** Where the PNG will live, with its trailing separator. Empty when the folder cannot be worked out. */
+  /** Where the file will live, with its trailing separator. Empty when the folder cannot be worked out. */
   folder: string;
-  /** The file name the wildcards produced, before any collision suffix. */
+  /** The name it will be given, before any collision suffix. */
   fileName: string;
-  /**
-   * How long the still will last, from Premiere's own default where it would say. Zero for media
-   * that has a length of its own, which is the whole point of pasting a copied video as a video.
-   */
-  seconds: number;
-  /** True when the clipboard held a file: it is copied into the folder rather than written there. */
-  fromFile: boolean;
   /** Empty when the paste can go ahead; otherwise the one reason that it cannot. */
   error: string;
 }
+
+/**
+ * Everything the dialog shows and everything committing needs, worked out in one pass.
+ *
+ * A picture on the clipboard is written out as a PNG and needs a length, which is what the dialog
+ * offers to change. A file on the clipboard is the editor's own footage: it is copied rather than
+ * written, and it arrives at whatever length it already is. Every difference between the two follows
+ * from `kind`, so nothing has to work it out from a duration or a source name.
+ */
+export type PasteProbe = PasteTarget &
+  (
+    | { kind: 'still'; seconds: number }
+    | { kind: 'file' }
+  );
 
 export const probePaste = async (settings: Settings, at: Date = new Date()): Promise<PasteProbe> => {
   const context = await readContext();
@@ -58,17 +67,22 @@ export const probePaste = async (settings: Settings, at: Date = new Date()): Pro
   const name = safeFileName(expandWildcards(paste.name, wildcards).text);
   const clipboard = clipboardBridge();
   const grab = await clipboard.grab(clipboard.scratch());
-  const fromFile = grab.source === 'file';
-  return {
+  const target = {
     grab,
     context,
     folder: folder.path,
+    fileName: `${name === '' ? 'Paste' : name}.png`,
+    error: clipboardError(grab) || folder.error,
+  };
+  if (grab.source === 'file') {
     // A copied file keeps the name it already has: it is the editor's own footage, and a wildcard
     // name would make the clip in the project unrecognisable next to the one on disk.
-    fileName: fromFile ? baseName(grab.path) : `${name === '' ? 'Paste' : name}.png`,
-    seconds: fromFile ? 0 : context.stillSeconds > 0 ? context.stillSeconds : paste.stillSeconds,
-    fromFile,
-    error: clipboardError(grab) || folder.error,
+    return { ...target, kind: 'file', fileName: baseName(grab.path) };
+  }
+  return {
+    ...target,
+    kind: 'still',
+    seconds: context.stillSeconds > 0 ? context.stillSeconds : paste.stillSeconds,
   };
 };
 
@@ -82,12 +96,9 @@ const baseName = (file: string): string => {
   return `${stem === '' ? 'Paste' : stem}${ext}`;
 };
 
-/**
- * The probe with a duration somebody chose on the dialog. Media that carries its own length is left
- * alone: the seconds field only ever meant anything for a still.
- */
+/** The probe with a duration somebody chose on the dialog. Footage has none to choose. */
 export const withDuration = (probe: PasteProbe, seconds: number): PasteProbe =>
-  probe.seconds === 0 ? probe : { ...probe, seconds };
+  probe.kind === 'still' ? { ...probe, seconds } : probe;
 
 /**
  * A name nothing is using. A paste never lands on top of an earlier one, and the wildcards can only
@@ -159,19 +170,21 @@ export const commitPaste = async (probe: PasteProbe, settings: Settings): Promis
   const fileName = freeFileName(probe.folder, probe.fileName);
   const file = path.join(probe.folder, fileName);
   try {
-    if (probe.fromFile) {
+    if (probe.kind === 'file') {
       copyInto(probe.grab.path, file);
     } else {
       moveInto(probe.grab.path, file);
     }
   } catch (error) {
-    return { ok: false, error: `${probe.fromFile ? 'The file' : 'The PNG'} could not be saved: ${(error as Error).message}` };
+    const what = probe.kind === 'file' ? 'The file' : 'The PNG';
+    return { ok: false, error: `${what} could not be saved: ${(error as Error).message}` };
   }
   const placed = await callHost<PasteResult>({
-    op: 'pasteStill',
+    op: 'pasteItem',
     path: file,
     bin: settings.paste.bin,
-    seconds: probe.seconds,
+    // Zero is the host's word for "it brings its own length", which is exactly what footage does.
+    seconds: probe.kind === 'still' ? probe.seconds : 0,
   });
   if (!placed.ok || !placed.data) {
     // The file was moved before Premiere was asked, because the import needs a path that will still
@@ -183,7 +196,7 @@ export const commitPaste = async (probe: PasteProbe, settings: Settings): Promis
       error: `${placed.error ?? 'Premiere could not place it.'}${swept ? '' : ` ${fileName} was left in ${probe.folder}.`}`,
     };
   }
-  if (!probe.fromFile && !probe.grab.alpha) {
+  if (probe.kind === 'still' && !probe.grab.alpha) {
     messages.push('The clipboard had no transparency, so the PNG is opaque.');
   }
   if (placed.data.addedTrack) {
@@ -192,7 +205,7 @@ export const commitPaste = async (probe: PasteProbe, settings: Settings): Promis
   // Footage is the one paste whose length was not asked for, so it is said. A still that went where
   // it was meant to go says nothing at all: the palette stops for whatever is in here, and stopping
   // over a paste that did exactly what was asked is a keystroke somebody has to spend to get rid of.
-  if (probe.fromFile) {
+  if (probe.kind === 'file') {
     messages.push(`${fileName} \u00b7 ${placed.data.seconds}s on V${placed.data.track}`);
   }
   return outcome(1, messages);

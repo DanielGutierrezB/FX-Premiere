@@ -43,8 +43,8 @@ FXP.route = function (request) {
             return FXP.moveAnchor(request);
         case 'projectContext':
             return FXP.projectContext();
-        case 'pasteStill':
-            return FXP.pasteStill(request);
+        case 'pasteItem':
+            return FXP.pasteItem(request);
         case 'compassApply':
             return FXP.compassApply(request);
         case 'compassExport':

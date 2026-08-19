@@ -214,6 +214,25 @@ export const hostUnnestGuardTests = (fresh) => {
     );
   }
 
+  console.log('\nA clip whose effects Premiere will not list');
+  {
+    const { world, call } = fresh();
+    // Not the same as a clip with nothing on it. Rebuilding it would produce a bare clip, and the nest
+    // holding the original is about to be switched off, so the run refuses the nest instead.
+    const inner = world.sequences.find((sequence) => sequence.name === 'Nested Sequence');
+    inner.videoTrackList[0].clipList[0].componentsHidden = true;
+    world.select('Nested Sequence');
+    const result = run(call, { media: 'video' });
+    check('the nest is left as it was', result.outcome.applied === 0 && result.outcome.skipped === 1, JSON.stringify(result.outcome));
+    check('and the reason names the effects it could not read', /would not say what effects/.test(messages(result)), messages(result));
+    check(
+      'nothing was placed with its effects missing',
+      names(world, 'video', 1).length === 0 && names(world, 'video', 2).length === 0,
+      JSON.stringify(everything(world)),
+    );
+    check('the nest is still a nest', world.clips.nestClip.disabled === false);
+  }
+
   console.log('\nWhen a placement only nicks the clip next to it');
   {
     const { world, call } = fresh();

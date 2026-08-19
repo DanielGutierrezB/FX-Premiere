@@ -57,9 +57,12 @@ export class PasteDialog {
   open(item: CatalogItem, probe: PasteProbe): void {
     this.item = item;
     this.probe = probe;
-    // Zero is kept as zero rather than clamped up to a tenth of a second: it is not a duration at
-    // all, it is footage saying it already has one.
-    this.seconds = probe.seconds > 0 ? clamp(probe.seconds) : 0;
+    this.seconds = probe.kind === 'still' ? clamp(probe.seconds) : 0;
+  }
+
+  /** Whether there is a duration on this sheet at all: footage arrives at its own length. */
+  hasDuration(): boolean {
+    return this.probe?.kind === 'still' && this.probe.error === '';
   }
 
   clear(): void {
@@ -91,12 +94,12 @@ export class PasteDialog {
     container.appendChild(
       el('div', {
         class: 'transition__meta',
-        text: probe.fromFile
+        text: probe.kind === 'file'
           ? sourceLabel(probe.grab.source)
           : `${sourceLabel(probe.grab.source)} \u00b7 ${probe.grab.width}\u00d7${probe.grab.height}`,
       }),
     );
-    if (!probe.fromFile) {
+    if (probe.kind === 'still') {
       container.appendChild(
         el('div', {
           class: `paste__alpha${probe.grab.alpha ? ' paste__alpha--on' : ''}`,
@@ -118,7 +121,7 @@ export class PasteDialog {
 
     // Footage lands at its own length, so there is nothing here to set: offering a duration for it
     // would be offering to cut it, which is not what pasting something is.
-    if (this.seconds > 0) {
+    if (probe.kind === 'still') {
       container.appendChild(
         el('label', { class: 'influence influence--active' }, [
           el('span', { class: 'influence__label', text: 'Dur.' }),
@@ -143,7 +146,7 @@ export class PasteDialog {
 
     container.appendChild(
       buttonRow(
-        this.seconds > 0
+        probe.kind === 'still'
           ? '\u2191\u2193 changes the duration, Enter pastes, Esc goes back.'
           : 'Enter pastes it at its own length, Esc goes back.',
         [
@@ -185,7 +188,7 @@ export class PasteDialog {
   }
 
   nudge(amount: number): void {
-    if (this.seconds === 0) {
+    if (!this.hasDuration()) {
       return;
     }
     this.seconds = clamp(this.seconds + amount);

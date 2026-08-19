@@ -258,15 +258,20 @@ const canWriteInto = (root: string): boolean => {
  */
 export const installerOnly = (): boolean => !isDevInstall() && !canWriteInto(extensionRoot());
 
+/**
+ * Why a copy like that cannot update itself, in one wording. The settings sheet says it before the
+ * button is pressed and a refused update says it after, and the two drifting apart would read as two
+ * different problems.
+ */
+export const INSTALLER_ONLY_REASON =
+  'this copy was installed for the whole system, so the update has to come from the installer: ' +
+  'download the latest one from the releases page and run it.';
+
 const ensureWritable = (root: string): void => {
   if (canWriteInto(root)) {
     return;
   }
-  throw new Error(
-    `The extension folder ${root} is not writable. FX Premiere was installed system-wide there, ` +
-      'so the update has to come from the installer: download the latest one from the releases ' +
-      'page and run it.',
-  );
+  throw new Error(`The extension folder ${root} is not writable \u2014 ${INSTALLER_ONLY_REASON}`);
 };
 
 /**

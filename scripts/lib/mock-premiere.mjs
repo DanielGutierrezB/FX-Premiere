@@ -181,7 +181,14 @@ export const makeClip = ({
     },
   };
   Object.defineProperty(clip, 'components', {
-    get: () => collection(clip.componentList, 'numItems'),
+    // `componentsHidden` is a real Premiere behaviour, not a convenience: some clips refuse the list
+    // entirely, which is not the same answer as a clip with nothing on it.
+    get: () => {
+      if (clip.componentsHidden) {
+        throw new Error('components are not available for this clip');
+      }
+      return collection(clip.componentList, 'numItems');
+    },
   });
   return clip;
 };

@@ -165,7 +165,7 @@ console.log('\nImporting the still and putting it on the timeline');
   const { world, call } = fresh();
   // The mock sequence carries clips on V1 up to 16 seconds and has V2 to V4 empty, so a paste at
   // the playhead has room above whatever is already there.
-  const placed = call({ op: 'pasteStill', path: png, bin: 'Pasted', seconds: 4 });
+  const placed = call({ op: 'pasteItem', path: png, bin: 'Pasted', seconds: 4 });
   check('the request is answered', placed.ok, JSON.stringify(placed));
   check('the bin was made, since there was none', world.createBinCalls.includes('Pasted'), world.createBinCalls.join(','));
   check('the file was imported', world.importCalls.at(-1).paths[0] === png);
@@ -183,9 +183,9 @@ console.log('\nImporting the still and putting it on the timeline');
 
 {
   const { world, call } = fresh();
-  const second = call({ op: 'pasteStill', path: png, bin: 'Pasted', seconds: 4 });
+  const second = call({ op: 'pasteItem', path: png, bin: 'Pasted', seconds: 4 });
   check('a second paste reuses the bin instead of making another', second.ok && world.createBinCalls.length === 1, world.createBinCalls.join(','));
-  const third = call({ op: 'pasteStill', path: png, bin: 'Pasted', seconds: 4 });
+  const third = call({ op: 'pasteItem', path: png, bin: 'Pasted', seconds: 4 });
   check('and the bin count stays at one however many times it is used', world.createBinCalls.length === 1);
   check('the one before it made its track busy, so this goes a track higher', third.data.track === 3, String(third.data.track));
   check('and none of them overwrote anything', world.tracks.video.every((track) => track.clipList.length <= 4));
@@ -200,7 +200,7 @@ writeFileSync(movie, 'a path Premiere can be handed, with sound behind it', 'utf
   const { world, call } = fresh();
   world.importedHasAudio = true;
   world.importedDuration = 9;
-  const placed = call({ op: 'pasteStill', path: movie, bin: 'Pasted', seconds: 0 });
+  const placed = call({ op: 'pasteItem', path: movie, bin: 'Pasted', seconds: 0 });
   check('it goes on at the length the footage really is', placed.ok && placed.data.seconds === 9, JSON.stringify(placed));
   check('the sound went to a track that was checked for room', world.tracks.audio[1].clipList.some((clip) => clip.name === 'take.mov'), JSON.stringify(world.tracks.audio.map((track) => track.clipList.map((clip) => clip.name))));
   check(
@@ -219,7 +219,7 @@ writeFileSync(movie, 'a path Premiere can be handed, with sound behind it', 'utf
   world.importedHasAudio = true;
   world.importedDuration = 9;
   world.trackTargetingUnsupported = true;
-  const refused = call({ op: 'pasteStill', path: movie, bin: 'Pasted', seconds: 0 });
+  const refused = call({ op: 'pasteItem', path: movie, bin: 'Pasted', seconds: 0 });
   check('a paste that went over something is refused', !refused.ok, JSON.stringify(refused));
   check('and it names what it landed on', /A\.wav/.test(refused.error ?? ''), refused.error ?? '');
   check('with the one thing that can bring it back', /Cmd\+Z/.test(refused.error ?? ''), refused.error ?? '');
@@ -244,7 +244,7 @@ writeFileSync(movie, 'a path Premiere can be handed, with sound behind it', 'utf
     world.addClip({ name: `blocker${index}`, start: playhead - 1, end: playhead + 10, track: index });
   }
   const before = { video: world.tracks.video.length, audio: world.tracks.audio.length };
-  const refused = call({ op: 'pasteStill', path: movie, bin: 'Pasted', seconds: 0 });
+  const refused = call({ op: 'pasteItem', path: movie, bin: 'Pasted', seconds: 0 });
   check('the paste is refused', !refused.ok, JSON.stringify(refused));
   check(
     'and the tracks it had added for it are given back',
@@ -257,7 +257,7 @@ writeFileSync(movie, 'a path Premiere can be handed, with sound behind it', 'utf
 // A silent still must not cost an audio track: this is what the un-nest used to get wrong.
 {
   const { world, call } = fresh();
-  const placed = call({ op: 'pasteStill', path: png, bin: 'Pasted', seconds: 4 });
+  const placed = call({ op: 'pasteItem', path: png, bin: 'Pasted', seconds: 4 });
   check('a still with no sound leaves the audio tracks alone', placed.ok && world.tracks.audio.length === 3, String(world.tracks.audio.length));
   check('and none of them gained a clip', world.tracks.audio[1].clipList.length === 0 && world.tracks.audio[2].clipList.length === 0);
 }
@@ -268,7 +268,7 @@ console.log('\nWhen a track above the stack is locked');
 {
   const { world, call } = fresh();
   world.lockTrack(false, 1);
-  const placed = call({ op: 'pasteStill', path: png, bin: 'Pasted', seconds: 4 });
+  const placed = call({ op: 'pasteItem', path: png, bin: 'Pasted', seconds: 4 });
   check('the paste still goes through', placed.ok, placed.error ?? '');
   check('but over the locked track rather than onto it', placed.data.track === 3, String(placed.data.track));
   check('which is left empty', world.tracks.video[1].clipList.length === 0, String(world.tracks.video[1].clipList.length));
@@ -283,7 +283,7 @@ console.log('\nWhen a track above the stack is locked');
     world.lockTrack(false, index);
   }
   const before = world.tracks.video.length;
-  const placed = call({ op: 'pasteStill', path: png, bin: 'Pasted', seconds: 4 });
+  const placed = call({ op: 'pasteItem', path: png, bin: 'Pasted', seconds: 4 });
   check('with every free track locked, a new one is added instead', placed.ok && placed.data.addedTrack === true, placed.error ?? '');
   check('and the still is alone on it', world.tracks.video[before]?.clipList.length === 1, JSON.stringify(world.tracks.video.map((track) => track.clipList.length)));
   check('every locked track is still empty', world.tracks.video.slice(1, before).every((track) => track.clipList.length === 0));
@@ -298,7 +298,7 @@ console.log('\nWhen the top of the stack is busy');
     world.addClip({ name: `blocker${index}`, start: playhead - 1, end: playhead + 10, track: index });
   }
   const before = world.tracks.video.length;
-  const placed = call({ op: 'pasteStill', path: png, bin: 'Pasted', seconds: 4 });
+  const placed = call({ op: 'pasteItem', path: png, bin: 'Pasted', seconds: 4 });
   check('a track is added rather than something being overwritten', placed.ok && placed.data.addedTrack === true, JSON.stringify(placed));
   check('and it says which one it landed on', placed.data.track === before + 1, String(placed.data.track));
   check('the sequence really grew', world.tracks.video.length === before + 1, String(world.tracks.video.length));
@@ -316,7 +316,7 @@ console.log('\nWhen the top of the stack is busy');
   for (let index = 0; index < world.tracks.video.length; index += 1) {
     world.addClip({ name: `blocker${index}`, start: playhead - 1, end: playhead + 10, track: index });
   }
-  const placed = call({ op: 'pasteStill', path: png, bin: 'Pasted', seconds: 4 });
+  const placed = call({ op: 'pasteItem', path: png, bin: 'Pasted', seconds: 4 });
   const landed = world.tracks.video
     .map((track, index) => ({ index, clip: track.clipList.find((entry) => entry.name === 'shot.png') }))
     .find((entry) => entry.clip);
@@ -362,7 +362,7 @@ console.log('\nWhen the top of the stack is busy');
   for (let index = 0; index < world.tracks.video.length; index += 1) {
     world.addClip({ name: `blocker${index}`, start: playhead - 1, end: playhead + 10, track: index });
   }
-  const placed = call({ op: 'pasteStill', path: png, bin: 'Pasted', seconds: 4 });
+  const placed = call({ op: 'pasteItem', path: png, bin: 'Pasted', seconds: 4 });
   check('the paste is still refused for the same reason', !placed.ok && placed.error.includes('could only find'), placed.error);
   check(
     'and a Premiere that will not delete the item itself has it taken out of its bin instead',
@@ -374,14 +374,14 @@ console.log('\nWhen the top of the stack is busy');
 console.log('\nWhen it cannot be done at all');
 {
   const { call } = fresh();
-  const nothing = call({ op: 'pasteStill', path: '', bin: 'Pasted', seconds: 4 });
+  const nothing = call({ op: 'pasteItem', path: '', bin: 'Pasted', seconds: 4 });
   check('a paste with no file refuses', !nothing.ok && nothing.error.includes('nothing to paste'), nothing.error);
 }
 
 {
   const { world, call } = fresh();
   world.current = null;
-  const noSequence = call({ op: 'pasteStill', path: png, bin: 'Pasted', seconds: 4 });
+  const noSequence = call({ op: 'pasteItem', path: png, bin: 'Pasted', seconds: 4 });
   check('and so does one with no sequence open', !noSequence.ok && noSequence.error.includes('Open a sequence'), noSequence.error);
 }
 
@@ -390,7 +390,7 @@ console.log('\nWhen it cannot be done at all');
   hostContext.app.project.importFiles = () => {
     throw new Error('unsupported file type');
   };
-  const refused = call({ op: 'pasteStill', path: png, bin: 'Pasted', seconds: 4 });
+  const refused = call({ op: 'pasteItem', path: png, bin: 'Pasted', seconds: 4 });
   check('an import Premiere rejects is reported with its own reason', !refused.ok && refused.error.includes('unsupported file type'), refused.error);
 }
 
