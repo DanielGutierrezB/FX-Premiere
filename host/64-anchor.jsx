@@ -62,16 +62,11 @@ FXP.sourceFrameSize = function (projectItem) {
     if (!projectItem) {
         return null;
     }
-    var xmp = '';
-    try {
-        xmp = String(projectItem.getProjectMetadata() || '');
-    } catch (error) {
-        return null;
-    }
-    // Only the column Premiere fills with "1920 x 1080 (1.0)". Any pair shaped like a size anywhere
-    // in the metadata would also match a note reading "shot 2 x 2", and a wrong size here is an
-    // anchor placed somewhere the editor did not ask for with nothing to show it went wrong.
-    var match = /VideoInfo[^\d]{0,8}(\d+)\s*(?:x|\u00d7)\s*(\d+)/.exec(xmp);
+    // Only the Video Info column, which Premiere fills with "1920 x 1080 (1.0)". Any pair shaped like
+    // a size anywhere in the metadata would also match a note reading "shot 2 x 2", and a wrong size
+    // here is an anchor placed somewhere the editor did not ask for with nothing to show it went wrong.
+    var column = FXP.mediaColumn(FXP.mediaColumns(projectItem), 'VideoInfo');
+    var match = column === null ? null : /(\d+)\s*(?:x|\u00d7)\s*(\d+)/.exec(column);
     if (!match) {
         return null;
     }

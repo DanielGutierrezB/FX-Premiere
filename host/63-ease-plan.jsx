@@ -8,22 +8,6 @@
  * cubic of the shape this tool draws, and a hand-keyed run misses that by orders of magnitude.
  */
 
-/** The t at which a curve with both handles flat has done this fraction of its move. */
-FXP.easeSolveT = function (v) {
-    var low = 0;
-    var high = 1;
-    var t = v;
-    for (var i = 0; i < 40; i++) {
-        t = (low + high) / 2;
-        if (FXP.bezierAxis(t, 0, 1) < v) {
-            low = t;
-        } else {
-            high = t;
-        }
-    }
-    return t;
-};
-
 /**
  * With one sample there is a family of curves through it rather than one, so the question is only
  * whether any of them exists: both handles are inside the unit square and both coefficients are
@@ -63,7 +47,8 @@ FXP.easeFitsCurve = function (samples) {
         if (v <= FXP.EASE_FIT_SLACK || v >= 1 - FXP.EASE_FIT_SLACK) {
             continue;
         }
-        var t = FXP.easeSolveT(v);
+        // The value axis has both handles flat, so this is the t behind the sample's own value.
+        var t = FXP.bezierTimeAt(v, 0, 1);
         var u = 1 - t;
         var a = 3 * u * u * t;
         var b = 3 * u * t * t;
@@ -110,25 +95,17 @@ FXP.easeIsBaked = function (keys, first, last, gridSeconds) {
     if (frames < 2) {
         return false;
     }
-    var axes = FXP.isList(from) ? from.length : 1;
-    var axis = 0;
-    var span = 0;
-    for (var a = 0; a < axes; a++) {
-        var reach = Math.abs(FXP.easeComponentAt(to, a) - FXP.easeComponentAt(from, a));
-        if (reach > span) {
-            span = reach;
-            axis = a;
-        }
-    }
+    var travel = FXP.easeSpanOf(from, to);
+    var axis = FXP.easeWidestAxis(travel);
+    var span = Math.abs(FXP.easeComponentAt(travel, axis));
     var tolerance = span * FXP.EASE_FIT_SLACK;
     var samples = [];
     var expected = firstFrame;
     for (var i = first; i <= last; i++) {
-        var frame = keys[i].seconds / gridSeconds;
-        if (Math.abs(frame - Math.round(frame)) * gridSeconds > FXP.TIME_SLACK) {
+        if (!FXP.easeOnGrid(keys[i].seconds, gridSeconds)) {
             continue;
         }
-        frame = Math.round(frame);
+        var frame = Math.round(keys[i].seconds / gridSeconds);
         if (frame !== expected) {
             return false;
         }
@@ -144,12 +121,12 @@ FXP.easeIsBaked = function (keys, first, last, gridSeconds) {
         }
         var reached =
             (FXP.easeComponentAt(keys[i].value, axis) - FXP.easeComponentAt(from, axis)) /
-            (FXP.easeComponentAt(to, axis) - FXP.easeComponentAt(from, axis));
-        for (var b = 0; b < axes; b++) {
-            var wanted =
-                FXP.easeComponentAt(from, b) +
-                (FXP.easeComponentAt(to, b) - FXP.easeComponentAt(from, b)) * reached;
-            if (Math.abs(FXP.easeComponentAt(keys[i].value, b) - wanted) > tolerance) {
+            FXP.easeComponentAt(travel, axis);
+        // Every axis of one value is read off a single curve and shared out, so a bake's other axes
+        // are exactly this far along too. A hand-keyed run is not, which is what gives it away.
+        var wanted = FXP.easeLerp(from, to, reached);
+        for (var b = 0; b < (FXP.isList(from) ? from.length : 1); b++) {
+            if (Math.abs(FXP.easeComponentAt(keys[i].value, b) - FXP.easeComponentAt(wanted, b)) > tolerance) {
                 return false;
             }
         }
@@ -171,13 +148,14 @@ FXP.easePlanSegment = function (plan, keys, first, last, gridSeconds) {
     if (last <= first) {
         return;
     }
-    if (last === first + 1 || FXP.easeIsBaked(keys, first, last, gridSeconds)) {
-        plan.segments[plan.segments.length] = { from: keys[first], to: keys[last] };
-        return;
-    }
-    // Kept as a span rather than counted, because only the run the playhead is inside is worth
-    // mentioning: a dense stretch at the other end of the clip is not what the editor asked about.
-    plan.dense[plan.dense.length] = { from: keys[first], to: keys[last] };
+    // A dense run stays in the list rather than only being counted, because the playhead has to be
+    // found inside one span or the other: a stretch this leaves alone at the far end of the clip is
+    // not what the editor asked about, and only the one they are parked in is worth mentioning.
+    plan.spans[plan.spans.length] = {
+        from: keys[first],
+        to: keys[last],
+        draw: last === first + 1 || FXP.easeIsBaked(keys, first, last, gridSeconds)
+    };
 };
 
 FXP.easePlanRun = function (plan, keys, first, last, gridSeconds) {
@@ -194,7 +172,7 @@ FXP.easePlanRun = function (plan, keys, first, last, gridSeconds) {
 
 FXP.easePlan = function (keys, gridSeconds) {
     var tight = gridSeconds + FXP.TIME_SLACK;
-    var plan = { segments: [], dense: [] };
+    var plan = { spans: [] };
     var i = 0;
     while (i + 1 < keys.length) {
         var j = i;
@@ -202,7 +180,7 @@ FXP.easePlan = function (keys, gridSeconds) {
             j++;
         }
         if (j <= i + 1) {
-            plan.segments[plan.segments.length] = { from: keys[i], to: keys[i + 1] };
+            plan.spans[plan.spans.length] = { from: keys[i], to: keys[i + 1], draw: true };
             i++;
             continue;
         }

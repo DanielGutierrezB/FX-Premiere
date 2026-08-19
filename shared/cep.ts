@@ -1,3 +1,4 @@
+import { nodeRequire } from './node';
 import { appendLog } from './paths';
 import type { HostRequest, HostResponse } from './types';
 
@@ -214,6 +215,31 @@ export const resizeSelf = (width: number, height: number): void => {
 };
 
 /**
+ * The deepest part of a path that is really on disk, so a dialog told to start somewhere that does
+ * not exist yet still opens as close to it as it can. Empty when none of it is there.
+ */
+const nearestFolder = (from: string): string => {
+  if (from === '') {
+    return '';
+  }
+  try {
+    const fs = nodeRequire()('fs') as typeof import('fs');
+    const path = nodeRequire()('path') as typeof import('path');
+    let at = from;
+    while (at !== '' && !fs.existsSync(at)) {
+      const up = path.dirname(at);
+      if (up === at) {
+        return '';
+      }
+      at = up;
+    }
+    return at;
+  } catch {
+    return from;
+  }
+};
+
+/**
  * A folder or a file, chosen in the system's own dialog.
  *
  * Typing a path is fine for the one somebody already knows and hopeless for the one they are looking
@@ -229,20 +255,26 @@ export const chooseOnDisk = (options: {
   types?: string[];
 }): string | null => {
   const fs = window.cep?.fs;
-  const open = fs?.showOpenDialogEx ?? fs?.showOpenDialog;
-  if (!open || !fs) {
+  if (!fs) {
+    appendLog('panel', 'this host has no file system bridge, so paths can only be typed');
+    return null;
+  }
+  const open = fs.showOpenDialogEx ?? fs.showOpenDialog;
+  if (!open) {
     appendLog('panel', 'this host has no file dialog, so paths can only be typed');
     return null;
   }
   let result: CepDialogResult;
   try {
-    result = open.call(fs, false, options.folder, options.title, options.from ?? '', options.types ?? []);
+    // A folder that is not there yet opens the dialog at nothing at all on macOS, so the nearest
+    // ancestor that does exist is what it starts from: an export folder is usually made on export.
+    result = open.call(fs, false, options.folder, options.title, nearestFolder(options.from ?? ''), options.types ?? []);
   } catch (error) {
     appendLog('panel', `file dialog failed: ${String(error)}`);
     return null;
   }
-  const chosen = result?.data?.[0];
-  if (result?.err !== 0 || typeof chosen !== 'string' || chosen === '') {
+  const chosen = result.data?.[0];
+  if (result.err !== 0 || typeof chosen !== 'string' || chosen === '') {
     return null;
   }
   return stripFileScheme(chosen);

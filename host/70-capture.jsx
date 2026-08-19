@@ -1,6 +1,6 @@
 /* Reading the effects that are already on a clip, turning them into a reusable preset, and
-   undoing the last edit. This is the only place that reads parameter values back out of
-   Premiere; everything else in the host writes them. */
+   undoing the last edit. This is the only place that reads a whole effect stack back out of
+   Premiere: elsewhere a value is only ever read to check that a write of it landed. */
 
 FXP.paramValue = function (param) {
     try {
@@ -251,18 +251,8 @@ FXP.capturedDefinition = function (param) {
     };
 };
 
-/**
- * Writes a captured stack onto one clip. `sourceIn` is where the clip it was read from started in
- * its own source: every keyframe was read at a source time, so the same distance from the in point is
- * what "the same animation" means on a clip that starts somewhere else. An un-nest passes the target's
- * own in point, which makes the keyframes land exactly where they were.
- */
-FXP.replayEffects = function (entry, effects, mediaType, sourceIn, notes) {
-    var clipIn = FXP.clipSeconds(entry.clip.inPoint);
-    var clipOut = FXP.clipSeconds(entry.clip.outPoint);
-    if (clipOut <= clipIn) {
-        clipOut = clipIn + Math.max(0.04, entry.endSeconds - entry.startSeconds);
-    }
+/** A captured stack in the shape the .prfpset path takes, so replaying uses that one code path. */
+FXP.capturedDetail = function (effects, mediaType, sourceIn) {
     var detail = {
         type: FXP.PRESET_ANCHOR.ANCHOR_TO_IN,
         anchorIn: Math.round(Number(sourceIn) * FXP.TICKS_PER_SECOND),
@@ -270,8 +260,7 @@ FXP.replayEffects = function (entry, effects, mediaType, sourceIn, notes) {
         mediaType: mediaType,
         effects: []
     };
-    var e;
-    for (e = 0; e < effects.length; e++) {
+    for (var e = 0; e < effects.length; e++) {
         var params = [];
         for (var p = 0; p < effects[e].params.length; p++) {
             params[params.length] = FXP.capturedDefinition(effects[e].params[p]);
@@ -282,9 +271,28 @@ FXP.replayEffects = function (entry, effects, mediaType, sourceIn, notes) {
             params: params
         };
     }
+    return detail;
+};
+
+/**
+ * Writes a captured stack onto one clip.
+ *
+ * `sourceIn` is where the clip it was read from started in its own source: every keyframe was read at
+ * a source time, so the same distance from the in point is what "the same animation" means on a clip
+ * that starts somewhere else. Null anchors to this clip's own in point, which is what makes an
+ * un-nested clip's keyframes land exactly where they were.
+ */
+FXP.replayEffects = function (entry, effects, sourceIn, notes) {
+    var clipIn = FXP.clipSeconds(entry.clip.inPoint);
+    var clipOut = FXP.clipSeconds(entry.clip.outPoint);
+    if (clipOut <= clipIn) {
+        clipOut = clipIn + Math.max(0.04, entry.endSeconds - entry.startSeconds);
+    }
+    var mediaType = entry.mediaType;
+    var detail = FXP.capturedDetail(effects, mediaType, sourceIn === null ? clipIn : sourceIn);
     var context = { inPoint: clipIn, outPoint: clipOut, unmatched: 0 };
     var written = 0;
-    for (e = 0; e < detail.effects.length; e++) {
+    for (var e = 0; e < detail.effects.length; e++) {
         var effect = detail.effects[e];
         var component = null;
         if (FXP.contains(FXP.INTRINSIC_MATCH_NAMES, effect.matchName)) {
@@ -332,7 +340,7 @@ FXP.applyCapturedPreset = function (request) {
     var sourceIn = Number(preset.sourceIn) || 0;
     FXP.attachQEItems(targets);
     for (var t = 0; t < targets.length; t++) {
-        if (FXP.replayEffects(targets[t], preset.effects, preset.mediaType, sourceIn, notes) > 0) {
+        if (FXP.replayEffects(targets[t], preset.effects, sourceIn, notes) > 0) {
             outcome.applied++;
         } else {
             outcome.failed++;

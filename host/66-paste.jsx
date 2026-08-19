@@ -294,7 +294,7 @@ FXP.pasteKeepWhatWasThere = function (sequence, before, item) {
     var outcome = { messages: [] };
     FXP.discardClips(FXP.pasteClipsOf(sequence, item), outcome, 'pasted');
     var said = 'The paste went over ' + harmed.length + ' clip(s) that were already there: ' +
-        FXP.describeClips(sequence, harmed, 4) + '. What it put down was taken back off, but Premiere ' +
+        FXP.describeClips(sequence, harmed) + '. What it put down was taken back off, but Premiere ' +
         'had already overwritten them: press Cmd+Z to get them back.';
     if (outcome.messages.length > 0) {
         said += ' ' + outcome.messages.join(' ') + '.';

@@ -66,6 +66,13 @@ FXP.EASE_PAIR_ROLES = ['position', 'anchor'];
  */
 FXP.EASE_SNAP_SLACK = 1e-4;
 
+/**
+ * The floor under that, for an axis that does not move at all. Nothing about the screen: this is how
+ * much a number may change simply by going into Premiere and coming back, and a value that was never
+ * asked to move has no travel to take a fraction of.
+ */
+FXP.EASE_ROUND_TRIP_SLACK = 1e-9;
+
 FXP.easeInfluence = function (raw, fallback) {
     var value = Math.round(Number(raw));
     if (isNaN(value)) {
@@ -89,6 +96,13 @@ FXP.bezierAxis = function (t, p1, p2) {
 };
 
 /**
+ * How many halvings the solve below takes. Each one buys a bit, so this leaves t known to about a
+ * part in four thousand million: far inside EASE_FIT_SLACK, which is the tightest thing any caller
+ * measures a solved t against.
+ */
+FXP.BEZIER_STEPS = 32;
+
+/**
  * The curve is parameterised by t and asked about by time, so t has to be solved for. Bisection
  * rather than Newton: x(t) rises monotonically for any pair of handles inside the unit square, which
  * is all bisection needs, while Newton stalls exactly where the extreme influences flatten it.
@@ -97,7 +111,7 @@ FXP.bezierTimeAt = function (x, x1, x2) {
     var low = 0;
     var high = 1;
     var t = x;
-    for (var i = 0; i < 24; i++) {
+    for (var i = 0; i < FXP.BEZIER_STEPS; i++) {
         t = (low + high) / 2;
         if (FXP.bezierAxis(t, x1, x2) < x) {
             low = t;
@@ -235,9 +249,6 @@ FXP.easeByTime = function (a, b) {
 
 FXP.TIME_REMAP_MATCH_NAMES = ['AE.ADBE Time Remapping', 'AE.ADBE Audio Time Remapping'];
 
-/** How many of the properties it passed over an outcome names before it stops listing them. */
-FXP.EASE_REFUSED_SHOWN = 4;
-
 FXP.easeParamName = function (param) {
     var name = null;
     try {
@@ -318,14 +329,22 @@ FXP.easeLabel = function (displayName, component, index) {
     return (owner === '' ? 'an effect' : owner) + ' parameter ' + (index + 1);
 };
 
-FXP.easeNoteRefused = function (found, displayName, component, index) {
-    var label = FXP.easeLabel(displayName, component, index);
-    if (!FXP.contains(found.refusedNames, label) && found.refusedNames.length < FXP.EASE_REFUSED_SHOWN) {
-        found.refusedNames[found.refusedNames.length] = label;
+/**
+ * Adds one property to a list an outcome will read out, once and up to the cap. Every list in the
+ * outcome is the same idea: name a few of them so the sentence is worth reading, then stop.
+ */
+FXP.easeNote = function (names, name) {
+    if (!FXP.contains(names, name) && names.length < FXP.NAMES_SHOWN) {
+        names[names.length] = name;
     }
 };
 
-FXP.easeCollectFrom = function (component, found) {
+/**
+ * Every keyframed property of one effect that a curve can be drawn through, onto `easeable`. What it
+ * passed over is counted and named on `totals` directly: the caps and the naming are the same for one
+ * clip as for a whole selection, so a per-clip list only ever got merged into this one.
+ */
+FXP.easeCollectFrom = function (component, easeable, totals) {
     var properties = null;
     var total = 0;
     try {
@@ -372,19 +391,19 @@ FXP.easeCollectFrom = function (component, found) {
             takes = FXP.easeSameShape(keys);
         }
         if (takes) {
-            found.easeable[found.easeable.length] = {
+            easeable[easeable.length] = {
                 param: param,
                 keys: keys,
                 name: FXP.easeLabel(displayName, component, p)
             };
             continue;
         }
-        found.refused++;
-        FXP.easeNoteRefused(found, displayName, component, p);
+        totals.refused++;
+        FXP.easeNote(totals.refusedNames, FXP.easeLabel(displayName, component, p));
     }
 };
 
-FXP.easeCollect = function (clip, found) {
+FXP.easeCollect = function (clip, easeable, totals) {
     var components = null;
     var count = 0;
     try {
@@ -402,7 +421,7 @@ FXP.easeCollect = function (clip, found) {
             component = null;
         }
         if (component) {
-            FXP.easeCollectFrom(component, found);
+            FXP.easeCollectFrom(component, easeable, totals);
         }
     }
 };
@@ -447,12 +466,20 @@ FXP.easeSnapshot = function (param, keys, from, to) {
  */
 FXP.easeDropOffGrid = function (param, kept, gridSeconds) {
     for (var i = 0; i < kept.length; i++) {
-        var frame = kept[i].seconds / gridSeconds;
-        if (Math.abs(frame - Math.round(frame)) * gridSeconds <= FXP.TIME_SLACK) {
+        if (FXP.easeOnGrid(kept[i].seconds, gridSeconds)) {
             continue;
         }
         FXP.keyRemove(param, kept[i].at);
     }
+};
+
+/**
+ * Whether a key sits on a frame. Both the writing and the reading of a bake turn on this: a key off
+ * the grid is one this tool will not land on, and one that cannot have come from a bake it drew.
+ */
+FXP.easeOnGrid = function (seconds, gridSeconds) {
+    var frame = seconds / gridSeconds;
+    return Math.abs(frame - Math.round(frame)) * gridSeconds <= FXP.TIME_SLACK;
 };
 
 /** Puts the pair back the way `easeSnapshot` found it: what this run added goes, what it had returns. */
@@ -525,8 +552,8 @@ FXP.easeTookValue = function (wrote, read, span) {
     }
     for (var i = 0; i < axes; i++) {
         var allowed = Math.abs(FXP.easeComponentAt(span, i)) * FXP.EASE_SNAP_SLACK;
-        if (allowed < FXP.EASE_VALUE_SLACK) {
-            allowed = FXP.EASE_VALUE_SLACK;
+        if (allowed < FXP.EASE_ROUND_TRIP_SLACK) {
+            allowed = FXP.EASE_ROUND_TRIP_SLACK;
         }
         if (Math.abs(FXP.easeComponentAt(read, i) - FXP.easeComponentAt(wrote, i)) > allowed) {
             return false;
@@ -563,14 +590,21 @@ FXP.easeWriteOrder = function (frames, axis) {
 };
 
 /**
- * The keys the editor placed are not written to. Their values are already what the curve reaches at
- * its ends, and forcing a type onto them would throw away handles somebody shaped by hand.
+ * Draws the curve between two keys the editor placed. Those two are not written to: their values are
+ * already what the curve reaches at its ends, and forcing a type onto them would throw away handles
+ * somebody shaped by hand.
+ *
+ * Answers with how many keys went down and, when none did, the one reason why — 'refused' for a write
+ * Premiere would not take, 'snapped' for a parameter that rounded the value to something coarser than
+ * the curve asked for. `repaint` is the last value written, for the caller to nudge the timeline with;
+ * a run that was rolled back has none, which is what keeps a repaint from writing a bake's value back
+ * onto a keyframe that was just put back.
  */
-FXP.easePair = function (param, keys, from, to, options, gridSeconds, context) {
+FXP.easePair = function (param, keys, from, to, options, gridSeconds) {
     var firstFrame = Math.round(from.seconds / gridSeconds);
     var frames = Math.round(to.seconds / gridSeconds) - firstFrame;
     if (frames < 2 || FXP.easeSameValue(from.value, to.value)) {
-        return { written: 0, failed: false };
+        return { written: 0, why: '', repaint: null };
     }
     var wanted = [];
     for (var f = 1; f < frames; f++) {
@@ -584,39 +618,34 @@ FXP.easePair = function (param, keys, from, to, options, gridSeconds, context) {
         };
     }
     if (wanted.length === 0) {
-        return { written: 0, failed: false };
+        return { written: 0, why: '', repaint: null };
     }
     var span = FXP.easeSpanOf(from.value, to.value);
     var order = FXP.easeWriteOrder(wanted, FXP.easeWidestAxis(span));
     var kept = FXP.easeSnapshot(param, keys, from, to);
     FXP.easeDropOffGrid(param, kept, gridSeconds);
     var written = [];
+    var repaint = null;
     for (var i = 0; i < order.length; i++) {
         var frame = wanted[order[i]];
         var at = FXP.keyWrite(param, FXP.keyAt(frame.seconds), frame.value, false);
         if (at === null) {
             FXP.easeRestore(param, kept, written);
-            return { written: 0, failed: true };
+            return { written: 0, why: 'refused', repaint: null };
         }
         written[written.length] = { at: at, seconds: frame.seconds };
         FXP.easeLinearAt(param, at);
-        context.repaint = FXP.keyRepaint(param, at, frame.value);
+        repaint = FXP.keyRepaint(param, at, frame.value);
         if (i > 0) {
             continue;
         }
         var read = FXP.keyValueAt(param, at);
         if (read !== undefined && !FXP.easeTookValue(frame.value, read, span)) {
             FXP.easeRestore(param, kept, written);
-            return { written: 0, failed: false, snapped: true };
+            return { written: 0, why: 'snapped', repaint: null };
         }
     }
-    return { written: written.length, failed: false };
-};
-
-FXP.easeNote = function (names, name) {
-    if (!FXP.contains(names, name) && names.length < FXP.EASE_REFUSED_SHOWN) {
-        names[names.length] = name;
-    }
+    return { written: written.length, why: '', repaint: repaint };
 };
 
 /**
@@ -625,18 +654,16 @@ FXP.easeNote = function (names, name) {
  * somewhere the editor is not looking is indistinguishable from a bug.
  */
 FXP.easeParam = function (entry, options, gridSeconds, seconds, context, totals) {
-    var plan = FXP.easePlan(entry.keys, gridSeconds);
-    var segment = FXP.easeSpanAt(plan.segments, seconds);
-    if (!segment) {
-        if (FXP.easeSpanAt(plan.dense, seconds)) {
-            totals.dense++;
-        } else {
-            totals.outside++;
-        }
+    var span = FXP.easeSpanAt(FXP.easePlan(entry.keys, gridSeconds).spans, seconds);
+    if (!span) {
+        totals.outside++;
         return;
     }
-    var frames =
-        Math.round(segment.to.seconds / gridSeconds) - Math.round(segment.from.seconds / gridSeconds);
+    if (!span.draw) {
+        totals.dense++;
+        return;
+    }
+    var frames = Math.round(span.to.seconds / gridSeconds) - Math.round(span.from.seconds / gridSeconds);
     if (frames > FXP.EASE_MAX_FRAMES) {
         totals.tooLong++;
         if (frames > totals.longest) {
@@ -644,28 +671,21 @@ FXP.easeParam = function (entry, options, gridSeconds, seconds, context, totals)
         }
         return;
     }
-    // The pending redraw writes a value at a moment. Left in place after the pair is put back, it
-    // would write this bake's value onto a restored keyframe and undo the undoing.
-    var repaintBefore = context.repaint;
-    var result = FXP.easePair(
-        entry.param,
-        entry.keys,
-        segment.from,
-        segment.to,
-        options,
-        gridSeconds,
-        context
-    );
-    if (result.failed || result.snapped === true) {
-        context.repaint = repaintBefore;
-        if (result.snapped === true) {
-            totals.snapped++;
-            FXP.easeNote(totals.snappedNames, entry.name);
-        } else {
-            totals.failed++;
-            FXP.easeNote(totals.failedNames, entry.name);
-        }
+    var result = FXP.easePair(entry.param, entry.keys, span.from, span.to, options, gridSeconds);
+    if (result.why === 'snapped') {
+        totals.snapped++;
+        FXP.easeNote(totals.snappedNames, entry.name);
         return;
+    }
+    if (result.why === 'refused') {
+        totals.failed++;
+        FXP.easeNote(totals.failedNames, entry.name);
+        return;
+    }
+    // Only a run that stayed on the timeline leaves a redraw behind: a rolled-back one would write
+    // its own value onto a keyframe that was just put back and undo the undoing.
+    if (result.repaint !== null) {
+        context.repaint = result.repaint;
     }
     if (result.written > 0) {
         totals.pairs++;
@@ -741,19 +761,10 @@ FXP.easeClip = function (entry, options, frameSeconds, context, totals) {
         return;
     }
     var seconds = FXP.easePlayheadInClip(entry, grid.seconds / frameSeconds);
-    var found = { easeable: [], refused: 0, refusedNames: [] };
-    FXP.easeCollect(clip, found);
-    totals.refused += found.refused;
-    for (var n = 0; n < found.refusedNames.length; n++) {
-        if (
-            !FXP.contains(totals.refusedNames, found.refusedNames[n]) &&
-            totals.refusedNames.length < FXP.EASE_REFUSED_SHOWN
-        ) {
-            totals.refusedNames[totals.refusedNames.length] = found.refusedNames[n];
-        }
-    }
-    for (var i = 0; i < found.easeable.length; i++) {
-        FXP.easeParam(found.easeable[i], options, grid.seconds, seconds, context, totals);
+    var easeable = [];
+    FXP.easeCollect(clip, easeable, totals);
+    for (var i = 0; i < easeable.length; i++) {
+        FXP.easeParam(easeable[i], options, grid.seconds, seconds, context, totals);
     }
 };
 

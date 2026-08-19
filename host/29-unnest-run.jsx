@@ -282,7 +282,7 @@ FXP.unnestPlacePiece = function (state, piece) {
     if (written.lost.length > 0) {
         return {
             stop: written.lost.length + ' clip(s) on the timeline were overwritten while placing "' +
-                piece.name + '": ' + FXP.describeClips(state.parent, written.lost, 4) +
+                piece.name + '": ' + FXP.describeClips(state.parent, written.lost) +
                 '. Press Cmd+Z in Premiere to take this back.'
         };
     }
@@ -395,9 +395,9 @@ FXP.unnestFinishPiece = function (state, piece, entry) {
         return;
     }
     FXP.attachQEItems([entry]);
-    // The rebuilt clip shows the same piece of the same source, so its own in point is what makes the
-    // captured keyframes land exactly where they were rather than shifted by the trim.
-    FXP.replayEffects(entry, piece.effects, piece.mediaType, FXP.clipSeconds(entry.clip.inPoint), state.notes);
+    // The rebuilt clip shows the same piece of the same source, so anchoring to its own in point is
+    // what makes the captured keyframes land exactly where they were rather than shifted by the trim.
+    FXP.replayEffects(entry, piece.effects, null, state.notes);
 };
 
 /**

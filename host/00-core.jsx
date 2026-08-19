@@ -7,6 +7,13 @@ var FXP = FXP || {};
 FXP.VERSION = '1.0.0';
 FXP.TICKS_PER_SECOND = 254016000000;
 FXP.VIDEO_MEDIA_GUID = '228cda18-3625-4d2d-951e-348879e4ed93';
+
+/**
+ * How many clips or properties an outcome names before it stops listing them. The reader is the same
+ * editor whatever the message is about, and a sentence naming forty things is one nobody reads.
+ */
+FXP.NAMES_SHOWN = 4;
+
 FXP.log = [];
 
 FXP.trace = function (message) {

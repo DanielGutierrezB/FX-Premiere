@@ -208,7 +208,7 @@ export class CompassSheet {
           class: 'compass__browse',
           text: '\u2026',
           title: 'Choose the folder',
-          onclick: () => this.browseFolder(entry.key, path),
+          onclick: () => this.browseFolder(entry.key, path, resolved),
         }),
       ]),
       el('div', { class: 'compass__preview', 'data-preview': entry.key, text: resolved === '' ? '\u2014' : resolved }),
@@ -219,9 +219,12 @@ export class CompassSheet {
    * A folder chosen in the system's dialog is an absolute one, so the path stops being relative: it
    * would otherwise be hung off the Production folder and end up somewhere nobody picked. Wildcards
    * already in the template are dropped with it — they described a different path.
+   *
+   * It opens at the resolved path rather than the template: `EXPORT/#PRJ/#YYYY` is not a folder
+   * anybody can be shown, and the row underneath already says which folder it means today.
    */
-  private browseFolder(slot: Field, path: CompassPath): void {
-    const chosen = chooseOnDisk({ folder: true, title: 'Where exports go', from: path.template });
+  private browseFolder(slot: Field, path: CompassPath, resolved: string): void {
+    const chosen = chooseOnDisk({ folder: true, title: 'Where exports go', from: resolved });
     if (chosen === null) {
       return;
     }

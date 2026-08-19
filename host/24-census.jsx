@@ -95,10 +95,9 @@ FXP.describePlace = function (sequence, mediaType, trackIndex, startSeconds, nam
  * The clips a census turned up, in the words an editor uses for them: the name, the track and the
  * timecode. Capped, because a message naming forty clips is a message nobody reads.
  */
-FXP.describeClips = function (sequence, entries, limit) {
-    var most = limit || entries.length;
+FXP.describeClips = function (sequence, entries) {
     var parts = [];
-    for (var i = 0; i < entries.length && i < most; i++) {
+    for (var i = 0; i < entries.length && i < FXP.NAMES_SHOWN; i++) {
         parts[parts.length] = FXP.describePlace(
             sequence,
             entries[i].mediaType,

@@ -145,26 +145,40 @@ FXP.keyAt = function (seconds) {
 };
 
 /**
+ * Asks `ask(address)` through both forms `keyWrite` writes through, answering `missing` when the
+ * build took neither.
+ *
+ * A keyframe is addressed either by a Time object or by the seconds it stands for, and which of the
+ * two a build accepts is not knowable in advance, so every question about one key is asked twice.
+ * What differs between the callers is only what they call "it cannot be asked": false, null or
+ * undefined, each of which one of them needs to be able to tell from a real answer.
+ */
+FXP.keyAsk = function (at, missing, ask) {
+    try {
+        return ask(at);
+    } catch (error) {
+        /* nothing at that address in the form it was given */
+    }
+    if (at === null || typeof at !== 'object' || at.seconds === undefined) {
+        return missing;
+    }
+    try {
+        return ask(at.seconds);
+    } catch (error) {
+        return missing;
+    }
+};
+
+/**
  * Whether the property already holds a keyframe at this moment. `getValueAtKey` refuses when there
  * is nothing there, which is the question asked; a build that refuses either way answers no, and
  * the only thing that turns on the answer is whether a failed write cleans up after itself.
  */
 FXP.keyIsThere = function (param, at) {
-    try {
-        param.getValueAtKey(at);
+    return FXP.keyAsk(at, false, function (address) {
+        param.getValueAtKey(address);
         return true;
-    } catch (error) {
-        /* nothing at that address in the form it was given */
-    }
-    if (at === null || typeof at !== 'object' || at.seconds === undefined) {
-        return false;
-    }
-    try {
-        param.getValueAtKey(at.seconds);
-        return true;
-    } catch (error) {
-        return false;
-    }
+    });
 };
 
 /**
@@ -200,60 +214,28 @@ FXP.keyWrite = function (param, at, value, updateUI) {
 };
 
 FXP.keyRemove = function (param, at) {
-    try {
-        param.removeKey(at);
+    return FXP.keyAsk(at, false, function (address) {
+        param.removeKey(address);
         return true;
-    } catch (error) {
-        FXP.trace('removeKey failed: ' + FXP.errorText(error));
-    }
-    if (at === null || typeof at !== 'object' || at.seconds === undefined) {
-        return false;
-    }
-    try {
-        param.removeKey(at.seconds);
-        return true;
-    } catch (error) {
-        FXP.trace('removeKey by seconds failed: ' + FXP.errorText(error));
-    }
-    return false;
+    });
 };
 
 /**
- * Reads a keyframe's value back through the same two forms `keyWrite` writes through. `undefined`
- * is a build that answered neither, which is not the same answer as a value: a caller checking that
- * a write landed has to be able to tell "it came back changed" from "it cannot be asked".
+ * Reads a keyframe's value back. `undefined` is a build that answered neither form, which is not the
+ * same answer as a value: a caller checking that a write landed has to be able to tell "it came back
+ * changed" from "it cannot be asked".
  */
 FXP.keyValueAt = function (param, at) {
-    try {
-        return param.getValueAtKey(at);
-    } catch (error) {
-        FXP.trace('getValueAtKey failed: ' + FXP.errorText(error));
-    }
-    if (at === null || typeof at !== 'object' || at.seconds === undefined) {
-        return undefined;
-    }
-    try {
-        return param.getValueAtKey(at.seconds);
-    } catch (error) {
-        return undefined;
-    }
+    return FXP.keyAsk(at, undefined, function (address) {
+        return param.getValueAtKey(address);
+    });
 };
 
-/** Reads the type back through the same two forms `keyWrite` writes through, and for the same reason. */
+/** Reads the type back, for the same reason, with null for a build that will not say. */
 FXP.keyInterpolationAt = function (param, at) {
-    try {
-        return param.getInterpolationTypeAtKey(at);
-    } catch (error) {
-        FXP.trace('getInterpolationTypeAtKey failed: ' + FXP.errorText(error));
-    }
-    if (at === null || typeof at !== 'object' || at.seconds === undefined) {
-        return null;
-    }
-    try {
-        return param.getInterpolationTypeAtKey(at.seconds);
-    } catch (error) {
-        return null;
-    }
+    return FXP.keyAsk(at, null, function (address) {
+        return param.getInterpolationTypeAtKey(address);
+    });
 };
 
 FXP.writeParam = function (param, value, entry) {
