@@ -6,6 +6,7 @@ import {
   type ApplyOutcome,
   type CatalogItem,
   type HostResponse,
+  type PresetRef,
   type Settings,
   type TransitionOptions,
 } from '@shared/types';
@@ -29,6 +30,18 @@ import { probeMulticam } from './probe';
  * prompt setting says; `keepOpen` means Cmd/Ctrl was held to apply several things in a row.
  */
 export type ApplyIntent = 'default' | 'withOptions' | 'keepOpen';
+
+/**
+ * The pointer into the preset library with what the row is beside it, which is what lets the host
+ * find the preset again after Premiere has renumbered the library. A favourite saved before that
+ * was understood kept the pointer alone, so its name and media type are taken off the row itself,
+ * which is where they were being shown from all along.
+ */
+const presetReference = (item: CatalogItem, stored: PresetRef): PresetRef => ({
+  ...stored,
+  name: stored.name ?? item.name,
+  mediaType: stored.mediaType ?? item.mediaType,
+});
 
 /** What a dialog decided before the request went out, and anything the panel worked out itself. */
 export interface ApplyExtras {
@@ -148,7 +161,9 @@ export class ApplyPipeline {
       }
       const outcome = response.data ?? { applied: 0, skipped: 0, failed: 0, messages: [] };
       const messages = [...(extras.notes ?? []), ...outcome.messages];
-      this.recordUsage(item);
+      // A preset the host found somewhere other than where this item pointed is written down at
+      // the place it was found, so the number it sits on keeps working without a search each time.
+      this.recordUsage(outcome.preset ? { ...item, preset: outcome.preset } : item);
       if (outcome.applied === 0) {
         const reason = messages[0] ?? 'Nothing was applied.';
         this.host.status(reason, 'error');
@@ -203,7 +218,11 @@ export class ApplyPipeline {
       case 'preset':
         return item.captured
           ? callHost<ApplyOutcome>({ op: 'applyCaptured', preset: item.captured })
-          : callHost<ApplyOutcome>({ op: 'applyPreset', preset: item.preset! });
+          : callHost<ApplyOutcome>({
+              op: 'applyPreset',
+              preset: presetReference(item, item.preset!),
+              presetSources: settings.presetSources,
+            });
       case 'command':
         if (item.motion) {
           return callHost<ApplyOutcome>({ op: 'motion', command: item.motion });

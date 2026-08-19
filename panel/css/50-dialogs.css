@@ -38,13 +38,17 @@
   font-size: calc(12px * var(--font-scale));
 }
 
-/* The un-nest dialog: the same box as the transition one, with one question in it. */
+/* The un-nest dialog: the same box as the transition one, with one question in it. It scrolls like the
+   ease one because what it has to say varies: a multicam adds a line about its angles, and a window
+   dragged small would otherwise push the buttons out of sight. */
 .unnest {
   flex: 1;
   display: flex;
   flex-direction: column;
   padding: 18px;
   gap: 4px;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 /* What the nests hold that may not survive. A warning, so it reads like one and blocks nothing. */

@@ -8,7 +8,7 @@ import { join } from 'node:path';
 
 import { check } from './check.mjs';
 import { createCepWindow, settle, waitFor } from './mock-cep.mjs';
-import { fileReads } from './mock-files.mjs';
+import { fileReads, writePresetFixture } from './mock-files.mjs';
 import { createHost } from './mock-premiere.mjs';
 
 export const laterOpens = async ({
@@ -159,6 +159,80 @@ export const laterOpens = async ({
   check('and the width goes back to following the bar', legacy.window.innerWidth !== 440, String(legacy.window.innerWidth));
   legacy.close();
   rmSync(oldStage, { recursive: true, force: true });
+
+  // A preset row used to be named after the place in the library file it was read out of, and
+  // Premiere renumbers that file every time it saves. So a profile in the wild holds the same preset
+  // under several ids: here it is on a number under one of them and in the recents under both, with
+  // the ranking split between them. It has to come up as one preset, on the number it was given.
+  console.log('\nA profile from when a preset id was a place in a file');
+  const idStage = mkdtempSync(join(tmpdir(), 'fxp-presetids-'));
+  const idSettingsDir = join(idStage, 'Library', 'Application Support', 'FX Premiere');
+  mkdirSync(idSettingsDir, { recursive: true });
+  const idFixture = writePresetFixture(join(idStage, 'presets'));
+  const beforeSave = `preset:${idFixture}#10`;
+  const afterSave = `preset:${idFixture}#40`;
+  const rememberedZoom = (id, objectId) => ({
+    id,
+    kind: 'preset',
+    name: 'Zoom In Test',
+    mediaType: 'video',
+    group: 'Preset',
+    preset: { file: idFixture, objectId },
+  });
+  writeFileSync(
+    join(idSettingsDir, 'settings.json'),
+    JSON.stringify({
+      presetFolders: [idFixture],
+      favoriteRows: [{ modifiers: { ctrl: false, alt: false, shift: false, meta: false }, slots: [afterSave, null, null, null] }],
+      recents: [beforeSave, afterSave],
+      usage: { [beforeSave]: 4, [afterSave]: 3 },
+      remembered: { [beforeSave]: rememberedZoom(beforeSave, '10'), [afterSave]: rememberedZoom(afterSave, '40') },
+    }),
+    'utf8',
+  );
+  const idHost = createHost({ hostScript, documentsRoot: join(idStage, 'Documents') });
+  idHost.world.select('A.mp4');
+  const ids = createCepWindow({ html: panelHtml, home: idStage, evalScript: idHost.evalInHost, storage: {} });
+  ids.run(panelBundle);
+  await settle(60);
+  check(
+    'the number still holds the preset it was given',
+    ids.window.document.querySelector('.slot__name')?.textContent === 'Zoom In Test',
+    ids.window.document.querySelector('.slot__name')?.textContent ?? '(empty)',
+  );
+  const idInput = ids.window.document.querySelector('.search__input');
+  const typeInto = async (text) => {
+    idInput.value = text;
+    idInput.dispatchEvent(new ids.window.Event('input', { bubbles: true }));
+    await settle(10);
+  };
+  await typeInto('zoom in test');
+  const zoomRow = [...ids.window.document.querySelectorAll('.row')].find(
+    (row) => row.querySelector('.row__name')?.textContent === 'Zoom In Test',
+  );
+  // The row the library was just read for and the chip on the bar are one thing now, which is what
+  // stops the same preset being counted, listed and starred twice.
+  check('and the row for it is the one on the number, not a stranger', Boolean(zoomRow?.querySelector('.row__star')), zoomRow?.textContent ?? '(no row)');
+  await typeInto('');
+  const scaleWrites = () => idHost.world.clips.clipA.componentList[0].paramList[1].calls.length;
+  const writesBefore = scaleWrites();
+  ids.window.dispatchEvent(new ids.window.KeyboardEvent('keydown', { key: '1', code: 'Digit1', bubbles: true, cancelable: true }));
+  await settle(40);
+  check('pressing the number applies it', scaleWrites() > writesBefore, `${writesBefore} -> ${scaleWrites()}`);
+  const idSaved = JSON.parse(readFileSync(join(idSettingsDir, 'settings.json'), 'utf8'));
+  check('the number is written down under the id the preset answers to', idSaved.favoriteRows[0].slots[0] === 'preset:Zoom In Test:video', JSON.stringify(idSaved.favoriteRows[0].slots));
+  check('the recents hold one line for it rather than two', idSaved.recents.join(', ') === 'preset:Zoom In Test:video', JSON.stringify(idSaved.recents));
+  // Four and three, and one for the press that just proved the number works.
+  check('and the two counters are added up rather than one of them being dropped', idSaved.usage['preset:Zoom In Test:video'] === 8, JSON.stringify(idSaved.usage));
+  check(
+    'the pointer kept with it now says which preset it is, not only where it sat',
+    idSaved.remembered['preset:Zoom In Test:video']?.preset?.name === 'Zoom In Test' &&
+      idSaved.remembered['preset:Zoom In Test:video']?.preset?.path === '',
+    JSON.stringify(idSaved.remembered['preset:Zoom In Test:video']?.preset),
+  );
+  check('and one copy of it is kept, not one per id it used to have', Object.keys(idSaved.remembered).length === 1, JSON.stringify(Object.keys(idSaved.remembered)));
+  ids.close();
+  rmSync(idStage, { recursive: true, force: true });
 
   // The palette's size and each sheet's were the same rule — absent means work it out — kept in two
   // places. They fold into one map, and a window somebody dragged has to survive the fold.

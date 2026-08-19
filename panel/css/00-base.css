@@ -14,6 +14,9 @@
   --text-dim: #9297a0;
   --text-faint: #5d6169;
   --danger: #ff6b6b;
+  /* Between the two: something that worked and probably should not have, which is not a failure. */
+  --warn: #e0b25c;
+  --warn-dim: rgba(224, 178, 92, 0.12);
   --ok: #5ddba0;
   --row-height: 28px;
   --font-scale: 1;

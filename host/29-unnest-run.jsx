@@ -7,8 +7,8 @@
  * timeline is counted before every placement and again after it, so a clip that arrived somewhere it
  * was not sent is seen rather than assumed, and anything this run put down it can take back off.
  *
- * What a rebuild cannot carry is refused by name before anything moves: transitions inside the nest,
- * the active angle of a multicam clip, and any clip Premiere will not describe.
+ * What a rebuild cannot carry is said by name: transitions inside the nest, a multicam buried inside
+ * one, any clip Premiere will not describe, and which angle of a multicam was on air.
  */
 
 /** setInPoint grew a media type argument after the call itself existed. 4 is every stream at once. */
@@ -541,6 +541,21 @@ FXP.unnestNoteEmptyTracks = function (state, left) {
     }
 };
 
+/**
+ * Says which angle of a multicam came out playing, because the editor is the only one who knows
+ * whether it is the right one. Nothing says it when there was one angle: an editor who un-nested a
+ * one-camera multicam has nothing to check.
+ */
+FXP.unnestNoteAngles = function (state, entry, plan) {
+    if (!plan.angles || plan.angles.count < 2) {
+        return;
+    }
+    state.outcome.messages[state.outcome.messages.length] =
+        'All ' + plan.angles.count + ' angles of "' + entry.name + '" came out and "' + plan.angles.kept +
+        '" is the one left playing: no API says which angle was on air, so if you were watching ' +
+        'another one, switch that angle on and this one off.';
+};
+
 /** Everything this nest put on the timeline, taken back off, leaving the nest the nest it was. */
 FXP.unnestUndo = function (state, reason) {
     if (state.placed.length > 0) {
@@ -606,6 +621,7 @@ FXP.unnestOne = function (state, job) {
         state.outcome.messages[state.outcome.messages.length] =
             'Transitions inside "' + entry.name + '" were not carried over: Premiere has no API that makes one.';
     }
+    FXP.unnestNoteAngles(state, entry, plan);
     FXP.retireNest(entry, state.options, state.outcome);
     FXP.unnestCleanSpills(state);
     // A nest that came out cleanly still has to give back what it grew the sequence by and is not

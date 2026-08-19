@@ -37,6 +37,7 @@ const SHEET_PLAN: Record<Exclude<View, 'search'>, WindowBox> = {
   compass: { width: 780, height: 640 },
   settings: { width: 640, height: 620 },
   inspect: { width: 660, height: 580 },
+  tools: { width: 700, height: 660 },
 };
 
 /**

@@ -11,6 +11,74 @@ FXP.paramValue = function (param) {
     }
 };
 
+/**
+ * Below this a value is not a colour. Premiere packs a colour into a 64-bit integer with alpha in
+ * the top sixteen bits, so a colour with an alpha of even one part in 255 is at least 2^56, and
+ * nothing else a parameter holds comes near: a percentage, a pixel count, an angle, a frequency,
+ * even a tick count, which needs seventy-eight hours to get here. A fully transparent colour packs
+ * below the line and is left as the number it arrived as — transparent black is indistinguishable
+ * from the number zero, and neither draws anything.
+ */
+FXP.PACKED_COLOR_FLOOR = 72057594037927936;
+
+FXP.isPackedColor = function (value) {
+    return typeof value === 'number' && isFinite(value) &&
+        value >= FXP.PACKED_COLOR_FLOOR && Math.floor(value) === value;
+};
+
+/**
+ * Premiere's packed colour as a number, which is how `getValue` hands one over rather than as the
+ * decimal text a .prfpset holds.
+ *
+ * ExtendScript has one number type, so the 64-bit integer arrives already put through a double, and
+ * doubles run out of mantissa at 2^53. An opaque colour is past 2^63, where the nearest doubles are
+ * 2048 apart, so the bottom eleven bits are gone before the host sees anything: that is the whole
+ * blue channel and the low three bits of its byte. Alpha, red and green sit above the rounding and
+ * arrive exactly. Dividing by 65536 is exact in binary floating point at any size, so splitting the
+ * channels adds no error of its own.
+ *
+ * `FXP.divmodDecimal` belongs to the other path and must not be used here. It divides the decimal
+ * text out of a .prfpset, which is Premiere's own exact integer, whereas `String` of a double is the
+ * shortest decimal that reads back as that double and its last digits are invented. Opaque black
+ * arrives as 18374686479671623680 and prints as 18374686479671624000, which would put a blue of 320
+ * into a colour that has none.
+ */
+FXP.unpackColorNumber = function (value) {
+    var channels = [];
+    var remaining = value;
+    for (var i = 0; i < 4; i++) {
+        var quotient = Math.floor(remaining / 65536);
+        channels[channels.length] = remaining - quotient * 65536;
+        remaining = quotient;
+    }
+    // A blue of 252 or more rounds up past 0xFF00 and carries into green, and it can only ever carry
+    // by one, because blue starts at 0xFF00 at the most. Premiere writes whole bytes into the high
+    // half of each channel, so a low byte of exactly 1 in green is not a green anyone picked: it is
+    // that carry. Taking it back off and calling blue full recovers white and cyan exactly, and a
+    // blue of 252 to 254 to within the three bits of it that survived.
+    if (channels[1] % 256 === 1) {
+        channels[1] = channels[1] - 1;
+        channels[0] = 65280;
+    }
+    return [
+        FXP.colorChannel(channels[3]),
+        FXP.colorChannel(channels[2]),
+        FXP.colorChannel(channels[1]),
+        FXP.colorChannel(channels[0])
+    ];
+};
+
+/**
+ * What to write down for one value read off a clip. Premiere answers `getValue` on a colour with the
+ * packed integer but takes only normalised [alpha, red, green, blue] back through `setValue`, so a
+ * colour stored as it was read is stored in a form that cannot be replayed: the write is refused and
+ * the parameter keeps whatever the freshly added effect defaulted to. Decoding it here puts a
+ * captured colour in the shape a .prfpset preset already arrives in, and both replay the same way.
+ */
+FXP.capturedValue = function (value) {
+    return FXP.isPackedColor(value) ? FXP.unpackColorNumber(value) : value;
+};
+
 FXP.paramIsTimeVarying = function (param) {
     try {
         return param.isTimeVarying() === true;
@@ -84,7 +152,7 @@ FXP.capturedKeyframes = function (param) {
     var keys = FXP.captureKeyframes(param);
     var out = [];
     for (var i = 0; i < keys.length; i++) {
-        out[out.length] = { seconds: keys[i].seconds, value: keys[i].value };
+        out[out.length] = { seconds: keys[i].seconds, value: FXP.capturedValue(keys[i].value) };
     }
     return out;
 };
@@ -192,7 +260,7 @@ FXP.captureClipEffects = function (clip) {
             params[params.length] = {
                 name: displayName,
                 index: p,
-                value: keys.length > 0 ? null : FXP.paramValue(param),
+                value: keys.length > 0 ? null : FXP.capturedValue(FXP.paramValue(param)),
                 keyframes: keys
             };
         }
@@ -232,20 +300,27 @@ FXP.captureSelection = function () {
     };
 };
 
-/** Turns a captured parameter back into the definition shape `applyPresetParam` expects. */
+/**
+ * Turns a captured parameter back into the definition shape `applyPresetParam` expects.
+ *
+ * The values go through `FXP.capturedValue` again on the way out, which is what makes a preset saved
+ * before colours were decoded still replay. Such a file holds the packed integer, and that number is
+ * the same one a capture starts from today, so the same decode recovers the same colour and nobody
+ * has to save their work a second time. A colour already written down as channels is left alone.
+ */
 FXP.capturedDefinition = function (param) {
     var keys = [];
     for (var k = 0; k < param.keyframes.length; k++) {
         keys[keys.length] = {
             ticks: Math.round(Number(param.keyframes[k].seconds) * FXP.TICKS_PER_SECOND),
-            value: param.keyframes[k].value,
+            value: FXP.capturedValue(param.keyframes[k].value),
             interp: 0
         };
     }
     return {
         name: param.name,
         index: param.index,
-        value: param.value,
+        value: FXP.capturedValue(param.value),
         timeVarying: keys.length > 0,
         keys: keys
     };

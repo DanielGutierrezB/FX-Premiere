@@ -26,12 +26,13 @@ interface UnnestHost {
 /**
  * What the contents hold that a rebuild cannot carry across, in the order it is said. A title made in
  * the timeline may have no project item behind it and a placement is made from a project item; a
- * transition is not a clip and no API makes one; and no API says which angle of a multicam was showing.
+ * transition is not a clip and no API makes one; and a multicam buried inside a nest would be placed
+ * again on whatever angle Premiere starts it on, so the nest holding one is refused whole.
  */
 const RISKS: Array<{ count: (survey: UnnestSurvey) => number; one: string; many: string; note: string }> = [
   { count: (s) => s.titles, one: 'title', many: 'titles', note: ' made here, which Premiere may not describe' },
   { count: (s) => s.transitions, one: 'transition', many: 'transitions', note: ' will not come out' },
-  { count: (s) => s.multicam, one: 'multicam clip', many: 'multicam clips', note: ': those nests are refused' },
+  { count: (s) => s.multicam, one: 'multicam clip', many: 'multicam clips', note: ' inside: those nests are refused' },
   { count: (s) => s.speedChanges, one: 'retimed clip', many: 'retimed clips', note: '' },
 ];
 
@@ -46,6 +47,16 @@ const surveyLine = (survey: UnnestSurvey): string => {
   }
   return parts.join(' \u00b7 ');
 };
+
+/**
+ * What a multicam un-nest is going to do about the angles, said before Enter rather than after it.
+ * Every angle comes out, and the one left playing is angle one, because no API says which angle was
+ * on air — so the editor is told which one to check instead of being left to find out. Only the
+ * picture is switched off angle by angle, so this has nothing to say about an audio-only run.
+ */
+const angleLine = (survey: UnnestSurvey): string =>
+  `${survey.angles.length} multicam angles come out stacked \u00b7 \u201c${survey.angles[0]}\u201d stays playing ` +
+  'and the rest come out switched off: Premiere does not say which angle was on air.';
 
 /**
  * The one question un-nesting has to ask, plus what the nests hold that a rebuild cannot carry across.
@@ -96,6 +107,9 @@ export class UnnestDialog {
     );
     if (this.survey) {
       container.appendChild(el('div', { class: 'unnest__survey', text: surveyLine(this.survey) }));
+    }
+    if (this.survey && this.survey.angles.length > 1 && this.media !== 'audio') {
+      container.appendChild(el('div', { class: 'unnest__warning', text: angleLine(this.survey) }));
     }
     container.appendChild(el('div', { class: 'unnest__warning', text: NO_UNDO }));
 

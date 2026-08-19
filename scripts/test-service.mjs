@@ -406,7 +406,9 @@ check(
   followed && exportPath() === join(projectFolder, 'EXPORT', 'Mock Sequence') + sep,
   exportPath(),
 );
-check('and the folder it points at exists', existsSync(join(projectFolder, 'EXPORT', 'Mock Sequence')), '');
+// Pointing is not creating. This runs unattended, every few seconds, for every project the editor
+// opens; with a date in the template it once left a folder behind for each of them, on each day.
+check('and no folder was made for it', !existsSync(join(projectFolder, 'EXPORT', 'Mock Sequence')));
 check(
   'the frame path is written in the same pass',
   world.properties.get('Monitor.ExportFrame.CurrentPath') === join(projectFolder, 'EXPORT', 'Frames') + sep,
@@ -436,6 +438,11 @@ check(
   'changing the active sequence with no panel open moves the export path with it',
   followedSequence && exportPath() === join(projectFolder, 'EXPORT', 'Nested Sequence') + sep,
   exportPath(),
+);
+check(
+  'and the second folder is no more made than the first was',
+  !existsSync(join(projectFolder, 'EXPORT')),
+  join(projectFolder, 'EXPORT'),
 );
 
 const pathWhenOff = exportPath();

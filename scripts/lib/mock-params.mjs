@@ -175,6 +175,94 @@ export const makeParam = (displayName, value, options = {}) => ({
 });
 
 /**
+ * Premiere's packed form of a colour: four 16-bit channels in one 64-bit integer, alpha highest,
+ * then red, green and blue. Each channel holds its 8-bit value in the high byte, so full scale is
+ * 0xFF00 rather than 0xFFFF. `bytes` is [alpha, red, green, blue], each 0-255.
+ */
+export const packColor = (bytes) =>
+  bytes.reduce((packed, byte) => (packed << 16n) | (BigInt(byte) << 8n), 0n);
+
+const unpackColor = (packed) => {
+  const channels = [];
+  for (let shift = 48n; shift >= 0n; shift -= 16n) {
+    channels.push(Number(((packed >> shift) & 0xffffn) >> 8n));
+  }
+  return channels;
+};
+
+/** Premiere takes a colour as four normalised channels and clamps them. Anything else is not one. */
+const colorFrom = (next) => {
+  if (!Array.isArray(next) || next.length !== 4) {
+    throw new Error(`a colour is four channels, not ${JSON.stringify(next)}`);
+  }
+  return packColor(next.map((channel) => Math.round(Math.min(1, Math.max(0, channel)) * 255)));
+};
+
+/**
+ * A colour parameter, whose two halves of the API do not agree with each other.
+ *
+ * `getValue` answers with the packed integer, and ExtendScript has one number type, so what a script
+ * receives is that integer put through a double. Past 2^53 that rounds, and the colour is modelled
+ * holding its exact value rather than the rounded one so that the difference between what Premiere
+ * has and the most a script can ever read is visible here instead of hidden.
+ *
+ * `setValue` takes normalised [alpha, red, green, blue]. A real Premiere handed a bare number does
+ * not throw: the clip this fixture stands for came back showing the plugin's own default colour, so
+ * the write is dropped and the parameter keeps what it had. Refusing it puts that same outcome
+ * where a test can see it, and the host traces the failure and carries on either way.
+ */
+export const colorParam = (displayName, bytes) =>
+  Object.assign(makeParam(displayName, packColor(bytes)), {
+    /** The colour as [alpha, red, green, blue] bytes, whatever a script managed to read or write. */
+    bytes() {
+      return unpackColor(this.current);
+    },
+    keyBytes() {
+      return this.sortedKeys().map((key) => unpackColor(key.value));
+    },
+    getValue() {
+      return Number(this.current);
+    },
+    setValue(next, updateUI) {
+      this.calls.push(['setValue', next]);
+      this.current = colorFrom(next);
+      if (updateUI) {
+        this.repaints += 1;
+      }
+    },
+    getValueAtKey(at) {
+      const found = this.keyAtTicks(ticksOf(at));
+      if (!found) {
+        throw new Error(`no keyframe at ${at}`);
+      }
+      return Number(found.value);
+    },
+    /**
+     * Premiere eases a colour between its keyframes. Holding the one before is enough here, because
+     * the only caller is `addKey`, seeding a keyframe whose value is written a moment later.
+     */
+    getValueAtTime(at) {
+      const ticks = ticksOf(at);
+      const sorted = this.sortedKeys();
+      const before = sorted.filter((key) => key.ticks <= ticks).pop() ?? sorted[0];
+      return before ? before.value : this.current;
+    },
+    setValueAtKey(at, next, updateUI) {
+      const ticks = ticksOf(at);
+      this.calls.push(['setValueAtKey', secondsOf(ticks), next]);
+      const existing = this.keyAtTicks(ticks);
+      if (!existing) {
+        throw new Error(`no keyframe at ${at} to set a value on`);
+      }
+      existing.value = colorFrom(next);
+      this.current = existing.value;
+      if (updateUI) {
+        this.repaints += 1;
+      }
+    },
+  });
+
+/**
  * Puts keyframes on a parameter the way Premiere would have, so a tool can be pointed at them. An
  * entry is `[seconds, value]`, or `[seconds, value, interpolation]` where the shape of the handles
  * the editor left behind is what the test is about.
@@ -190,6 +278,13 @@ export const keyframed = (param, entries) => {
   param.current = param.sortedKeys()[0]?.value ?? param.current;
   return param;
 };
+
+/** The same, on a colour, where an entry is `[seconds, [alpha, red, green, blue]]` bytes. */
+export const keyframedColor = (param, entries) =>
+  keyframed(
+    param,
+    entries.map(([at, bytes]) => [at, packColor(bytes)]),
+  );
 
 /**
  * A Premiere that will not say what a component's parameters are called. The index tables in the
@@ -227,6 +322,21 @@ export const motionComponent = () =>
 
 export const opacityComponent = () =>
   makeComponent('AE.ADBE Opacity', 'Opacity', [makeParam('Opacity', 100), makeParam('Blend Mode', 0)]);
+
+/**
+ * Drop Shadow, standing in for any effect with a colour on it. The default is cyan rather than the
+ * black Premiere's own Drop Shadow starts at, because a colour that fails to be written leaves the
+ * default sitting there, and a default of black would be indistinguishable from a black that
+ * landed. Cyan is what the third-party effect behind the bug this fixture exists for defaults to.
+ */
+export const CYAN = [255, 0, 255, 255];
+
+export const dropShadowComponent = (color = CYAN) =>
+  makeComponent('AE.ADBE Drop Shadow', 'Drop Shadow', [
+    colorParam('Shadow Color', color),
+    makeParam('Shadow Opacity', 50),
+    makeParam('Distance', 5),
+  ]);
 
 /**
  * The Transform effect. Its geometry is the same as Motion's in a different order, and its Position

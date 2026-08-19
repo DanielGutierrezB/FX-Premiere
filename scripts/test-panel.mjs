@@ -13,7 +13,7 @@ import { createServer } from 'node:http';
 import { loadShared } from './lib/bundle-shared.mjs';
 import { check, finish } from './lib/check.mjs';
 import { createCepWindow, settle, waitFor } from './lib/mock-cep.mjs';
-import { writePresetFixture } from './lib/mock-files.mjs';
+import { fileReads, rewritePresetFixture, writePresetFixture } from './lib/mock-files.mjs';
 import { createHost } from './lib/mock-premiere.mjs';
 import { easeAndAnchorDialogs } from './lib/panel-dialogs.mjs';
 import { createClipboardFake, pasteAndCompassViews } from './lib/panel-new-views.mjs';
@@ -318,6 +318,17 @@ const slotName = (line, slot) => slotsIn(line)[slot]?.querySelector('.slot__name
 const savedSlots = (line = 0) => savedSettings().favoriteRows[line].slots;
 const digit = async (number, modifiers = {}) => press(String(number), { code: `Digit${number}`, ...modifiers });
 const hasEffect = (clip, matchName) => world.clips[clip].componentList.some((component) => component.matchName === matchName);
+/** Hands the event back, because whether it was refused is the whole question on the bar. */
+const menuOn = (node) => {
+  const event = new window.MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 40, clientY: 60 });
+  node.dispatchEvent(event);
+  return event;
+};
+const menu = () => window.document.querySelector('.menu');
+const menuItem = (label) => [...window.document.querySelectorAll('.menu__item')].find((node) => label.test(node.textContent));
+const favoriteItem = () => menuItem(/number|numbered bar/i);
+const deleteItem = () => menuItem(/Delete this preset/);
+const renameItem = () => menuItem(/Rename it/);
 
 check('the bar offers one numbered slot per digit', slotsIn(0).length === 4, String(slotsIn(0).length));
 check(
@@ -357,6 +368,64 @@ await press('d', { metaKey: true });
 await digit(2);
 check('putting it on the number it already has takes it off', slotName(0, 1) === '', slotName(0, 1));
 check('and disk agrees', savedSlots()[1] === null, JSON.stringify(savedSlots()));
+
+// The bar is what you are looking at when you want something off it, so it is where you reach for
+// it — and a right click there used to hand you the host's own page menu, Back and View Page Source
+// over a palette, because nothing on the bar had ever claimed the gesture.
+console.log('\nRight click on a numbered slot');
+await type('gaussian');
+await press('d', { metaKey: true });
+await digit(3);
+await type('ultra');
+await press('d', { metaKey: true });
+await digit(2);
+await type('');
+check('two numbers are filled before either is taken off', `${slotName(0, 1)}|${slotName(0, 2)}` === 'Ultra Key|Gaussian Blur', `${slotName(0, 1)}|${slotName(0, 2)}`);
+const slotEvent = menuOn(slotsIn(0)[1]);
+await settle(4);
+check('right clicking a filled slot opens the palette\u2019s own menu', Boolean(menu()), '');
+check('and the host never gets to put its page menu over the bar', slotEvent.defaultPrevented, String(slotEvent.defaultPrevented));
+check('the menu names what is on that number', /Ultra Key/.test(menu()?.textContent ?? ''), menu()?.textContent ?? '');
+check(
+  'and offers to take it off, which is the only thing a chip can be',
+  /Take it off/.test(menu()?.textContent ?? ''),
+  menu()?.textContent ?? '',
+);
+favoriteItem().click();
+await settle(10);
+check('taking it off empties that number', slotName(0, 1) === '', slotName(0, 1));
+check('on disk too', savedSlots()[1] === null, JSON.stringify(savedSlots()));
+check('and says so', /Took Ultra Key off/.test(status()), status());
+check('the menu closes once used', !menu());
+const starredRows = () => rows().filter((row) => row.querySelector('.row__star')).map((row) => row.querySelector('.row__name')?.textContent);
+check(
+  'the row loses its star, while the one still on a number keeps its own',
+  !starredRows().includes('Ultra Key') && starredRows().includes('Gaussian Blur'),
+  JSON.stringify(starredRows()),
+);
+check('what sits on the other numbers is left where it was', slotName(0, 2) === 'Gaussian Blur', JSON.stringify(savedSlots()));
+const beforeFreedDigit = world.clips.clipA.componentList.length;
+await digit(2);
+await settle(10);
+check(
+  'the digit applies nothing afterwards',
+  world.clips.clipA.componentList.length === beforeFreedDigit,
+  `${beforeFreedDigit} -> ${world.clips.clipA.componentList.length}`,
+);
+check('and says that number is free again', /Nothing on 2/.test(status()), status());
+
+// A menu with nothing in it would be worse than no menu, so an empty slot answers in the one line
+// that has anything to say about it.
+const emptyEvent = menuOn(slotsIn(0)[3]);
+await settle(4);
+check('right clicking an empty slot opens no menu at all', !menu(), menu()?.textContent ?? '');
+check('the host is still kept out of it', emptyEvent.defaultPrevented, String(emptyEvent.defaultPrevented));
+check('and it says what that number is waiting for', /Nothing on 4/.test(status()), status());
+
+// The one place the host's menu earns its keep is a field, where cut, paste and the spellchecker are.
+const fieldEvent = menuOn(window.document.querySelector('.search__input'));
+check('the search field keeps the menu the host gives a text field', !fieldEvent.defaultPrevented, String(fieldEvent.defaultPrevented));
+check('but the footer does not, nor does anything else in here', menuOn(window.document.querySelector('.foot')).defaultPrevented);
 
 console.log('\nA second row of favourites');
 const withSecondRow = savedSettings();
@@ -796,6 +865,57 @@ check('and clicking it goes to the settings screen, where the update is', Boolea
 await press('Escape');
 await settle(10);
 
+// The palette is a search field, so a tool nobody can name is a tool nobody has. This is the page
+// that says what each one does, and it is held against the command list rather than kept in step by
+// hand: a tool added to the palette with nothing to read about it fails here.
+console.log('\nThe Tools screen');
+const { STATIC_COMMANDS } = await loadShared('panel/src/commands.ts', ['STATIC_COMMANDS']);
+cep.emit('com.fxpremiere.event.trigger', { settings: false });
+await settle(20);
+const toolNames = () => [...window.document.querySelectorAll('.tool__name')].map((node) => node.textContent);
+check('the footer offers the tools screen', Boolean(hint('tools')), foot());
+hint('tools').click();
+await settle(10);
+check('clicking that hint opens it', toolNames().length > 0, `${toolNames().length} tools`);
+const unexplained = STATIC_COMMANDS.filter((item) => !toolNames().includes(item.name)).map((item) => item.name);
+check('every tool the palette offers is explained on it', unexplained.length === 0, unexplained.join(', '));
+check(
+  'and the typed motion values are too, which are the ones that never appear as a row',
+  toolNames().includes('Motion by typing'),
+  JSON.stringify(toolNames()),
+);
+const withoutHow = [...window.document.querySelectorAll('.tool')].filter(
+  (node) => (node.querySelector('.tool__how')?.textContent ?? '') === '',
+).length;
+check('each one says how it is reached, not only what it does', withoutHow === 0, `${withoutHow} without`);
+check(
+  'the tools with a screen of their own name its keys',
+  window.document.querySelectorAll('.tool__keys').length >= 6,
+  String(window.document.querySelectorAll('.tool__keys').length),
+);
+const closesBeforeToolsEscape = cepCalls.closeExtension;
+await press('Escape');
+check('Escape leaves it', !window.document.querySelector('.tool'));
+check('and does not close the palette', cepCalls.closeExtension === closesBeforeToolsEscape, String(cepCalls.closeExtension));
+await type('dis');
+await press('ArrowDown');
+check('the keyboard drives the result list again afterwards', rows().length > 0 && activeRow() !== '', activeRow());
+
+// Nobody looking for help types the name of the screen, so it answers to the question instead.
+for (const query of ['tools', 'help', 'ayuda', 'what can this do']) {
+  await type(query);
+  const at = rowNames().indexOf('Tools');
+  check(`"${query}" reaches it`, at >= 0 && at < 5, `position ${at} of ${rowNames().length}`);
+}
+await type('tools');
+check('the row is the one Enter is aimed at', activeRow() === 'Tools', activeRow());
+await press('Enter');
+await settle(10);
+check('and Enter on it opens the screen', toolNames().length > 0, `${toolNames().length} tools`);
+await press('Escape');
+await type('');
+await settle(10);
+
 console.log('\nThe resting bar reapplies the last thing used');
 world.select('A.mp4', 'B.mp4', 'A.wav');
 await settle(10);
@@ -874,6 +994,65 @@ await settle(20);
 check('Cmd+Z asks Premiere to undo', world.undoCalls === undoneBefore + 1, String(world.undoCalls));
 check('the result is reported in the status line', /undone/i.test(status()), status());
 
+console.log('\nA preset saved in Premiere while the palette sat in memory');
+// Premiere writes its preset library as you save, and the palette only read it when the page loaded.
+// Kept in memory, as it is meant to be, that page can be the same one all day: a preset saved after
+// it booted was invisible until Premiere restarted. So every summon asks again, which costs a stamp
+// of the files and no parse at all while they sit still.
+await type('freshly saved');
+check('the preset is not there before it is saved', !rowNames().includes('Freshly Saved'), JSON.stringify(rowNames()));
+const presetReadsBefore = fileReads.filter((path) => path.endsWith('.prfpset')).length;
+cep.emit('com.fxpremiere.event.trigger', { settings: false });
+await settle(20);
+check(
+  'a summon with the files unmoved reads none of them',
+  fileReads.filter((path) => path.endsWith('.prfpset')).length === presetReadsBefore,
+  JSON.stringify(fileReads.filter((path) => path.endsWith('.prfpset'))),
+);
+writeFileSync(presetFixture, readFileSync(presetFixture, 'utf8').replaceAll('Zoom In Test', 'Freshly Saved'), 'utf8');
+cep.emit('com.fxpremiere.event.trigger', { settings: false });
+await settle(20);
+await type('freshly saved');
+check(
+  'and the summon after it is saved finds it, with no reindex asked for',
+  rowNames().includes('Freshly Saved'),
+  JSON.stringify(rowNames()),
+);
+
+console.log('\nA number holding a preset Premiere has since renumbered');
+// Premiere writes its whole preset library out again every time it saves, handing out fresh
+// ObjectIDs as it goes, so the number a favourite was stored under stops pointing at the right
+// preset the moment anything in the library is saved or deleted. A slot holds a name, a bin and a
+// media type, and those are what have to find it again.
+await type('soft blur');
+await press('d', { metaKey: true });
+await digit(4);
+check('a preset can be put on a number', slotName(0, 3) === 'Soft Blur', slotName(0, 3));
+const presetSlotId = savedSlots()[3];
+const storedRef = () => savedSettings().remembered[presetSlotId]?.preset ?? {};
+check('and what is kept with it says which preset it is', storedRef().name === 'Soft Blur', JSON.stringify(storedRef()));
+
+const renumberedTo = String(Number(storedRef().objectId) + 10);
+rewritePresetFixture(presetFixture, { shift: 10 });
+cep.emit('com.fxpremiere.event.trigger', { settings: false });
+await settle(20);
+await type('');
+const blursOnB = () =>
+  world.clips.clipB.componentList.filter((component) => component.matchName === 'AE.ADBE Gaussian Blur 2').length;
+const blursBeforeSlot = blursOnB();
+await digit(4);
+await settle(20);
+check(
+  'the number still applies the preset it was given, not whatever took its id',
+  blursOnB() === blursBeforeSlot + 1,
+  `${blursBeforeSlot} -> ${blursOnB()}`,
+);
+check(
+  'and where it was found is written down, so the library is searched once',
+  storedRef().objectId === renumberedTo,
+  `${renumberedTo} wanted, ${JSON.stringify(storedRef())}`,
+);
+
 console.log('\nSummon event from the background listener');
 const before = cepCalls.closeExtension;
 cep.emit('com.fxpremiere.event.trigger', { settings: false });
@@ -910,15 +1089,9 @@ await press('Escape');
 cep.emit('com.fxpremiere.event.trigger', { settings: false });
 await settle(20);
 await type('gaussian blur');
-const menuOn = (row) => {
-  const event = new window.MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 40, clientY: 60 });
-  row.dispatchEvent(event);
-};
 menuOn(rows()[0]);
 await settle(4);
-const menu = () => window.document.querySelector('.menu');
 check('right clicking a row opens a menu', Boolean(menu()), '');
-const favoriteItem = () => [...window.document.querySelectorAll('.menu__item')].find((node) => /number|numbered bar/i.test(node.textContent));
 check('the menu offers to put it on a number', /Put it on a number/.test(menu()?.textContent ?? ''), menu()?.textContent ?? '');
 favoriteItem().click();
 await settle(10);
@@ -950,24 +1123,141 @@ window.document.body.dispatchEvent(new window.MouseEvent('mousedown', { bubbles:
 await settle(4);
 check('clicking away closes the menu', !menu());
 
-// A preset the palette saved is a file the palette has to be able to throw away again.
+// A preset the palette saved is a file the palette owns, so its name is the palette's to change.
+// The id is a slug of that name, which is the whole difficulty: a rename moves the id, and the
+// number it sits on, the recents and the remembered copy all point at it by id.
+const renameField = () => window.document.querySelector('.menu .name-input');
 await type('my look');
 menuOn(rows()[0]);
 await settle(4);
-const deleteItem = () => [...window.document.querySelectorAll('.menu__item')].find((node) => /Delete this preset/.test(node.textContent));
+favoriteItem().click();
+await settle(10);
+await digit(2);
+await settle(10);
+check('the saved preset is on a number before it is renamed', savedSlots()[1] === 'captured:my-look', JSON.stringify(savedSlots()));
+menuOn(rows()[0]);
+await settle(4);
+check('a saved preset can be renamed from its own menu', Boolean(renameItem()), menu()?.textContent ?? '');
+renameItem().click();
+await settle(4);
+check('the menu becomes a field holding the name it has now', renameField()?.value === 'My Look', renameField()?.value ?? '(no field)');
+const closesBeforeRenameEscape = cepCalls.closeExtension;
+renameField().dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+await settle(10);
+check('Escape puts the menu away', !menu());
+check(
+  'and does not close the palette with it, the way Escape does everywhere else',
+  cepCalls.closeExtension === closesBeforeRenameEscape,
+  String(cepCalls.closeExtension),
+);
+check('so the name it had is still the name it has', rowNames().includes('My Look'), JSON.stringify(rowNames()));
+
+menuOn(rows()[0]);
+await settle(4);
+renameItem().click();
+await settle(4);
+// A digit in a name is a digit, not the favourite bar being fired behind the field.
+renameField().value = 'My Look 2';
+renameField().dispatchEvent(new window.KeyboardEvent('keydown', { key: '2', code: 'Digit2', bubbles: true, cancelable: true }));
+renameField().dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+await settle(20);
+const renamedFile = join(settingsDir, 'captured', 'my-look-2.fxpreset.json');
+check('Enter files it under the new name', existsSync(renamedFile));
+check('and the file it was under is gone', !existsSync(capturedFile));
+check(
+  'the preset inside carries the new name too',
+  (existsSync(renamedFile) ? JSON.parse(readFileSync(renamedFile, 'utf8')).name : '') === 'My Look 2',
+  existsSync(renamedFile) ? JSON.parse(readFileSync(renamedFile, 'utf8')).name : '(no file)',
+);
+check('the row shows what it is called now', rowNames().includes('My Look 2'), JSON.stringify(rowNames()));
+check('and says so', /My Look is now My Look 2/.test(toastText()), toastText());
+check('the number it answered to still reaches it', savedSlots()[1] === 'captured:my-look-2', JSON.stringify(savedSlots()));
+check('and the bar shows the new name on it', slotName(0, 1) === 'My Look 2', slotName(0, 1));
+check(
+  'the recents follow the rename rather than pointing at a file that is gone',
+  savedSettings().recents.includes('captured:my-look-2') && !savedSettings().recents.includes('captured:my-look'),
+  JSON.stringify(savedSettings().recents),
+);
+check(
+  'and so does the remembered copy the resting palette applies from',
+  savedSettings().remembered['captured:my-look-2']?.name === 'My Look 2',
+  JSON.stringify(Object.keys(savedSettings().remembered)),
+);
+check(
+  'the times it was used are still counted against it',
+  (savedSettings().usage['captured:my-look-2'] ?? 0) > 0,
+  JSON.stringify(savedSettings().usage),
+);
+// The digit is the bar's only while nothing is typed, so the query goes first.
+await type('');
+const appliedAfterRename = world.clips.clipB.componentList.length;
+await digit(2);
+await settle(20);
+check(
+  'and the number still applies it',
+  world.clips.clipB.componentList.length > appliedAfterRename,
+  `${appliedAfterRename} -> ${world.clips.clipB.componentList.length}`,
+);
+
+// Renaming one preset onto another's name would file both under the same slug, so the second write
+// would land on the first file. Refused rather than allowed to eat the preset underneath it.
+await type('');
+await press('i', { metaKey: true });
+await settle(20);
+nameField().value = 'Second Look';
+nameField().dispatchEvent(new window.Event('input', { bubbles: true }));
+await press('Enter');
+await settle(30);
+await type('second look');
+menuOn(rows()[0]);
+await settle(4);
+renameItem().click();
+await settle(4);
+renameField().value = 'My Look 2';
+renameField().dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+await settle(20);
+check('a name another preset already has is refused', /already a preset called My Look 2/.test(toastText()), toastText());
+check('the preset that had it is untouched', existsSync(renamedFile));
+check(
+  'and the one that asked keeps its own file',
+  existsSync(join(settingsDir, 'captured', 'second-look.fxpreset.json')),
+);
+
+// Premiere reads its preset library at launch and writes the whole file back out of memory when it
+// saves, so a name changed in that file behind its back is one Premiere never shows and drops at its
+// next save. The menu says where the name can be changed instead of offering to lose the change.
+await type('freshly saved');
+menuOn(rows()[0]);
+await settle(4);
+check('a preset Premiere owns is offered no rename', !renameItem(), menu()?.textContent ?? '');
+check('the menu says where its name can be changed', /Effects panel/.test(menu()?.textContent ?? ''), menu()?.textContent ?? '');
+check('effects Premiere owns cannot be deleted from here', !deleteItem(), menu()?.textContent ?? '');
+await type('gaussian blur');
+menuOn(rows()[0]);
+await settle(4);
+check(
+  'an effect gets no such line: nobody expects to rename one of those',
+  !/Effects panel/.test(menu()?.textContent ?? ''),
+  menu()?.textContent ?? '',
+);
+window.document.body.dispatchEvent(new window.MouseEvent('mousedown', { bubbles: true }));
+await settle(4);
+
+// A preset the palette saved is also a file the palette has to be able to throw away again.
+await type('my look 2');
+menuOn(rows()[0]);
+await settle(4);
 check('a saved preset can be deleted from its own menu', Boolean(deleteItem()), menu()?.textContent ?? '');
 deleteItem().click();
 await settle(20);
-check('the file behind it is gone', !existsSync(capturedFile));
-check('and so is the row', !rowNames().includes('My Look'), JSON.stringify(rowNames()));
+check('the file behind it is gone', !existsSync(renamedFile));
+check('and so is the row', !rowNames().includes('My Look 2'), JSON.stringify(rowNames()));
 check(
   'it does not linger in the recents either',
-  !savedSettings().recents.some((id) => /My Look/.test(id)),
+  !savedSettings().recents.some((id) => id.startsWith('captured:my-look')),
   JSON.stringify(savedSettings().recents),
 );
-menuOn(rows()[0] ?? window.document.body);
-await settle(4);
-check('effects Premiere owns cannot be deleted from here', !deleteItem(), menu()?.textContent ?? '');
+check('nor on the number it was on', savedSlots()[1] === null, JSON.stringify(savedSlots()));
 window.document.body.dispatchEvent(new window.MouseEvent('mousedown', { bubbles: true }));
 await settle(4);
 

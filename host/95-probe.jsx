@@ -1,10 +1,13 @@
 /**
  * Diagnostics for the one thing about a clip that Premiere will not say.
  *
- * A multicam clip is a sequence, so a nest rebuild would stack every angle on the timeline, and no
- * documented API says which angle was showing — which is why un-nesting refuses them. This dumps
- * everything a selected clip will admit to, so the refusal can be revisited on a machine with a real
- * multicam clip on the timeline instead of on a guess.
+ * Un-nesting a multicam brings every angle out and leaves the first one playing, because which angle
+ * was on air is in nothing that has been found: the documented DOM has `isMulticamClip` and nothing
+ * else, the UXP track item has nothing at all, and the QE DOM only writes it (`setMulticam`) or
+ * answers yes and no (`canDoMulticam`, `multicamEnabled`). The one place left is a parameter of a
+ * component on the clip, and that can only be looked at on a machine with a real multicam clip on the
+ * timeline. This dumps everything a selected clip will admit to, in one pass, so that one run either
+ * finds it or closes the question.
  */
 
 FXP.probeValue = function (param) {
@@ -24,6 +27,11 @@ FXP.probeValue = function (param) {
 /**
  * Names an active-angle query could plausibly hide behind, asked even when the object does not admit
  * to having them: a build that will not list what it has may still answer when asked directly.
+ *
+ * The last two are the multicam members a QE track item is known to have. Neither can be the angle by
+ * the sound of it, and only `canDoMulticam` reads as a question so only that one is called, but a
+ * report that lists them is a report that looked: the alternative is being asked again later whether
+ * the obvious names were tried.
  */
 FXP.MULTICAM_CANDIDATES = [
     'getMulticamAngle',
@@ -33,7 +41,9 @@ FXP.MULTICAM_CANDIDATES = [
     'videoAngle',
     'audioAngle',
     'getMultiCamSource',
-    'isMultiCamEnabled'
+    'isMultiCamEnabled',
+    'canDoMulticam',
+    'multicamEnabled'
 ];
 
 /**
@@ -105,6 +115,15 @@ FXP.probeCandidate = function (target, label, name) {
     return { name: label + '.' + name, value: String(value) };
 };
 
+FXP.probeText = function (target, name) {
+    try {
+        var value = target[name];
+        return value === undefined || value === null ? '' : String(value);
+    } catch (error) {
+        return '';
+    }
+};
+
 /** Everything one object will say about itself, onto `into`. */
 FXP.probeTarget = function (into, target, label) {
     if (!target) {
@@ -120,11 +139,86 @@ FXP.probeTarget = function (into, target, label) {
 };
 
 /**
+ * One entry of a QE component's parameter list, which is undocumented: `getParamValue` takes a name,
+ * so a list of names is what it is most likely to be, and an entry that is not a string is asked for
+ * its own name and value instead. Either shape is reported rather than assumed.
+ */
+FXP.probeQEParam = function (component, list, index) {
+    var entry = null;
+    try {
+        entry = list[index];
+    } catch (error) {
+        return { name: '#' + index, value: 'threw: ' + FXP.errorText(error) };
+    }
+    if (typeof entry !== 'string') {
+        return { name: FXP.probeText(entry, 'name') || '#' + index, value: FXP.probeValue(entry) };
+    }
+    try {
+        return { name: entry, value: FXP.json.stringify(component.getParamValue(entry)) };
+    } catch (error) {
+        return { name: entry, value: 'threw: ' + FXP.errorText(error) };
+    }
+};
+
+FXP.probeQEParams = function (component) {
+    var params = [];
+    var list = null;
+    try {
+        list = component.getParamList();
+    } catch (error) {
+        return params;
+    }
+    var count = 0;
+    try {
+        count = Number(list.length) || 0;
+    } catch (error) {
+        count = 0;
+    }
+    for (var p = 0; p < count; p++) {
+        params[params.length] = FXP.probeQEParam(component, list, p);
+    }
+    return params;
+};
+
+/**
+ * The components the QE DOM sees on a clip, which need not be the list the ordinary DOM offers: a
+ * multicam project item answers zero video components in the documented DOM, so the effects the
+ * application really has on a multicam clip are worth asking the other DOM about. This is the last
+ * place the active angle could be hiding.
+ */
+FXP.probeQEComponents = function (qeItem) {
+    var found = [];
+    var count = 0;
+    try {
+        count = Number(qeItem.numComponents) || 0;
+    } catch (error) {
+        return found;
+    }
+    for (var i = 0; i < count; i++) {
+        var component = null;
+        try {
+            component = qeItem.getComponentAt(i);
+        } catch (error) {
+            component = null;
+        }
+        if (!component) {
+            continue;
+        }
+        found[found.length] = {
+            matchName: FXP.probeText(component, 'matchName'),
+            name: FXP.probeText(component, 'name'),
+            params: FXP.probeQEParams(component)
+        };
+    }
+    return found;
+};
+
+/**
  * Dumps everything a selected clip, its project item and its QE item will say about themselves. It
- * exists because the active multicam angle is not in any documented API, and the only way to find out
- * whether it is reachable at all is to look on a machine with a real multicam clip on the timeline.
- * Everything is asked in one pass so that one run answers the question rather than starting a
- * conversation about which name to try next.
+ * exists because the active multicam angle is not in any API that has been found, and the only way to
+ * find out whether it is reachable at all is to look on a machine with a real multicam clip on the
+ * timeline. Everything is asked in one pass so that one run answers the question rather than starting
+ * a conversation about which name to try next.
  */
 FXP.probeMulticamClip = function () {
     var selection = FXP.requireSelection();
@@ -176,6 +270,7 @@ FXP.probeMulticamClip = function () {
         isSequence: FXP.itemIsSequence(projectItem),
         isMulticam: FXP.itemIsMulticam(projectItem),
         components: components,
+        qeComponents: FXP.probeQEComponents(entry.qeItem),
         candidates: candidates
     };
 };

@@ -130,6 +130,19 @@ FXP.compassExport = function (request) {
     if (output === '') {
         throw new Error('The export path is empty.');
     }
+    // Here and nowhere earlier. Media Encoder does not make the folder it is handed — a queue whose
+    // output directory is missing fails with "The output destination could not be found" — so the
+    // folder has to exist by the time this returns. It is made after everything that can refuse the
+    // export has had its say, because a folder made for an export that never happened is exactly the
+    // litter this whole change is about: pointing Premiere at a path is not a reason for one to exist.
+    var created = false;
+    var folder = new Folder(folderPath);
+    if (folderPath !== '' && !folder.exists) {
+        created = folder.create();
+        if (!created) {
+            throw new Error('The folder ' + folderPath + ' could not be created.');
+        }
+    }
     try {
         app.encoder.launchEncoder();
     } catch (error) {
@@ -144,5 +157,5 @@ FXP.compassExport = function (request) {
     if (!job || String(job) === '0') {
         throw new Error('Media Encoder did not accept the sequence. Check the preset and the path.');
     }
-    return { job: String(job), output: output };
+    return { job: String(job), output: output, created: created };
 };

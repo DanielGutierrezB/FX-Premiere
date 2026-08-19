@@ -17,6 +17,8 @@ interface BarHost {
   status(text: string, kind?: 'info' | 'ok'): void;
   /** The stars in the list follow the bar, so the list is redrawn whenever the bar changes. */
   changed(): void;
+  /** The same menu the rows open, on what a slot holds. Taking it off a number lives in there. */
+  menu(item: CatalogItem, at: { x: number; y: number }): void;
 }
 
 /**
@@ -103,6 +105,18 @@ export class FavoriteBar {
   }
 
   /**
+   * A renamed preset is the same preset under a new id, since its id is made out of its name. The
+   * number it answers to is muscle memory and has nothing to do with what it is called, so it stays.
+   */
+  renamed(from: string, to: string): void {
+    for (const row of this.host.settings().favoriteRows) {
+      row.slots = row.slots.map((held) => (held === from ? to : held));
+    }
+    this.ids = new Set(favoriteIds(this.host.settings()));
+    this.paint();
+  }
+
+  /**
    * Whether this key was the bar's, in which case the palette should not also see it. A number
    * lands here before it can mean anything else, but only while there is nothing typed: a query is
    * allowed to contain digits, and "Blur 1" has to be searchable.
@@ -180,6 +194,16 @@ export class FavoriteBar {
                 class: `slot${item ? '' : ' slot--empty'}`,
                 title: item ? item.name : 'Empty. Pick something, press Cmd/Ctrl+D, then this number.',
                 onclick: () => this.choose({ row: rowIndex, slot: slotIndex }),
+                oncontextmenu: (event: MouseEvent) => {
+                  event.preventDefault();
+                  // A slot whose id has no remembered copy under it is the same dead end as an empty
+                  // one: there is nothing to build a menu out of, so it answers in the line instead.
+                  if (!item) {
+                    this.nothingOn({ row: rowIndex, slot: slotIndex });
+                    return;
+                  }
+                  this.host.menu(item, { x: event.clientX, y: event.clientY });
+                },
               },
               [
                 el('span', { class: 'slot__key', text: String(slotIndex + 1) }),
@@ -239,10 +263,15 @@ export class FavoriteBar {
     const id = settings.favoriteRows[target.row]?.slots[target.slot] ?? null;
     const item = id === null ? undefined : settings.remembered[id];
     if (!item) {
-      this.host.status(`Nothing on ${target.slot + 1} yet. Pick something and press \u2318D.`);
+      this.nothingOn(target);
       return;
     }
     this.host.apply(item);
+  }
+
+  /** Said the same way whichever button asked, since either way the answer is the same one. */
+  private nothingOn(target: SlotTarget): void {
+    this.host.status(`Nothing on ${target.slot + 1} yet. Pick something and press \u2318D.`);
   }
 
   /** Fills a slot with what is being held, or empties it when that is already what is in it. */

@@ -24,6 +24,7 @@ const stage = mkdtempSync(join(tmpdir(), 'fxp-compass-'));
 
 const wild = await loadShared('shared/wildcards.ts', [
   'WILDCARDS',
+  'advisePath',
   'expandWildcards',
   'insertWildcard',
   'wildcardsAt',
@@ -248,7 +249,52 @@ console.log('\nInserting a wildcard where the caret is');
   const replaced = wild.insertWildcard('EXPORT/OLD', 7, 10, '#SEQ');
   check('a selection is replaced rather than pushed aside', replaced.value === 'EXPORT/#SEQ', replaced.value);
   const clamped = wild.insertWildcard('AB', 99, 99, '#DD');
-  check('a caret past the end is pulled back into range', clamped.value === 'AB#DD', clamped.value);
+  check('a caret past the end is pulled back into range', clamped.value === 'AB/#DD', clamped.value);
+
+  // A wildcard is a path segment, so picking one at the end of a folder name means a folder of its
+  // own. Everything somebody could have meant by writing them together is left alone.
+  const named = wild.insertWildcard('EXPORT', 6, 6, '#PRJ');
+  check('one picked after a folder name brings the separator it needs', named.value === 'EXPORT/#PRJ', named.value);
+  check('and the caret still lands past the lot', named.caret === 11, String(named.caret));
+  const dated = wild.insertWildcard('EXPORT/#YYYY', 12, 12, '#MM');
+  check('one picked after another is not split from it', dated.value === 'EXPORT/#YYYY#MM', dated.value);
+  const joined = wild.insertWildcard('render_', 7, 7, '#PRJ');
+  check('nor is a joining character somebody typed on purpose', joined.value === 'render_#PRJ', joined.value);
+  const first = wild.insertWildcard('', 0, 0, '#PRJ');
+  check('the start of a relative path needs none', first.value === '#PRJ', first.value);
+  const windows = wild.insertWildcard('C:\\Work', 7, 7, '#PRJ');
+  check('and the separator is the one the path is already written with', windows.value === 'C:\\Work\\#PRJ', windows.value);
+}
+
+// The other half of resolving a path: the ones that resolve perfectly well and still go somewhere
+// nobody wanted. A refusal stops an export, and this does not — it is a line of text by the field.
+console.log('\nPaths that resolve and are still wrong');
+{
+  const advise = (template, relative = true, extra = {}) =>
+    wild.advisePath({ template, relative, baseName: 'the Production folder', ...extra });
+  const missing = advise('Volumes/Extreme_SSD/Vikings/Project');
+  check('a full path with its leading / lost is spotted', /first \/ missing/.test(missing.text), missing.text);
+  check('and the fix puts the slash back and turns R off', missing.fix.template === '/Volumes/Extreme_SSD/Vikings/Project' && missing.fix.relative === false, JSON.stringify(missing.fix));
+  const full = advise('/Volumes/Extreme_SSD/EXPORT');
+  check('a full path with R on is spotted', /already a full path/.test(full.text), full.text);
+  check('and named as being added to the folder R points at', /the Production folder/.test(full.text), full.text);
+  check('with nothing to change but R', full.fix.template === '/Volumes/Extreme_SSD/EXPORT' && full.fix.relative === false, JSON.stringify(full.fix));
+  const drive = advise('D:\\Renders');
+  check('so is a Windows drive', /already a full path/.test(drive.text), drive.text);
+  const home = advise('~/Movies/EXPORT', true, { home: '/Users/dani' });
+  check('a ~ is not the home folder Premiere would make of it', /~ does not mean your home folder/.test(home.text), home.text);
+  check('and is offered the folder it stands for', home.fix.template === '/Users/dani/Movies/EXPORT', JSON.stringify(home.fix));
+  check('with nothing offered on a machine that will not say where home is', advise('~/EXPORT').fix === null);
+  const spaced = advise('EXPORT /#PRJ');
+  check('a space on the end of a folder name is part of the name on disk', /starts or ends with a space/.test(spaced.text), spaced.text);
+  check('and taking it out leaves the rest of the path alone', spaced.fix.template === 'EXPORT/#PRJ', spaced.fix.template);
+  const doubled = advise('EXPORT//#PRJ');
+  check('a doubled separator is nothing at all', /doubled separator/.test(doubled.text), doubled.text);
+  check('and is tidied to the one it resolves as', doubled.fix.template === 'EXPORT/#PRJ', doubled.fix.template);
+  check('a server share is not a doubled separator', advise('\\\\server\\share\\EXPORT', false) === null);
+  check('an ordinary relative path has nothing wrong with it', advise('EXPORT/#PRJ/#YYYY#MM#DD') === null);
+  check('nor has an ordinary absolute one', advise('/Volumes/Extreme_SSD/EXPORT', false) === null);
+  check('and an empty one is not something to complain about yet', advise('') === null);
 }
 
 // Typing is how a path gets written, so the wildcards have to be reachable from the keyboard: a `#`
@@ -489,31 +535,44 @@ console.log('\nWriting the export paths, and reading them straight back');
 console.log('\nThe Media Encoder fallback');
 {
   const { world, call } = fresh();
-  const queued = call({ op: 'compassExport', path: '/Users/me/EXPORT/', fileName: 'DrakeShip', preset: '/presets/h264.epr' });
+  // Not there yet, and that is the point: this is the one render Compass performs itself, so this is
+  // the one place allowed to bring a folder into being. Nothing before it — not pointing Premiere at
+  // the path, not opening the project, not changing sequence — is allowed to.
+  const exportFolder = join(stage, 'queued', '20220520') + '/';
+  const queued = call({ op: 'compassExport', path: exportFolder, fileName: 'DrakeShip', preset: '/presets/h264.epr' });
   check('the sequence is queued', queued.ok && queued.data.job === 'job-1', JSON.stringify(queued));
-  check('at the resolved path, joined to the file name', world.encodeCalls.at(-1).output === '/Users/me/EXPORT/DrakeShip', world.encodeCalls.at(-1).output);
+  check('at the resolved path, joined to the file name', world.encodeCalls.at(-1).output === `${exportFolder}DrakeShip`, world.encodeCalls.at(-1).output);
   check('with the chosen preset', world.encodeCalls.at(-1).preset === '/presets/h264.epr');
   check('for the whole sequence rather than the work area', world.encodeCalls.at(-1).workArea === 0, String(world.encodeCalls.at(-1).workArea));
   check('and the queue is started', world.encodeCalls.at(-1).start === 1, String(world.encodeCalls.at(-1).start));
   check('Media Encoder is launched first, since a queue with nothing listening goes nowhere', world.encoderLaunches > 0);
+  check('the folder the render needs is made here, missing parents and all', existsSync(exportFolder));
+  check('and it says it made it, so the panel can report it once', queued.data.created === true, JSON.stringify(queued.data));
 
-  const noPreset = call({ op: 'compassExport', path: '/Users/me/EXPORT/', fileName: 'A', preset: '' });
+  const again = call({ op: 'compassExport', path: exportFolder, fileName: 'DrakeShip', preset: '/presets/h264.epr' });
+  check('a second export into it makes nothing and claims nothing', again.ok && again.data.created === false, JSON.stringify(again.data));
+
+  const noPreset = call({ op: 'compassExport', path: join(stage, 'never') + '/', fileName: 'A', preset: '' });
   check('without a preset it refuses and says which setting is missing', !noPreset.ok && noPreset.error.includes('.epr'), noPreset.error);
-  check('and nothing was queued', world.encodeCalls.length === 1, String(world.encodeCalls.length));
+  check('and nothing was queued', world.encodeCalls.length === 2, String(world.encodeCalls.length));
+  // The folder is made after everything that can refuse the export has had its say, so an export
+  // that never happened leaves nothing behind.
+  check('nor was a folder made for the export that did not happen', !existsSync(join(stage, 'never')));
 }
 
 {
   const { world, call } = fresh();
   world.encodeJob = 0;
-  const refused = call({ op: 'compassExport', path: '/E/', fileName: 'A', preset: '/p.epr' });
+  const refused = call({ op: 'compassExport', path: join(stage, 'refused') + '/', fileName: 'A', preset: '/p.epr' });
   check('a queue Media Encoder would not take is reported as a failure', !refused.ok, JSON.stringify(refused));
 }
 
 {
   const { context: hostContext, call } = fresh();
   delete hostContext.app.encoder;
-  const missing = call({ op: 'compassExport', path: '/E/', fileName: 'A', preset: '/p.epr' });
+  const missing = call({ op: 'compassExport', path: join(stage, 'no-encoder') + '/', fileName: 'A', preset: '/p.epr' });
   check('a Premiere with no encoder API says so instead of throwing something unreadable', !missing.ok && missing.error.includes('app.encoder'), missing.error);
+  check('and a Premiere that cannot export makes no folder for one', !existsSync(join(stage, 'no-encoder')));
 }
 
 console.log('\nExporting twice to the same folder');

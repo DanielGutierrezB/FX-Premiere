@@ -118,6 +118,7 @@ export const LOCAL_COMMAND_PROBE_MULTICAM = 'local:probeMulticam';
 export const LOCAL_COMMAND_PASTE = 'local:paste';
 export const LOCAL_COMMAND_COMPASS = 'local:compass';
 export const LOCAL_COMMAND_COMPASS_EXPORT = 'local:compassExport';
+export const LOCAL_COMMAND_TOOLS = 'local:tools';
 
 export const STATIC_COMMANDS: CatalogItem[] = [
   {
@@ -220,6 +221,15 @@ export const STATIC_COMMANDS: CatalogItem[] = [
     group: 'FX Premiere',
     keywords: 'reindex rescan presets actualizar indice',
     commandId: LOCAL_COMMAND_REFRESH,
+  },
+  {
+    id: 'command:tools',
+    kind: 'command',
+    name: 'Tools',
+    group: 'FX Premiere \u00b7 \u2318/',
+    keywords:
+      'tools help ayuda herramientas what can this do what does this do que hace cada herramienta como se usa manual guide documentation atajos shortcuts',
+    commandId: LOCAL_COMMAND_TOOLS,
   },
   {
     id: 'command:settings',

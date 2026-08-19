@@ -10,12 +10,17 @@ import { FileStub, FolderStub, fileReads } from './mock-files.mjs';
 import {
   INTERPOLATION,
   TICKS_PER_SECOND,
+  CYAN,
   collection,
+  colorParam,
+  dropShadowComponent,
   keyframed,
+  keyframedColor,
   makeComponent,
   makeParam,
   motionComponent,
   opacityComponent,
+  packColor,
   time,
   transformComponent,
   withoutParamNames,
@@ -537,12 +542,45 @@ export const buildWorld = () => {
     clip,
     start: time(clip.start.seconds),
     end: time(clip.end.seconds),
+    /**
+     * The clip's effects as the QE DOM sees them: the same components through another door, which is
+     * the door the multicam probe knocks on because a multicam project item has been reported as
+     * answering no components at all through the ordinary one. A QE component hands back its parameter
+     * *names* and takes one back to give a value, which is the shape `getParamValue` implies.
+     */
+    get numComponents() {
+      return clip.componentList.length;
+    },
+    getComponentAt(index) {
+      const component = clip.componentList[Number(index)];
+      if (!component) {
+        throw new Error(`no component at ${index}`);
+      }
+      return {
+        matchName: component.matchName,
+        name: component.displayName,
+        getParamList: () => component.paramList.map((param) => param.displayName),
+        getParamValue: (name) => component.paramList.find((param) => param.displayName === name)?.getValue(),
+      };
+    },
+    /**
+     * The whole multicam surface a QE track item has: whether it could be one, and whether it is one.
+     * Neither says which angle is showing, and there is no third one — modelling them is what lets the
+     * probe's report be trusted to have asked instead of only having guessed at names.
+     */
+    canDoMulticam: () => Boolean(clip.projectItem && clip.projectItem.isMulticamClip()),
+    multicamEnabled: () => Boolean(clip.projectItem && clip.projectItem.isMulticamClip()),
+    // An effect arrives at its own defaults, and the shape of it is the effect's own. Only Drop
+    // Shadow is spelled out, because it is the one with a colour on it and a colour is the one
+    // parameter whose default has to be told apart from a value that was written.
     addVideoEffect(effect) {
       clip.componentList.push(
-        makeComponent(effect.matchName, effect.name, [
-          makeParam('Blurriness', 0),
-          makeParam('Repeat Edge Pixels', false),
-        ]),
+        effect.matchName === 'AE.ADBE Drop Shadow'
+          ? dropShadowComponent()
+          : makeComponent(effect.matchName, effect.name, [
+              makeParam('Blurriness', 0),
+              makeParam('Repeat Edge Pixels', false),
+            ]),
       );
       return true;
     },
@@ -955,11 +993,16 @@ export const createHost = ({ hostScript, documentsRoot, withoutQE = false }) => 
 };
 
 export {
+  CYAN,
   INTERPOLATION,
   TICKS_PER_SECOND,
+  colorParam,
+  dropShadowComponent,
   keyframed,
+  keyframedColor,
   makeComponent,
   makeParam,
+  packColor,
   time,
   transformComponent,
   withoutParamNames,

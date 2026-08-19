@@ -252,7 +252,8 @@ const startHelper = (): void => {
  * Compass follows whatever is open. Premiere exposes no event for "the active sequence changed"
  * that reaches an extension, so the only way to keep the export path in step with the project is to
  * ask. It is one small script call, and only when something is actually different does anything get
- * written: the answer is compared before the folders are made or the properties touched.
+ * written: the answer is compared before the properties are touched. Nothing here reaches the disk —
+ * a tick that finds a new sequence points Premiere at a folder, and does not create it.
  */
 const COMPASS_INTERVAL_MS = 4000;
 

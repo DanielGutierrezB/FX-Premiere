@@ -1,0 +1,41 @@
+/* The tools screen: one block per tool, read top to bottom instead of label and control. */
+
+.tool {
+  padding: 10px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.tool:last-child {
+  border-bottom: 0;
+}
+
+.tool__name {
+  font-size: calc(12.5px * var(--font-scale));
+}
+
+/*
+ * Wider than a field hint, which is sized for a sentence beside a control: here the sentence is the
+ * row, and a measure that stops at 340px would leave most of a 700px sheet empty. The cap is a
+ * reading measure rather than a fit, so long lines stay scannable in a window dragged wide.
+ */
+.tool__does {
+  margin: 3px 0 0;
+  max-width: 62ch;
+  color: var(--text-dim);
+  font-size: calc(11px * var(--font-scale));
+  line-height: 1.55;
+}
+
+.tool__how,
+.tool__keys {
+  margin-top: 3px;
+  color: var(--text-faint);
+  font-size: calc(10.5px * var(--font-scale));
+  line-height: 1.6;
+}
+
+/* The same mono key as the footer hints, so a key reads as a key wherever it is named. */
+.tool__key {
+  color: var(--text-dim);
+  font-family: var(--mono);
+}

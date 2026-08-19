@@ -18,6 +18,8 @@ const spans = (world, kind, index) =>
   world.tracks[kind][index].clipList.map((clip) => `${clip.name}@${clip.start.seconds}-${clip.end.seconds}`);
 const sources = (world, kind, index) =>
   world.tracks[kind][index].clipList.map((clip) => `${clip.name}:${clip.inPoint.seconds}-${clip.outPoint.seconds}`);
+const states = (world, kind, index) =>
+  world.tracks[kind][index].clipList.map((clip) => `${clip.name}:${clip.disabled ? 'off' : 'on'}`);
 const messages = (result) => (result.outcome?.messages ?? []).join(' | ');
 
 /**
@@ -83,7 +85,18 @@ export const hostUnnestTests = (fresh) => {
     world.addClip({ name: 'Multicam Source', start: 20, end: 24, projectItem: world.multicamItem });
     world.select('Multicam Source');
     const survey = call({ op: 'unnestSurvey', media: 'both' }).data;
-    check('a multicam clip is not a nest, so it is not surveyed as one', survey.nests === 0, JSON.stringify(survey));
+    check('a multicam clip is a nest for this, because its angles are what is inside it', survey.nests === 1, JSON.stringify(survey));
+    check(
+      'its angles are named, angle one first, so the dialog can say which one will be left playing',
+      survey.angles.join(',') === 'CAM A.mp4,CAM B.mp4,CAM C.mp4',
+      JSON.stringify(survey.angles),
+    );
+    const soundOnly = call({ op: 'unnestSurvey', media: 'audio' }).data;
+    check(
+      'and they are named whichever media was asked about, because the dialog asks once and then lets the answer change',
+      soundOnly.angles.length === 3,
+      JSON.stringify(soundOnly.angles),
+    );
 
     const holder = world.addSequence('Cam Nest', [
       { name: 'Multicam Source', start: 0, end: 4, track: 0, audio: false, item: world.multicamItem },
@@ -430,6 +443,70 @@ export const hostUnnestTests = (fresh) => {
       JSON.stringify(world.tracks.video.map((track) => track.clipList.map((clip) => clip.name))),
     );
     check('and the nest is still a nest', world.tracks.video[0].clipList.at(-1).disabled === false);
+  }
+
+  console.log('\nA multicam clip, whose angles all come out with one of them playing');
+  {
+    const { world, call } = fresh();
+    // A multicam with sound lands as two linked clips like any other nest, and one click selects
+    // both. Its own audio holds A1 across those four seconds, which is what sends the angles' sound
+    // to the tracks above rather than onto A1 beside it.
+    const cam = world.addClip({ name: 'Multicam Source', start: 20, end: 24, projectItem: world.multicamItem });
+    const camAudio = world.addClip({ name: 'Multicam Source', start: 20, end: 24, audio: true, projectItem: world.multicamItem });
+    world.select('Multicam Source');
+    const result = run(call);
+    check('the run rebuilds it rather than refusing it', result.ok && result.outcome.applied === 1, JSON.stringify(result));
+    check(
+      'every angle comes out, one to a track, angle one lowest',
+      [1, 2, 3].map((index) => names(world, 'video', index).join('')).join(',') === 'CAM A.mp4,CAM B.mp4,CAM C.mp4',
+      JSON.stringify([1, 2, 3].map((index) => names(world, 'video', index))),
+    );
+    check(
+      'angle one is the one left playing',
+      states(world, 'video', 1).join(',') === 'CAM A.mp4:on',
+      JSON.stringify(states(world, 'video', 1)),
+    );
+    check(
+      'and every other angle comes out switched off, so nothing hides the one that is playing',
+      states(world, 'video', 2).join(',') === 'CAM B.mp4:off' && states(world, 'video', 3).join(',') === 'CAM C.mp4:off',
+      JSON.stringify([2, 3].map((index) => states(world, 'video', index))),
+    );
+    check(
+      'the sound of the angle that stays playing plays with it',
+      states(world, 'audio', 1).join(',') === 'CAM A.mp4:on',
+      JSON.stringify(states(world, 'audio', 1)),
+    );
+    check(
+      'and the camera sound of a switched-off angle goes off with the angle',
+      states(world, 'audio', 2).join(',') === 'CAM B.mp4:off',
+      JSON.stringify(states(world, 'audio', 2)),
+    );
+    check(
+      'the outcome says how many angles came out and names the one that is playing',
+      /All 3 angles/.test(messages(result)) && /"CAM A.mp4" is the one left playing/.test(messages(result)),
+      messages(result),
+    );
+    check(
+      'and it says plainly that the angle on air is not something it could read',
+      /no API says which angle was on air/.test(messages(result)),
+      messages(result),
+    );
+    check('the multicam clip itself is retired', cam.disabled === true);
+    check('along with its audio half, whose sound the angles now carry', camAudio.disabled === true);
+  }
+
+  {
+    const { world, call } = fresh();
+    world.addClip({ name: 'Multicam Source', start: 20, end: 24, projectItem: world.multicamItem });
+    world.addClip({ name: 'Multicam Source', start: 20, end: 24, audio: true, projectItem: world.multicamItem });
+    world.select('Multicam Source');
+    const result = run(call, { media: 'audio' });
+    check(
+      'taking only the sound out of a multicam leaves every angle audible',
+      states(world, 'audio', 1).join(',') === 'CAM A.mp4:on' && states(world, 'audio', 2).join(',') === 'CAM B.mp4:on',
+      JSON.stringify([1, 2].map((index) => states(world, 'audio', index))),
+    );
+    check('and says nothing about angles, because no picture came out', !/angles/.test(messages(result)), messages(result));
   }
 
   console.log('\nA nest holding something that cannot be rebuilt');

@@ -241,6 +241,99 @@ const anchorFrom = (raw: unknown, base: AnchorOptions): AnchorOptions => {
   };
 };
 
+/**
+ * How the palette labels the bin a preset sits in. Held to `FXP.presetsFromFiles` in
+ * host/50-presets.jsx, which writes the label: for a preset remembered before the bin travelled
+ * beside the pointer, this is the only record of the bin left in the profile.
+ */
+const PRESET_GROUP = 'Preset';
+const PRESET_BIN_GROUP = `${PRESET_GROUP} \u00b7 `;
+
+/** The bin the row came out of, or null when the row was never labelled like a preset at all. */
+const binFromGroup = (group: string | undefined): string | null => {
+  if (group === PRESET_GROUP) {
+    return '';
+  }
+  return group?.startsWith(PRESET_BIN_GROUP) ? group.slice(PRESET_BIN_GROUP.length) : null;
+};
+
+/**
+ * The id a remembered preset answers to now, with its pointer repaired, or null when the copy says
+ * too little to work either of them out.
+ *
+ * A preset row used to be named after where it was found — the library file, and the ObjectID inside
+ * it — and Premiere writes its whole library out again on every save, numbering the objects afresh.
+ * So one preset could be sitting in a profile under several ids at once: two lines in the recents,
+ * two counters in the ranking, and a number pointing at whichever of them it was assigned from. A
+ * row is named after the preset now, by `FXP.presetRowId` in host/50-presets.jsx, and this builds
+ * the same string — the ids the host hands out and the ids a profile holds have to be one thing.
+ */
+const currentPreset = (item: CatalogItem): { id: string; item: CatalogItem } | null => {
+  const stored = item.preset;
+  const mediaType = stored?.mediaType ?? item.mediaType;
+  const path = stored?.path ?? binFromGroup(item.group);
+  if (!stored || !mediaType || path === null || item.name === '') {
+    return null;
+  }
+  const name = stored.name ?? item.name;
+  const id = `preset:${name}:${mediaType}${path === '' ? '' : `:${path}`}`;
+  // Those three are also what tells the host which preset a pointer meant once Premiere has moved
+  // it, and a pointer stored before that was understood carries none of them.
+  return { id, item: { ...item, id, preset: { ...stored, name, path, mediaType } } };
+};
+
+/**
+ * Moves a profile onto the ids presets answer to now. Where two of the old ids turn out to be the
+ * same preset they are brought together rather than one of them being dropped: the counts are added
+ * up, the recents keep one line, and the number it was assigned to first keeps it — which is the
+ * rule the bar itself follows, since one preset cannot sit on two numbers.
+ *
+ * An id with no remembered copy behind it is left alone. There is nothing in the profile that says
+ * which preset it was, and guessing wrong would put a stranger on the number.
+ */
+const withCurrentPresetIds = (settings: Settings): Settings => {
+  const moved = new Map<string, string>();
+  const remembered: Record<string, CatalogItem> = {};
+  for (const [id, stored] of Object.entries(settings.remembered)) {
+    const current = stored?.kind === 'preset' ? currentPreset(stored) : null;
+    if (current && current.id !== id) {
+      moved.set(id, current.id);
+    }
+    // Two ids for one preset kept a copy each, and either one describes it.
+    remembered[current?.id ?? id] ??= current?.item ?? stored;
+  }
+  if (moved.size === 0) {
+    return settings;
+  }
+  const now = (id: string): string => moved.get(id) ?? id;
+  const usage: Record<string, number> = {};
+  for (const [id, count] of Object.entries(settings.usage)) {
+    usage[now(id)] = (usage[now(id)] ?? 0) + count;
+  }
+  const listed = new Set<string>();
+  const recents: string[] = [];
+  for (const id of settings.recents) {
+    const current = now(id);
+    if (!listed.has(current)) {
+      listed.add(current);
+      recents.push(current);
+    }
+  }
+  const taken = new Set<string>();
+  const favoriteRows = settings.favoriteRows.map((row) => ({
+    ...row,
+    slots: row.slots.map((held) => {
+      const current = held === null ? null : now(held);
+      if (current === null || taken.has(current)) {
+        return null;
+      }
+      taken.add(current);
+      return current;
+    }),
+  }));
+  return { ...settings, favoriteRows, recents, remembered, usage };
+};
+
 const mergeSettings = (raw: Partial<Settings> | null): Settings => {
   const base = defaultSettings();
   if (!raw || typeof raw !== 'object') {
@@ -257,7 +350,7 @@ const mergeSettings = (raw: Partial<Settings> | null): Settings => {
   // slots would be a row with nothing to press.
   const listed = favoriteCount && favoriteCount > 0 ? favoriteCount : undefined;
   const slots = inRange(raw.favoriteSlots ?? listed, base.favoriteSlots, 1, MAX_FAVORITE_SLOTS);
-  return {
+  return withCurrentPresetIds({
     ...base,
     ...carried,
     hotkey: { ...base.hotkey, ...(raw.hotkey ?? {}) },
@@ -279,7 +372,7 @@ const mergeSettings = (raw: Partial<Settings> | null): Settings => {
     recentCount: inRange(raw.recentCount, base.recentCount, 0, 12),
     sizes: sizesFrom(raw),
     update: updateFrom(raw.update, base.update),
-  };
+  });
 };
 
 /**

@@ -201,6 +201,18 @@ console.log('\nThe multicam probe');
     /not called/.test(named('projectItem.deleteAsset()')) && removed === false,
     `${named('projectItem.deleteAsset()')} removed=${removed}`,
   );
+  // The QE DOM is asked the same question separately, because a multicam project item has been
+  // reported as answering no components at all through the ordinary one.
+  check(
+    'the QE DOM is asked for its own components, which need not be the same list',
+    probe.data?.qeComponents.some((entry) => entry.params.some((param) => param.name === 'Scale' && param.value === '100')),
+    JSON.stringify(probe.data?.qeComponents.map((entry) => entry.matchName)),
+  );
+  check(
+    'the QE DOM\u2019s own multicam names are on the record, so nobody has to ask whether they were tried',
+    named('qeItem.canDoMulticam()') === 'true' && /not called/.test(named('qeItem.multicamEnabled()')),
+    JSON.stringify(probe.data?.candidates.map((entry) => entry.name)),
+  );
 }
 
 console.log('\nThe ease curve');

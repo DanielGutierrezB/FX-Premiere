@@ -11,6 +11,18 @@ export const settingsDir = (): string => {
   return path.join(os.homedir(), 'Library', 'Application Support', 'FX Premiere');
 };
 
+/**
+ * This machine's home folder, or nothing on a host that will not say. Only for turning a `~`
+ * somebody typed into the path they meant: nothing here is stored under it.
+ */
+export const homeFolder = (): string => {
+  try {
+    return (nodeRequire()('os') as typeof import('os')).homedir();
+  } catch {
+    return '';
+  }
+};
+
 const inSettingsDir = (name: string): string => {
   const path = nodeRequire()('path') as typeof import('path');
   return path.join(settingsDir(), name);

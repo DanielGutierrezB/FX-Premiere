@@ -8,6 +8,26 @@
   overflow-y: auto;
 }
 
+/* Everything the master switch governs. Off, it reads as what it is: not in use, and not editable. */
+.compass__body--off {
+  opacity: 0.4;
+}
+
+.compass__body--off * {
+  cursor: default;
+}
+
+/* Which pair of paths is on screen, said once where the paths are rather than left to be worked out. */
+.compass__notice {
+  margin: 2px 0 10px;
+  padding: 7px 9px;
+  border-left: 2px solid var(--accent);
+  background: var(--accent-dim);
+  border-radius: 0 6px 6px 0;
+  color: var(--text-dim);
+  font-size: calc(10.5px * var(--font-scale));
+}
+
 .compass__path {
   border-left: 2px solid transparent;
   padding: 8px 0 8px 8px;
@@ -63,6 +83,70 @@ input[type="text"].compass__input {
   overflow-wrap: anywhere;
 }
 
+/* The reason there is no path to show is worth the same line the path would have used. */
+.compass__preview--bad {
+  font-family: var(--font);
+  color: var(--danger);
+}
+
+/* The part of the path R supplied, told apart from the part that was typed. */
+.compass__from {
+  color: var(--text-faint);
+}
+
+/* A path that resolves and still looks wrong: said next to the field, never in the way of using it. */
+.compass__warn {
+  display: none;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 5px;
+  padding: 6px 8px;
+  border-left: 2px solid var(--warn);
+  background: var(--warn-dim);
+  border-radius: 0 6px 6px 0;
+  color: var(--text-dim);
+  font-size: calc(10.5px * var(--font-scale));
+}
+
+.compass__warn--on {
+  display: flex;
+}
+
+/* Not a warning: a folder that does not exist yet is the normal state of a path with a date in it. */
+.compass__warn--quiet {
+  border-left-color: var(--border-strong);
+  background: none;
+  padding-left: 8px;
+  color: var(--text-faint);
+}
+
+.compass__fix {
+  appearance: none;
+  border: 1px solid var(--warn);
+  border-radius: 5px;
+  background: none;
+  padding: 2px 7px;
+  color: var(--warn);
+  font: inherit;
+  font-size: calc(10.5px * var(--font-scale));
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.compass__fix:hover:not(:disabled) {
+  background: var(--warn-dim);
+}
+
+/* Off screen, and only for as long as it takes to measure where the caret is across the field. */
+.compass__ruler {
+  position: absolute;
+  top: -9999px;
+  left: 0;
+  visibility: hidden;
+  white-space: pre;
+}
+
 /* Holds the list of wildcards under the field it belongs to, which is what it is positioned against. */
 .compass__field {
   position: relative;
@@ -78,6 +162,9 @@ input[type="text"].compass__input {
   top: calc(100% + 3px);
   left: 0;
   min-width: 240px;
+  /* The panel places it under the caret and keeps it inside the window; this is what holds if the
+     measurement it does that with is ever off, since a list half off the screen is unusable. */
+  max-width: calc(100vw - 20px);
   max-height: 190px;
   overflow-y: auto;
   padding: 4px;
@@ -129,6 +216,9 @@ input[type="text"].compass__input {
 }
 
 .compass__tip {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
   margin: 8px 0 14px;
   color: var(--text-faint);
   font-size: calc(10.5px * var(--font-scale));

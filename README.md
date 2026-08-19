@@ -22,7 +22,30 @@ Ctrl + Space  →  gsblr  →  Enter  →  Gaussian Blur en los 8 clips seleccio
   al final o a ambos extremos. Recuerda lo último que usaste. Opción de añadir además el
   crossfade de audio a los clips de audio seleccionados.
 - **Presets personalizados**: lee tus `.prfpset` (los del perfil de Premiere se detectan
-  solos) incluyendo presets con varios efectos, keyframes y colores.
+  solos) incluyendo presets con varios efectos, keyframes y colores. La lista es **la misma que ves
+  en el panel de Efectos**, ni más ni menos: cada archivo de esos es una biblioteca completa, y al
+  actualizar Premiere copia la tuya a la carpeta de la versión nueva y deja la vieja donde estaba
+  (más el perfil de antes de entrar a Creative Cloud, al lado del que se usa). Cuando borras un
+  preset en Premiere solo desaparece de la biblioteca que Premiere está escribiendo, así que leer
+  todas era mostrarte tus presets como estaban antes de que ordenaras nada. Se lee una sola: la de
+  esta versión que se guardó más recientemente, porque la biblioteca en uso es la que se guarda. Las
+  de versiones anteriores solo se leen cuando esta versión todavía no tiene ninguna, para que un
+  Premiere recién actualizado muestre lo que está por heredar. El log dice cuál eligió, y si te falta
+  alguna puedes añadir su carpeta a mano en los ajustes. Lo que la paleta **no** hace es renombrarte
+  esos presets: Premiere lee esa biblioteca al arrancar y la reescribe entera desde memoria cada vez
+  que guarda, así que un nombre cambiado en el archivo por detrás no aparecería en el panel de Efectos
+  hasta reiniciar y se perdería en cuanto Premiere volviera a guardar. El clic derecho te lo dice y te
+  manda al panel de Efectos, que es donde se renombran de verdad; como la paleta relee la biblioteca en
+  cada invocación, el nombre nuevo llega aquí solo. Llega, eso sí, como otro preset: cada preset se
+  identifica por su nombre, la carpeta en la que está y si es de video o de audio, que es lo único que
+  Premiere no te mueve por detrás —el sitio que ocupa dentro del archivo se renumera entero en cada
+  guardado, y la carpeta de la biblioteca cambia al actualizar Premiere—. Gracias a eso, un preset que
+  usas a diario conserva su ranura, su sitio en los recientes y su cuenta de uso por mucho que Premiere
+  reescriba la biblioteca; a cambio, si lo renombras en Premiere se queda sin número, porque para la
+  paleta (y para cualquiera que lo mire) ya es otro preset, y se lo vuelves a asignar con `Cmd/Ctrl + D`.
+  Los perfiles anteriores se migran al abrir: donde el mismo preset estaba guardado bajo dos
+  identidades viejas se juntan en una sola —las cuentas se suman y los recientes se quedan en una
+  línea— en vez de seguir compitiendo consigo mismo por subir en la lista.
 - **Motion y opacidad por texto**: escribe `scale 50`, `opacity 30`, `pos 960 540`,
   `rot 45`, `anchor 100 200`. Acepta valores relativos (`scale +10`) y porcentajes
   (`pos 50% 50%`), sin abrir Controles de efectos.
@@ -43,7 +66,12 @@ Ctrl + Space  →  gsblr  →  Enter  →  Gaussian Blur en los 8 clips seleccio
   **solo con la API de Premiere**: no pulsa teclas, no pide permisos del sistema y no depende de qué
   panel tiene el foco (ver [Cómo funciona desanidar](#cómo-funciona-desanidar)). Lo que una
   reconstrucción no puede llevar lo dice por su nombre y deja el nest como estaba: las transiciones
-  de dentro y los clips multicámara, porque no hay API que diga qué ángulo se estaba viendo.
+  de dentro y los clips multicámara que estén **dentro** de un nest. Un multicámara **seleccionado**
+  sí se desanida: salen todos sus ángulos, uno por pista, y **solo el ángulo 1 queda activo**; los
+  demás salen desactivados, con su sonido de cámara desactivado también. Antes de pulsar `Enter` te
+  dice cuántos ángulos son y cuál va a quedar sonando, y al terminar lo repite por su nombre, porque
+  **ninguna API dice qué ángulo se estaba viendo** y el único que lo sabe eres tú: si era otro,
+  actívalo y desactiva el ángulo 1.
   Opcionalmente entra en los nests que había dentro del nest, con un límite de profundidad.
 - **Suavizar keyframes (*Ease*)**: busca «ease», «suavizar» o «curvas» y las animaciones de los clips
   seleccionados dejan de ser rectas. Al invocarlo pide una sola cosa, la cantidad, con dos números al
@@ -82,18 +110,39 @@ Ctrl + Space  →  gsblr  →  Enter  →  Gaussian Blur en los 8 clips seleccio
   en tu carpeta de medios. El archivo queda además importado en su propio bin. La duración por defecto es la que
   Premiere use para imágenes fijas si se puede leer de sus preferencias; si no, la de los ajustes.
 - **Compass: rutas de exportación automáticas**: busca «compass» o «rutas de exportación» y sale el
-  panel con los dos caminos que Premiere recuerda —el de **Exportar medios** y el de **Exportar
-  fotograma**—. Cada uno acepta una ruta absoluta o una **relativa al proyecto** (a la carpeta de la
-  Production cuando el proyecto pertenece a una), y admite los comodines
-  `#PROD #PRJ #SEQ #BIN #YYYY #YY #MM #DD #hh #mm`, que se insertan **donde tengas el cursor** con
-  un clic. Lo que un comodín devuelve es siempre **una sola carpeta**: una secuencia llamada
+  panel con los dos caminos que Premiere recuerda: **Export Path** (el de *Exportar medios*) y
+  **Export Frame Path** (el del botón de fotograma del monitor). Arriba del todo, un interruptor,
+  *Steer Premiere's export paths*, que manda sobre todo lo demás: apagado, la pantalla entera queda en
+  gris y no se puede tocar, porque una ruta escrita con cuidado en un Compass apagado no la lee nadie.
+  Cada camino acepta una ruta absoluta o una **relativa al proyecto** (a la carpeta de la
+  Production cuando el proyecto pertenece a una): eso es lo que hace el botón **R**, y la pantalla
+  lo dice con todas las letras en vez de dejarlo a un hover. Admite los comodines
+  `#PROD #PRJ #SEQ #BIN #YYYY #YY #MM #DD #hh #mm`, que **se ofrecen solos al entrar en el campo**
+  —no hay que saber que existen— y se insertan **donde tengas el cursor** con un clic; escribir
+  filtra la lista, Esc la cierra, y Enter y Tab siguen siendo Enter y Tab hasta que señalas uno con
+  las flechas. Al insertarlo se escribe **la barra que falte**, porque un comodín es una carpeta
+  entera: `EXPORT` + `#PRJ` es `EXPORT/#PRJ`, mientras que `#YYYY#MM#DD` se queda como está, que es
+  una sola carpeta a propósito. Lo que un comodín devuelve es siempre **una sola carpeta**: una secuencia llamada
   `01/02 - rough` produce `01-02 - rough` y no dos niveles, y una barra o unos puntos suspensivos en
   un nombre no pueden sacar la exportación de la carpeta que elegiste. Si un comodín que usas no tiene
   valor —pides `#SEQ` sin secuencia abierta— la ruta se rechaza con un mensaje en vez de quedarse
-  coja. Debajo hay una vista previa en vivo de la ruta que producen, así que ves lo que vas a
-  obtener antes de guardar. Las carpetas que falten se crean. Puedes fijar una ruta distinta **solo
-  para el proyecto abierto** sin tocar la general, y la extensión invisible recalcula y reescribe la
-  ruta sola cada vez que cambias de secuencia o de proyecto, con la paleta cerrada. Si tu versión de
+  coja. Debajo hay una vista previa en vivo de la ruta que producen, con **la parte que pone R en
+  gris** y la que escribiste tú en claro, así que ves lo que vas a obtener antes de guardar. Y
+  cuando una ruta resuelve pero **no es la que querías**, la fila lo dice y ofrece el arreglo: una
+  ruta completa a la que le falta la primera barra con R encendido —el caso de
+  `Volumes/Extreme_SSD/…`, que acaba colgando del proyecto—, una unidad de Windows o un `~` en las
+  mismas, una carpeta que termina en espacio o una barra doblada. **Una carpeta que todavía no
+  existe no se crea por apuntar ahí**: la fila te lo dice —*This folder is not on disk yet*— y la
+  carpeta nace con la primera exportación que caiga dentro, que es cuando de verdad hace falta.
+  Apuntar ocurre al abrir cada proyecto y al cambiar de secuencia, así que crearla entonces
+  significaba una carpeta vacía por proyecto y por día para quien solo estaba abriendo su trabajo.
+  Si la prefieres hecha ya, el botón **Create it now** de la propia fila la hace. Justo bajo el interruptor está
+  **This project only**: al encenderlo, los dos campos **se vacían** para que digas a dónde va este
+  proyecto —el sentido de tenerlo es que va a otro sitio— y un aviso en la propia pantalla dice de
+  quién son las rutas que estás viendo. Al apagarlo vuelven las generales, y **las dos parejas se
+  guardan**: encenderlo otra vez trae de vuelta la del proyecto sin volver a escribirla. Y la
+  extensión invisible recalcula y reescribe la ruta sola cada vez que cambias de secuencia o de
+  proyecto, con la paleta cerrada. Si tu versión de
   Premiere no acepta que un script le escriba esas preferencias, la paleta **lo dice** en vez de
   fingir que funcionó y te deja el camino que sí funciona siempre: *Export via Compass*, que encola
   la secuencia en Media Encoder ya apuntando a la ruta resuelta (ver
@@ -111,14 +160,36 @@ Ctrl + Space  →  gsblr  →  Enter  →  Gaussian Blur en los 8 clips seleccio
 - **Crear un preset a partir de un clip**: `Cmd/Ctrl + I`, o buscando *Create Preset from Clip*,
   lista lo que el clip seleccionado tiene puesto (con cuántos parámetros y cuántos tienen
   keyframes), le pones nombre y queda como preset propio, buscable al instante y reaplicable con
-  los mismos valores y keyframes. Puedes incluir o excluir Motion y Opacidad.
+  los mismos valores y keyframes. Puedes incluir o excluir Motion y Opacidad. Esos sí son tuyos, así
+  que al clic derecho ofrecen **renombrarlos** y borrarlos: el menú se convierte en un campo con el
+  nombre que tienen, escribes el nuevo y `Enter`. El archivo se llama como el preset, y su identidad
+  sale de ahí, de modo que renombrar lo mueve todo con él — el número de la barra en el que estuviera,
+  su sitio en los recientes y la copia que la paleta guarda para aplicarlo sin índice — en vez de
+  dejarte una ranura apuntando a un archivo que ya no existe. Si el nombre ya lo tiene otro preset
+  tuyo se rechaza y te lo dice, porque escribirlo significaría escribir encima de ese otro.
 - Los comandos propios de la paleta se encuentran por varios nombres, en inglés y en español:
   *guardar preset*, *deshacer*, *ajustes* llegan al mismo sitio que sus nombres en inglés.
+- **Tools: qué hace cada herramienta**: `Cmd/Ctrl + /`, el botón *tools* de la línea de abajo o
+  buscar «tools», «ayuda» o directamente qué puede hacer esto abre una pantalla con **todas** las
+  herramientas de la paleta —Compass, suavizar, desanidar, el ancla, el pegado, los presets, los
+  comandos de edición, el motion escrito— y de cada una: una línea de qué hace, cómo se llega a ella
+  y las teclas a las que responde su propio diálogo. Está para leerse y no para operarla: hace
+  scroll, `Esc` vuelve y sigue siendo legible en la ventana más estrecha. Dice también lo que una
+  herramienta **no** puede hacer —el nest con un multicámara dentro, la preferencia de exportación
+  que tu Premiere puede rechazar, el deshacer que cuesta una pulsación por keyframe— porque eso es lo
+  que conviene saber antes de usarla y no a mitad.
 - **Asignar una ranura**: con el elemento seleccionado, `Cmd/Ctrl + D` y después el número que
   quieras (con los modificadores de la fila si es otra fila). Pulsar la ranura que ya lo tiene lo
   quita, y `Esc` sale sin asignar nada. El clic derecho de cualquier fila hace lo mismo, y si el
-  elemento ya está en la barra ofrece quitarlo de una vez. En los ajustes eliges cuántas ranuras
-  tiene cada fila, añades o quitas filas y grabas la combinación de cada una.
+  elemento ya está en la barra ofrece quitarlo de una vez. **Y el clic derecho sobre la ranura misma
+  abre ese mismo menú** para lo que tenga puesto: quitarlo del número, aplicarlo, y renombrarlo o
+  borrarlo si es un preset tuyo. Es el sitio donde estás mirando cuando quieres sacar algo de la
+  barra, así que es donde se pregunta. En una ranura vacía no abre un menú sin nada dentro: la línea
+  de abajo dice qué le falta a ese número. Lo que ya no sale por ninguna parte de la paleta es el
+  menú del navegador que Premiere trae debajo (Atrás, Recargar, Ver código fuente), que aparecía
+  justo encima de la barra y nunca era respuesta a nada; en los campos de texto sí se queda, porque
+  ahí cortar, copiar y pegar sí sirven. En los ajustes eliges cuántas ranuras tiene cada fila, añades
+  o quitas filas y grabas la combinación de cada una.
 - **Interfaz desnuda a propósito**: el campo y la lista, nada más. La fila seleccionada se marca
   con una barra celeste, sin rellenos, y la línea de abajo solo aparece cuando tiene algo que
   decir: los atajos y a cuántos clips va Enter mientras no escribes, o cómo salió lo último que
@@ -143,7 +214,10 @@ Ctrl + Space  →  gsblr  →  Enter  →  Gaussian Blur en los 8 clips seleccio
   «no ha cambiado nada» sin abrir un solo archivo en vez de volver a parsear el XML de tu perfil
   (que con presets acumulados pesa megas). Al despertar pregunta lo mínimo al host, lee tus presets
   guardados por detrás del primer pintado y el CSS viaja dentro del propio HTML. Si guardas un
-  preset nuevo en Premiere, el sello cambia y aparece en la siguiente apertura, sin reindexar.
+  preset nuevo en Premiere, el sello cambia y aparece **en la siguiente invocación**, sin reindexar:
+  la pregunta se hace en cada invocación, no solo al arrancar la página, porque con la paleta viva en
+  memoria esa página puede ser la misma toda la tarde. Lo único que la paleta no puede adivinar es un
+  preset que Premiere todavía no ha escrito en disco; en cuanto lo escribe, está ahí.
 - **Deshacer** desde la paleta con `Cmd/Ctrl + Z`.
 - **Ranking por uso**: lo que más usas sube solo, y lo que está en la barra sube antes que nada.
 - **Atajo configurable** desde los ajustes del panel (por defecto `Ctrl + Space`).
@@ -225,6 +299,7 @@ iscc /DAppVersion=$(node -p "require('./package.json').version") scripts\install
 | `Cmd/Ctrl + Z` | deshacer el último cambio |
 | `Cmd/Ctrl + R` | reindexar efectos |
 | `Cmd/Ctrl + ,` | ajustes |
+| `Cmd/Ctrl + /` | la pantalla *Tools*: qué hace cada herramienta y cómo se usa |
 | `Esc` | cerrar (o volver atrás desde un diálogo) |
 
 En el diálogo de transición `↑` `↓` cambian la duración de frame en frame (`Shift` de cinco
@@ -332,8 +407,9 @@ Reconstruir significa esto, y **nada se escribe hasta que el plan entero está h
    reproduciendo de verdad (un nest recortado empieza más adentro), con su pista, su tiempo, el trozo
    de origen que muestra, su velocidad, si estaba desactivado y **los efectos y keyframes que lleva**.
 2. Lo que una reconstrucción no puede llevar se rechaza **por su nombre y antes de tocar nada**: un
-   clip multicámara (no hay API que diga qué ángulo se veía), una transición (no hay API que cree una),
-   un clip que Premiere no describe, o un nest retimado.
+   clip multicámara que aparece *dentro* del nest (se volvería a colocar como multicámara, y una
+   colocación nueva sale con el ángulo que Premiere decida, no con el que estaba cortado), una
+   transición (no hay API que cree una), un clip que Premiere no describe, o un nest retimado.
 3. Se reservan las pistas que hacen falta, del tipo que pediste, sobre lo que ya hay, y se comprueba
    que estén libres justo en el hueco donde va cada clip.
 4. Cada clip se coloca apuntando su elemento de proyecto al trozo de origen que mostraba y
@@ -346,6 +422,19 @@ Reconstruir significa esto, y **nada se escribe hasta que el plan entero está h
 6. Encima del clip colocado se vuelven a escribir los efectos leídos en el paso 1, anclados a su punto
    de entrada para que los keyframes caigan donde estaban.
 7. Se retira el nest según lo que digan los ajustes, y los clips nuevos quedan seleccionados.
+
+Un multicámara es una secuencia cuyas pistas de video son sus ángulos, así que reconstruirlo los saca
+todos de golpe y todos sonando, con el de arriba tapando al resto. **Cuál estaba en el aire no se
+puede leer.** `isMulticamClip()` es el único miembro multicámara del DOM documentado; el `TrackItem`
+de UXP no tiene ninguno; y lo que ofrece el QE DOM es o una escritura (`setMulticam`) o un sí o un no
+(`canDoMulticam`, `multicamEnabled`) — la respuesta de Adobe, por escrito, es que no hay APIs de
+multicámara y no va a haberlas. Así que el ángulo que se queda activo es el **1** (la pista de video
+de abajo de la secuencia, que es el orden con el que el monitor multicámara numera las teclas `1`..`9`),
+los demás salen desactivados, y el sonido de cámara de un ángulo desactivado se desactiva con él:
+todas las cámaras sonando a la vez no es lo que sonaba el multicámara. La paleta lo dice dos veces —en
+el diálogo, con el nombre del ángulo que va a quedar, y al terminar— para que nadie se quede creyendo
+que se conservó su corte. Un multicámara **dentro** de un nest sigue rechazado: ahí no hay ángulos que
+sacar, se volvería a colocar como multicámara y saldría con el ángulo que Premiere decida.
 
 Si algo falla a mitad de un nest, **se quita todo lo que ese nest había puesto** y el nest se queda
 como estaba, con el motivo dicho por su nombre. Los nests que quedaban en la cola siguen: uno que no
@@ -402,9 +491,13 @@ el diálogo la lea**. Escribir la preferencia es lo que puede influir en el diá
 medios*, la pestaña *Exportar*, *Exportación rápida* y la cola de Media Encoder, porque los cuatro
 parten de esa misma carpeta recordada, pero eso solo se confirma exportando de verdad en un Premiere
 abierto. Lo que sí es seguro de punta a punta es el otro camino: **Export via Compass** resuelve los
-comodines, crea las carpetas y encola la secuencia con `app.encoder.encodeSequence` **en esa ruta
-exacta**, sin depender de ninguna preferencia. Si has configurado un `.epr` en el panel, lo usa; si
-no, deja que Media Encoder aplique el suyo.
+comodines, crea la carpeta si falta —justo ahí, porque Media Encoder no la crea: una cola cuya
+carpeta de salida no existe falla con *The output destination could not be found*— y encola la
+secuencia con `app.encoder.encodeSequence` **en esa ruta exacta**, sin depender de ninguna
+preferencia. Y solo si el encolado sale adelante: una exportación rechazada por falta de `.epr` o de
+secuencia no deja carpetas detrás. Si has puesto un `.epr` en el campo *Export settings*
+del panel —el ajuste preestablecido que guarda la ventana de exportación de Premiere— lo usa; si no,
+deja que Media Encoder aplique el suyo.
 
 ### Estructura
 
@@ -472,8 +565,9 @@ cuesta abrir la paleta en un Premiere de verdad, y no en el navegador de las pru
   orden, el recorte del nest —que cada clip salga mostrando el trozo de origen que mostraba, no el
   principio—, los efectos y keyframes que viajan con cada clip, un clip retimado, video/audio/ambos
   —incluido que sacar solo audio no toque ni una pista de video y al contrario—, los nests dentro de
-  nests con su límite, y las tres formas de quedarse como estaba: un multicámara dentro, un Premiere
-  que no sabe poner una velocidad y uno que no sabe quitar una pista.
+  nests con su límite, un multicámara del que salen los tres ángulos con uno solo activo y el sonido
+  de cámara de los otros desactivado, y las tres formas de quedarse como estaba: un multicámara
+  dentro, un Premiere que no sabe poner una velocidad y uno que no sabe quitar una pista.
 - `scripts/lib/host-unnest-guards.mjs` es lo que Premiere no cuenta y hay que comprobar después: una
   colocación que aterriza una pista más arriba de la que se le dijo, una que sobrescribe algo tuyo,
   una selección que cambió desde que el diálogo la contó, un Premiere que añade las pistas nuevas por
@@ -482,8 +576,9 @@ cuesta abrir la paleta en un Premiere de verdad, y no en el navegador de las pru
   puesto ya no está.
 - `scripts/lib/panel-unnest.mjs` hace lo propio desde el panel real: que el comando se encuentre en
   los dos idiomas, el diálogo con su aviso de qué hay dentro y de qué deshace `Cmd+Z`, una vuelta
-  completa comprobando que la elección llega al host y se recuerda, y un nest que el host rechaza
-  (un multicámara dentro) que tiene que volver al pie de la paleta explicado.
+  completa comprobando que la elección llega al host y se recuerda, el aviso de los ángulos de un
+  multicámara —que dice cuál queda sonando y desaparece si solo sacas el audio— y un nest que el host
+  rechaza (un multicámara dentro) que tiene que volver al pie de la paleta explicado.
 - `scripts/test-panel.mjs` arranca el panel real dentro de jsdom conectado a ese mismo host
   simulado, así que el flujo completo de teclado (invocar, escribir, ↑/↓, Enter, diálogo de
   transición, ajustes, grabar atajo) se prueba de punta a punta. Los diálogos de 1.6.0 entran ahí:
@@ -492,7 +587,10 @@ cuesta abrir la paleta en un Premiere de verdad, y no en el navegador de las pru
   para comprobar que la caja del alpha sale exacta y que un archivo que no se puede leer cae al frame
   completo diciéndolo. Los de 1.6.x también: el de pegar, con un portapapeles falso que puede estar
   vacío o traer una imagen sin alpha, y el panel de Compass, donde un clic en un comodín tiene que
-  insertarlo **donde estaba el cursor** y la vista previa seguirlo.
+  insertarlo **donde estaba el cursor** y la vista previa seguirlo. Y la pantalla de *Tools*, que no
+  se comprueba a mano: la prueba carga la lista de comandos de la paleta y exige que cada uno tenga
+  su entrada en la pantalla, así que una herramienta nueva sin explicar rompe `npm test` en vez de
+  quedarse sin documentar.
 - `scripts/test-compass.mjs` prueba el motor de comodines contra **el ejemplo de la documentación de
   Compass**: la secuencia *DrakeShip* dentro de *Vikings.prproj* a las 15:30 del 20 de mayo de 2022
   tiene que producir `/Users/Dropbox/EXPORT/20220520/Vikings/DrakeShip_1530` y no otra cosa. Y
@@ -504,7 +602,8 @@ cuesta abrir la paleta en un Premiere de verdad, y no en el navegador de las pru
   queda con su valor. Y que el valor de un comodín no pueda convertirse en estructura de carpetas:
   una secuencia llamada `../../Desktop` o `S01/E02` produce **una** carpeta con ese nombre saneado, y
   un comodín sin valor rechaza la ruta entera. Cierra con el respaldo del encoder, con y sin preset,
-  incluido que dos exportaciones seguidas al mismo sitio no se pisen.
+  incluido que dos exportaciones seguidas al mismo sitio no se pisen y **quién crea la carpeta y
+  cuándo**: la exportación que sale adelante la hace una sola vez, la que se rechaza no hace ninguna.
 - `scripts/test-alpha.mjs` prueba el lector de PNG con archivos reales generados en el momento: un
   PNG de paleta con `tRNS`, uno con canal alpha, uno sin transparencia ninguna, uno entrelazado y uno
   truncado, y comprueba que la caja sea la correcta, que un alpha demasiado tenue no cuente como
@@ -584,19 +683,31 @@ Dos herramientas que no son pruebas y por eso no están en `npm test`:
   curvas de Lumetri) pueden quedar en su valor por defecto. Si un parámetro del preset no
   existe con ese nombre en tu versión del efecto, se salta y se te informa, en vez de escribirlo
   en el parámetro que estuviera en esa posición.
+- Premiere tiene todos tus presets en un único archivo que reescribe entero cada vez que guarda, y
+  al reescribirlo reparte identificadores nuevos: el número con el que quedó guardado un favorito
+  deja de señalar a lo mismo en cuanto creas o borras un preset. Por eso de un preset se guarda
+  **su nombre, la carpeta en la que está y si es de vídeo o de audio**, que es lo que tú reconoces
+  en la fila; el identificador es solo dónde estaba la última vez. Si ya no cuadra, el preset se
+  busca por ahí, se aplica el que era y queda anotado dónde está ahora, así que la búsqueda se hace
+  una vez. Si en esa posición hay otro preset distinto, no se aplica: aplicar el equivocado sin
+  decir nada es lo único peor que no aplicar nada. Y si lo borraste o lo renombraste en Premiere, se
+  te dice por su nombre en vez de darte la ruta de un archivo.
 - Los presets capturados de un clip guardan el valor de cada parámetro tal como estaba en ese
   momento. Si el clip tenía dos veces el mismo efecto, el preset también.
 - **Desanidar no pide nada al sistema operativo y no necesita el ayudante nativo**: reconstruye con la
   API de Premiere (ver [Cómo funciona desanidar](#cómo-funciona-desanidar)). El precio de eso es lo que
   una reconstrucción no puede llevar, y lo dice por su nombre antes de tocar nada: **las transiciones
-  de dentro del nest** (ningún script crea una) y **los clips multicámara**.
-- **Un clip multicámara no es un nest para esto.** Seleccionarlo y desanidar no hace nada: abrirlo
-  sacaría los ángulos apilados, que no es lo que quiere nadie. Y un multicámara **dentro** de un nest
-  hace que ese nest se rechace entero, porque ningún script puede *preguntar* cuál es el ángulo activo
-  (la petición de Adobe DVAPR-4207094 sigue abierta) y sacar el ángulo equivocado sería peor que no
-  sacar nada; el aviso del diálogo los cuenta para que lo sepas antes de pulsar `Enter`. Si tienes un
-  multicámara a mano, busca *Probe Multicam Clip* con ese clip seleccionado y escribe un
-  `multicam-probe.txt` junto a los ajustes con todo lo que Premiere expone de él.
+  de dentro del nest** (ningún script crea una) y **los multicámara que estén dentro de un nest**.
+- **De un multicámara salen todos los ángulos, y el que queda activo es el 1.** Ningún script puede
+  *preguntar* cuál era el ángulo en el aire (la petición de Adobe DVAPR-4207094 sigue abierta), así que
+  la paleta no lo adivina: saca los ángulos apilados, uno por pista, deja sonando el 1 y desactiva los
+  demás con su sonido de cámara, y te dice —antes de pulsar `Enter` y otra vez al terminar— cuál dejó y
+  que ese dato no lo da Premiere. Un multicámara **dentro** de un nest sí hace que ese nest se rechace
+  entero, porque volvería a colocarse como multicámara y saldría con el ángulo que Premiere decida; el
+  aviso del diálogo los cuenta para que lo sepas antes de pulsar `Enter`. Si tienes un multicámara a
+  mano y quieres comprobar si en tu versión hay algo que no vimos, busca *Probe Multicam Clip* con ese
+  clip seleccionado: escribe un `multicam-probe.txt` junto a los ajustes con todo lo que Premiere
+  expone de él, componentes y parámetros del DOM normal y del QE incluidos.
 - Desanidar necesita que la secuencia del nest esté en el proyecto (siempre lo está) y la localiza
   comparando `nodeId`. Un nest cuyo `nodeId` no coincida con ninguna secuencia se salta con un
   mensaje en vez de colocar algo a medias.

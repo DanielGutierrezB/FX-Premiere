@@ -8,8 +8,8 @@
  * so they can be written again onto the clip that lands.
  *
  * Nothing here writes: a plan that cannot be built completely is refused with a reason before a
- * single track is reserved. What the plan cannot express is refused by name — a multicam angle
- * nobody can read, a transition that is not a clip, a clip whose project item Premiere will not say.
+ * single track is reserved. What the plan cannot express is refused by name — a transition that is
+ * not a clip, a multicam buried inside a nest, a clip whose project item Premiere will not say.
  */
 
 /** A nest holding more than this is refused: past it the run is slower than doing it by hand. */
@@ -42,6 +42,10 @@ FXP.unnestPieceOf = function (clip, mediaType, trackIndex, window, entry) {
     if (!item) {
         return { error: 'Premiere would not say what "' + name + '" inside it is made of' };
     }
+    // A multicam clip that the editor selected is un-nested into its angles, one of them left
+    // playing. A multicam clip found *inside* a nest cannot be: it would be placed as a multicam
+    // clip again, and a fresh placement comes out on whatever angle Premiere starts it on rather
+    // than the angle this one was cut to. So the nest holding it is refused whole.
     if (FXP.itemIsMulticam(item)) {
         return {
             error: '"' + name + '" is a multicam clip, and no API says which angle is showing, ' +
@@ -125,6 +129,58 @@ FXP.unnestPairUp = function (pieces) {
 };
 
 /**
+ * Switches off every angle of a multicam but the first, and says which one that was.
+ *
+ * A multicam clip is a sequence whose video tracks are its angles, so a rebuild lands all of them at
+ * once and they would all be playing, the top one hiding the rest. Which angle was on air is not
+ * readable: `isMulticamClip` is the only multicam member of the documented DOM, the UXP track item has
+ * none at all, and everything the QE DOM offers is either a write (`setMulticam`) or a yes or no
+ * (`canDoMulticam`, `multicamEnabled`) — Adobe's answer on the record is that there are no multicam
+ * scripting APIs and there will not be any. So the angle that stays playing is angle one, and the run
+ * names it rather than letting an editor believe their cut came out intact.
+ *
+ * The sound that came in with a switched-off angle goes off with it: every camera's own audio playing
+ * at once is not what the multicam sounded like.
+ */
+FXP.unnestKeepFirstAngle = function (pieces) {
+    var tracks = [];
+    var first = null;
+    var i;
+    var piece;
+    // Angle one is the lowest video track that has an angle on it, which need not be the sequence's
+    // own first track: a nest is read for the part of it that is playing, so a track holding nothing
+    // across that part contributes no piece to look at.
+    for (i = 0; i < pieces.length; i++) {
+        piece = pieces[i];
+        if (piece.mediaType !== 'video') {
+            continue;
+        }
+        if (!FXP.contains(tracks, piece.trackOffset)) {
+            tracks[tracks.length] = piece.trackOffset;
+        }
+        if (first === null || piece.trackOffset < first) {
+            first = piece.trackOffset;
+        }
+    }
+    var kept = '';
+    for (i = 0; i < pieces.length; i++) {
+        piece = pieces[i];
+        if (piece.mediaType !== 'video') {
+            continue;
+        }
+        if (piece.trackOffset === first) {
+            kept = kept === '' ? piece.name : kept;
+            continue;
+        }
+        piece.disabled = true;
+        if (piece.partner) {
+            piece.partner.disabled = true;
+        }
+    }
+    return { kept: kept, count: tracks.length };
+};
+
+/**
  * Everything one nest has to put on the timeline, or the reason it cannot. Read in track order so
  * the clips land in the order they were stacked, and counted as it goes: a plan that runs past
  * `UNNEST_MAX_CLIPS` is refused whole rather than half built.
@@ -167,10 +223,15 @@ FXP.unnestPlanNest = function (nested, entry, mediaTypes) {
     if (pieces.length === 0) {
         return { error: 'there is nothing of that kind inside it' };
     }
+    // Pairing first, so that switching off an angle switches off the camera sound that is coming
+    // with it rather than only the picture.
+    FXP.unnestPairUp(pieces);
+    var multicam = FXP.itemIsMulticam(FXP.projectItemOf(entry.clip));
     return {
-        pieces: FXP.unnestPairUp(pieces),
+        pieces: pieces,
         spans: spans,
         window: window,
+        angles: multicam ? FXP.unnestKeepFirstAngle(pieces) : null,
         hasTransitions: FXP.nestHasTransitions(nested, mediaTypes)
     };
 };

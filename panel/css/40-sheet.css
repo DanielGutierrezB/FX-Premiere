@@ -182,6 +182,21 @@ input[type="text"].path-field {
   color: var(--accent);
 }
 
+/* Why something the menu does not offer is not on offer. Wraps, unlike everything else in here. */
+.menu__note {
+  max-width: 240px;
+  padding: 4px 9px 6px;
+  color: var(--text-faint);
+  font-size: calc(10.5px * var(--font-scale));
+  line-height: 1.35;
+}
+
+.menu__field {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+}
+
 /* A row of fixed choices: one box, dividers between the options, the chosen one in accent. */
 .seg {
   display: flex;

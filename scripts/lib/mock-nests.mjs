@@ -34,12 +34,20 @@ export const RISKY_CONTENTS = [
   { name: 'Cross Dissolve', start: 1.8, end: 2.2, track: 0, audio: false, transition: true },
 ];
 
-/** A multicam source: three angles, of which no API says which one the editor was watching. */
+/**
+ * A multicam source as Premiere builds one: one video track per angle, each camera's own sound under
+ * its angle as a linked pair, and one silent camera. No API says which angle the editor was watching,
+ * so what an un-nest does with the sound of the angles it switches off is the thing to get right.
+ *
+ * The angles are named after their camera's media, which is what a real one looks like and the only
+ * way a name that came off the clip can be told apart from one counted off the track.
+ */
 export const MULTICAM_CONTENTS = [
-  { name: 'Angle 1', start: 0, end: 4, track: 0, audio: false },
-  { name: 'Angle 2', start: 0, end: 4, track: 1, audio: false },
-  { name: 'Angle 3', start: 0, end: 4, track: 2, audio: false },
-  { name: 'Angle 1 audio', start: 0, end: 4, track: 0, audio: true },
+  { name: 'CAM A.mp4', start: 0, end: 4, track: 0, audio: false, withAudio: true },
+  { name: 'CAM B.mp4', start: 0, end: 4, track: 1, audio: false, withAudio: true },
+  { name: 'CAM C.mp4', start: 0, end: 4, track: 2, audio: false },
+  { name: 'CAM A.mp4', start: 0, end: 4, track: 0, audio: true, withAudio: true },
+  { name: 'CAM B.mp4', start: 0, end: 4, track: 1, audio: true, withAudio: true },
 ];
 
 export const createSequenceKit = ({ collection, time, makeClip, makeProjectItem, ticksPerSecond, slack }) => {

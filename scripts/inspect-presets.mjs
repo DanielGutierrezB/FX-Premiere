@@ -98,4 +98,9 @@ for (const file of files) {
 console.log(
   `\nTotals: ${totalPresets} presets, ${totalEffects} effects, ${totalParams} params, ${totalKeyframes} keyframes, ${failures} failures`,
 );
+
+// What the palette actually lists, which is not the same number: upgrading Premiere copies the
+// library forward, so the same preset sits in one file per version and only gets one row.
+const rows = FXP.presetsFromFiles(files, []);
+console.log(`${rows.length} row(s) in the palette, so ${totalPresets - rows.length} copy/copies of a preset in another library`);
 process.exit(failures === 0 ? 0 : 1);

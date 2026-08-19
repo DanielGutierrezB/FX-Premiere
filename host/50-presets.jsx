@@ -42,17 +42,31 @@ FXP.fileStamp = function (path) {
     return stamp;
 };
 
+/**
+ * The one preset library Premiere has open, which is the only one an editor sees in the Effects panel.
+ *
+ * Every one of these files is a whole library, not a piece of one. Upgrading Premiere copies the
+ * library into the new version's folder and leaves the old copy where it was, and a profile from
+ * before you signed in to Creative Cloud sits next to the one being written. Deleting a preset in
+ * Premiere deletes it from the library Premiere is writing to and from none of the others, so reading
+ * them all is listing presets that no longer exist — which is the same list, minus the tidying up
+ * anybody has ever done to it.
+ *
+ * Which one Premiere has open is not written down anywhere, and the save date is the only thing that
+ * points at it: the library being used is the one being saved. Older versions are read only when this
+ * version has no library at all, so that a Premiere which has not written its own yet still shows the
+ * presets it is about to inherit.
+ */
 FXP.discoverPresetFiles = function () {
-    var found = [];
     var root = new Folder(Folder.myDocuments.fsName + '/Adobe/Premiere Pro');
     if (!root.exists) {
-        return found;
+        return [];
     }
     var current = FXP.hostVersion().split('.')[0];
     // ExtendScript's Folder has no getFolders; getFiles returns folders too.
     var versionFolders = root.getFiles();
-    var preferred = [];
-    var others = [];
+    var thisVersion = [];
+    var older = [];
     for (var i = 0; i < versionFolders.length; i++) {
         var versionFolder = versionFolders[i];
         if (!(versionFolder instanceof Folder)) {
@@ -68,23 +82,64 @@ FXP.discoverPresetFiles = function () {
                 continue;
             }
             if (versionFolder.name.indexOf(current) === 0) {
-                preferred[preferred.length] = candidate.fsName;
+                thisVersion[thisVersion.length] = candidate.fsName;
             } else {
-                others[others.length] = candidate.fsName;
+                older[older.length] = candidate.fsName;
             }
         }
     }
-    for (var a = 0; a < preferred.length; a++) {
-        found[found.length] = preferred[a];
+    var candidates = FXP.newestFirst(thisVersion.length > 0 ? thisVersion : older);
+    if (candidates.length === 0) {
+        return [];
     }
-    for (var b = 0; b < others.length; b++) {
-        found[found.length] = others[b];
+    // Said once, because the library chosen decides which presets exist as far as the palette is
+    // concerned, and an editor missing one has no other way to find out which file was read.
+    if (!FXP.loggedPresetLibrary) {
+        FXP.loggedPresetLibrary = true;
+        var left = thisVersion.length + older.length - 1;
+        FXP.trace('reading presets from ' + candidates[0] +
+            (thisVersion.length === 0 ? ', which belongs to an older Premiere because this one has no library yet' : '') +
+            (left > 0 ? '; the other ' + left + ' library file(s) here belong to Premieres that are not running' : ''));
     }
-    return found;
+    return [candidates[0]];
+};
+
+/** When a file was last written, as a number to sort by, or 0 when this build will not say. */
+FXP.fileModified = function (path) {
+    try {
+        var when = new File(path).modified;
+        return when ? when.getTime() : 0;
+    } catch (error) {
+        return 0;
+    }
+};
+
+/**
+ * Libraries in the order their copies of a preset should win: most recently written first.
+ *
+ * A profile that has not been saved since 2024 belongs to a Premiere nobody runs, and where the same
+ * preset sits in several libraries the copy an editor sees in the Effects panel is the one from the
+ * library Premiere is writing to. The save date is the only thing here that points at which that is.
+ */
+FXP.newestFirst = function (paths) {
+    var dated = [];
+    var i;
+    for (i = 0; i < paths.length; i++) {
+        dated[dated.length] = { path: paths[i], at: FXP.fileModified(paths[i]) };
+    }
+    dated.sort(function (left, right) {
+        return right.at - left.at;
+    });
+    var sorted = [];
+    for (i = 0; i < dated.length; i++) {
+        sorted[sorted.length] = dated[i].path;
+    }
+    return sorted;
 };
 
 FXP.expandPresetSources = function (sources) {
     var files = FXP.discoverPresetFiles();
+    var added = [];
     if (sources && sources.length) {
         for (var i = 0; i < sources.length; i++) {
             var source = FXP.trim(sources[i]);
@@ -96,16 +151,22 @@ FXP.expandPresetSources = function (sources) {
                 var entries = folder.getFiles('*.prfpset');
                 for (var e = 0; e < entries.length; e++) {
                     if (entries[e] instanceof File) {
-                        files[files.length] = entries[e].fsName;
+                        added[added.length] = entries[e].fsName;
                     }
                 }
                 continue;
             }
             var file = new File(source);
             if (file.exists) {
-                files[files.length] = file.fsName;
+                added[added.length] = file.fsName;
             }
         }
+    }
+    // Newest first here too, so that where two of these hold the same preset the copy that is kept
+    // is the one from the library that is still being saved to.
+    added = FXP.newestFirst(added);
+    for (var a = 0; a < added.length; a++) {
+        files[files.length] = added[a];
     }
     var unique = [];
     var seen = [];
@@ -297,8 +358,148 @@ FXP.presetIndex = function (sources, warnings) {
     return { stamp: survey.stamp, items: FXP.presetsFromFiles(survey.files, warnings) };
 };
 
+/**
+ * What a preset row is called, which is also the one thing two rows must never agree on.
+ *
+ * The name, the bin it sits in and the media it is for are exactly what the palette shows of a
+ * preset, so two presets that agree on all three are one row as far as anybody looking at it is
+ * concerned. Two presets of the same name in different bins still get a row each: those the palette
+ * shows apart, and Premiere lists both too.
+ *
+ * Neither the file nor the ObjectID belongs in here, though both used to be the whole of it. Premiere
+ * writes its library out again on every save and numbers the objects afresh, so the id changed under
+ * a preset that had not moved: the same preset came back as a second row, and the recents, the
+ * ranking and the numbered bar each ended up holding it twice. The file is no better — upgrading
+ * Premiere copies the library into the new version's folder, and the same five libraries that hold
+ * one "Zoom Window" are why two rows nobody could tell apart used to be listed one under the other.
+ *
+ * shared/settings.ts builds this same string when it moves an older profile onto these ids, and
+ * scripts/test-host.mjs and scripts/test-panel.mjs hold the two to each other.
+ */
+FXP.presetRowId = function (preset) {
+    return 'preset:' + preset.name + ':' + preset.mediaType + (preset.path === '' ? '' : ':' + preset.path);
+};
+
+/**
+ * Where a preset is, and what it is.
+ *
+ * The ObjectID is a position in a file Premiere holds in memory and writes out whole on every save,
+ * renumbering the objects as it goes, so on its own it is a guess at where a preset will be by the
+ * next save. The name, the bin and the media type are what an editor picked the row by and what
+ * Premiere would have to be told to change, so they travel with the pointer and are what says which
+ * preset a favourite stored months ago meant.
+ */
+FXP.presetReference = function (file, preset) {
+    return {
+        file: file,
+        objectId: preset.objectId,
+        name: preset.name,
+        path: preset.path,
+        mediaType: preset.mediaType
+    };
+};
+
+/**
+ * The preset sitting at an ObjectID, or null when nothing does. Only presets the bin tree still
+ * reaches are here, so an id Premiere has since given to a parameter, or to nothing at all, misses.
+ */
+FXP.presetAt = function (state, objectId) {
+    var wanted = String(objectId);
+    for (var i = 0; i < state.presets.length; i++) {
+        if (state.presets[i].objectId === wanted) {
+            return state.presets[i];
+        }
+    }
+    return null;
+};
+
+/**
+ * Whether a preset in the library is the one a reference asks for.
+ *
+ * References stored before the name travelled beside the pointer say nothing about which bin they
+ * came out of, and for those the name and the media type are all there is to go on. Where the bin
+ * is known it has to agree: two presets of one name in two bins are two rows in the palette, and
+ * two presets in Premiere.
+ */
+FXP.presetIsWanted = function (preset, reference) {
+    if (preset.name !== reference.name) {
+        return false;
+    }
+    if (reference.mediaType && preset.mediaType !== reference.mediaType) {
+        return false;
+    }
+    if (reference.path === undefined || reference.path === null) {
+        return true;
+    }
+    return preset.path === reference.path;
+};
+
+FXP.presetNamed = function (state, reference) {
+    for (var i = 0; i < state.presets.length; i++) {
+        if (FXP.presetIsWanted(state.presets[i], reference)) {
+            return state.presets[i];
+        }
+    }
+    return null;
+};
+
+/** The parsed library, or null: a file that has been moved away or corrupted is a miss here. */
+FXP.presetStateOrNull = function (path) {
+    try {
+        return FXP.presetState(path);
+    } catch (error) {
+        return null;
+    }
+};
+
+/**
+ * Where the preset a reference names is now, or null when no library being read holds it any more.
+ *
+ * A stored ObjectID can point at nothing, and it can point at whatever preset Premiere wrote into
+ * that place instead — which is the case worth searching for, since following it would quietly put
+ * the wrong preset on the clip. So the pointer is taken only when the preset it lands on is still
+ * the one the reference names. The library the reference came from answers on its own nearly every
+ * time; the others are opened only when it cannot, which is what an upgrade to a new Premiere, or a
+ * preset folder somebody moved, looks like from here.
+ */
+FXP.locatePreset = function (reference, sources) {
+    if (!reference.name) {
+        // Written by a version that kept the pointer alone. There is nothing to check it against,
+        // so it is followed as it always was.
+        return reference;
+    }
+    var own = FXP.presetStateOrNull(reference.file);
+    if (own) {
+        var here = reference.objectId ? FXP.presetAt(own, reference.objectId) : null;
+        if (here && FXP.presetIsWanted(here, reference)) {
+            return FXP.presetReference(reference.file, here);
+        }
+        var moved = FXP.presetNamed(own, reference);
+        if (moved) {
+            return FXP.presetReference(reference.file, moved);
+        }
+    }
+    var ownKey = FXP.pathKey(reference.file);
+    var elsewhere = FXP.expandPresetSources(sources);
+    for (var f = 0; f < elsewhere.length; f++) {
+        if (FXP.pathKey(elsewhere[f]) === ownKey) {
+            continue;
+        }
+        var state = FXP.presetStateOrNull(elsewhere[f]);
+        if (!state) {
+            continue;
+        }
+        var found = FXP.presetNamed(state, reference);
+        if (found) {
+            return FXP.presetReference(elsewhere[f], found);
+        }
+    }
+    return null;
+};
+
 FXP.presetsFromFiles = function (files, warnings) {
     var items = [];
+    var seen = {};
     for (var f = 0; f < files.length; f++) {
         var state = null;
         try {
@@ -312,13 +513,18 @@ FXP.presetsFromFiles = function (files, warnings) {
         }
         for (var p = 0; p < state.presets.length; p++) {
             var preset = state.presets[p];
+            var id = FXP.presetRowId(preset);
+            if (seen[id]) {
+                continue;
+            }
+            seen[id] = true;
             items[items.length] = {
-                id: 'preset:' + files[f] + '#' + preset.objectId,
+                id: id,
                 kind: 'preset',
                 name: preset.name,
                 mediaType: preset.mediaType,
                 group: preset.path === '' ? 'Preset' : 'Preset \u00b7 ' + preset.path,
-                preset: { file: files[f], objectId: preset.objectId }
+                preset: FXP.presetReference(files[f], preset)
             };
         }
     }
@@ -338,6 +544,11 @@ FXP.divmodDecimal = function (decimal, divisor) {
     return { quotient: quotient, remainder: remainder };
 };
 
+/** Premiere's 8-bit picker writes each channel into the high byte, so 0xFF00 is full scale. */
+FXP.colorChannel = function (raw) {
+    return Math.min(1, raw / 65280);
+};
+
 /**
  * Premiere serialises colours as four 16-bit channels packed into a 64-bit integer.
  * They come back as normalised [alpha, red, green, blue], which is what setValue expects.
@@ -347,8 +558,7 @@ FXP.decodePackedColor = function (decimal) {
     var remaining = decimal;
     for (var i = 0; i < 4; i++) {
         var step = FXP.divmodDecimal(remaining, 65536);
-        // Premiere's 8-bit picker writes each channel into the high byte, so 0xFF00 is full scale.
-        channels[channels.length] = Math.min(1, step.remainder / 65280);
+        channels[channels.length] = FXP.colorChannel(step.remainder);
         remaining = step.quotient;
     }
     return [channels[3], channels[2], channels[1], channels[0]];
@@ -730,9 +940,14 @@ FXP.applyPreset = function (request) {
     if (!reference || !reference.file || !reference.objectId) {
         throw new Error('Incomplete preset reference.');
     }
-    var detail = FXP.presetDetail(reference.file, reference.objectId);
+    var located = FXP.locatePreset(reference, request.presetSources);
+    if (!located) {
+        throw new Error('Premiere no longer has a preset named "' + reference.name +
+            '". It was renamed or deleted in the Effects panel.');
+    }
+    var detail = FXP.presetDetail(located.file, located.objectId);
     if (!detail || detail.effects.length === 0) {
-        throw new Error('This preset could not be read from ' + reference.file);
+        throw new Error('This preset could not be read from ' + located.file);
     }
     var selection = FXP.requireSelection();
     var targets = [];
@@ -742,6 +957,11 @@ FXP.applyPreset = function (request) {
         }
     }
     var outcome = { applied: 0, skipped: selection.length - targets.length, failed: 0, messages: [] };
+    // Said only when the preset was somewhere other than where the request pointed, so that the
+    // panel can store where it really is and the search does not have to happen a second time.
+    if (located.file !== reference.file || located.objectId !== reference.objectId) {
+        outcome.preset = located;
+    }
     if (targets.length === 0) {
         outcome.messages[outcome.messages.length] =
             'This is a ' + detail.mediaType + ' preset and no ' + detail.mediaType + ' clip is selected.';

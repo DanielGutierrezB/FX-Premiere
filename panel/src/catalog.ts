@@ -3,7 +3,10 @@ import { prepare, type HaystackEntry } from '@shared/fuzzy';
 import type { Catalog, CatalogItem, PresetRefresh } from '@shared/types';
 import { searchText } from './search';
 
-const CACHE_KEY = 'fxp.catalog.v3';
+// v5 drops the caches written while a preset row was named after the place in the library file it
+// was read out of. The stamp only says whether the files changed, and they have not: the reader of
+// them did, and the ids in a cache from before it would not be the ids a profile now holds.
+const CACHE_KEY = 'fxp.catalog.v5';
 
 interface CachedCatalog {
   hostVersion: string;

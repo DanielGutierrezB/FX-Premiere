@@ -193,8 +193,28 @@ export interface FolderResult {
 }
 
 /**
+ * Whether a folder is on disk, for a screen that says so rather than quietly making it. Anything it
+ * cannot answer for — a path it may not look at — is reported as there, since the alternative is
+ * telling an editor their folder is missing on the strength of a permissions error.
+ */
+export const folderExists = (folder: string): boolean => {
+  if (folder.trim() === '') {
+    return false;
+  }
+  try {
+    return (nodeRequire()('fs') as typeof import('fs')).existsSync(folder);
+  } catch {
+    return true;
+  }
+};
+
+/**
  * Makes a folder if it is not already there and says which of the two happened, because Paste
  * Clipboard has to create its folder exactly once and has no other way to know which time this is.
+ *
+ * Only called where something is about to be written into it, which now means the paste alone —
+ * pointing Premiere at an export path does not, and the one export Compass performs itself makes its
+ * folder in the host, at the instant it hands the queue over.
  */
 export const ensureFolder = (folder: string): FolderResult => {
   if (folder.trim() === '') {

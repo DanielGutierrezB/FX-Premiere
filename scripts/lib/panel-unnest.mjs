@@ -85,6 +85,23 @@ export const panelUnnest = async ({
   await press('Escape');
   check('Escape leaves the dialog', !window.document.querySelector('.unnest'));
 
+  console.log('\nA multicam clip, before Enter');
+  {
+    // Every angle comes out and one of them is left playing, which is not what an editor expects of a
+    // multicam and is not something they can undo their way out of. So the dialog says it first.
+    world.addClip({ name: 'Multicam Source', start: 30, end: 34, projectItem: world.multicamItem });
+    world.select('Multicam Source');
+    await openUnnest();
+    const warnings = () => [...window.document.querySelectorAll('.unnest__warning')].map((node) => node.textContent).join(' | ');
+    check('the dialog counts the angles that will come out', /3 multicam angles/.test(warnings()), warnings());
+    check('names the one that will be left playing', /CAM A\.mp4/.test(warnings()), warnings());
+    check('and says why it is that one', /does not say which angle was on air/.test(warnings()), warnings());
+    await press('3');
+    await settle(20);
+    check('the warning goes when only the sound is being taken out', !/multicam angles/.test(warnings()), warnings());
+    await press('Escape');
+  }
+
   console.log('\nA nest the host will not touch');
   {
     // A multicam clip inside is the one thing a rebuild cannot carry: no API says which angle was
@@ -106,7 +123,6 @@ export const panelUnnest = async ({
 
   // Which multicam angle was showing is not in any API, so the palette ships the way to find out
   // whether it is reachable at all on a machine that has a real multicam clip.
-  world.addClip({ name: 'Multicam Source', start: 30, end: 34, projectItem: world.multicamItem });
   world.select('Multicam Source');
   cep.emit('com.fxpremiere.event.trigger', { settings: false });
   await settle(20);

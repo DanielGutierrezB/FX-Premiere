@@ -65,7 +65,7 @@ export const DEFAULT_HOTKEY: HotkeySpec = {
   meta: false,
 };
 
-const isMac = (): boolean =>
+export const isMac = (): boolean =>
   typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 
 const normalizeKeyName = (raw: string): string | null => {

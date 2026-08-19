@@ -86,6 +86,30 @@ FXP.sequenceForItem = function (projectItem) {
     return null;
 };
 
+/**
+ * The angles of a multicam source, named, in the order Premiere numbers them: angle one is the bottom
+ * video track of the sequence behind it, angle two the track above that. Nothing documents that
+ * ordering, but it is the order the multicam monitor's 1-to-9 keys pick and the order the cameras are
+ * laid out in when the source sequence is made.
+ *
+ * An angle is named after the clip sitting on its track rather than after the track, because the clip
+ * name is what the editor recognises and it is the name the rebuilt clip lands under.
+ */
+FXP.multicamAngles = function (nested) {
+    var names = [];
+    FXP.eachTrack(nested, ['video'], function (track, mediaType, trackIndex) {
+        var name = '';
+        try {
+            name = Number(track.clips.numItems) > 0 ? FXP.safeName(track.clips[0]) : '';
+        } catch (error) {
+            name = '';
+        }
+        names[trackIndex] = name === '' ? 'Angle ' + (trackIndex + 1) : name;
+        return undefined;
+    });
+    return names;
+};
+
 /** Which media types a choice covers, in the order they are worked through. */
 FXP.unnestMediaTypes = function (media) {
     if (media === 'video') {
@@ -249,10 +273,9 @@ FXP.qualifyingNests = function (selection) {
     for (i = 0; i < selection.length; i++) {
         var entry = selection[i];
         var item = FXP.projectItemOf(entry.clip);
-        // A multicam source is a sequence, so it has to be turned away by name rather than by kind:
-        // rebuilding one would stack every angle on the timeline, and no API says which angle was
-        // showing, so there is no honest way to put back the one clip the editor was watching.
-        if (!FXP.itemIsSequence(item) || FXP.itemIsMulticam(item)) {
+        // A multicam source is a sequence, so it is rebuilt like one: every angle comes out, stacked.
+        // Which of them was on air is a separate problem, dealt with by the plan.
+        if (!FXP.itemIsSequence(item)) {
             continue;
         }
         if (entry.mediaType === 'audio') {
@@ -454,6 +477,11 @@ FXP.unnestSurvey = function (request) {
         multicam: 0,
         speedChanges: 0,
         missing: 0,
+        // The angles of the selected multicam clips, so the dialog can say which one will be left
+        // playing before Enter is pressed rather than only reporting it afterwards. Taken from the
+        // first multicam in the selection: several cuts of the same multicam share one source, and
+        // that is what a selection of them is.
+        angles: [],
         // Which nests these numbers are about, so the run can refuse a selection that has since
         // changed rather than act on whatever is selected by the time Enter is pressed.
         identities: []
@@ -465,12 +493,19 @@ FXP.unnestSurvey = function (request) {
     var nests = FXP.qualifyingNests(FXP.collectSelection());
     for (var i = 0; i < nests.length; i++) {
         report.identities[report.identities.length] = FXP.nestKey(nests[i]);
-        var nested = FXP.sequenceForItem(FXP.projectItemOf(nests[i].clip));
+        var item = FXP.projectItemOf(nests[i].clip);
+        var nested = FXP.sequenceForItem(item);
         if (!nested) {
             report.missing++;
             continue;
         }
         report.nests++;
+        // Named whichever media the survey was asked about, because the dialog is surveyed once and
+        // then lets the editor change their answer: it is the dialog that knows whether the picture is
+        // still coming out by the time Enter is pressed.
+        if (report.angles.length === 0 && FXP.itemIsMulticam(item)) {
+            report.angles = FXP.multicamAngles(nested);
+        }
         FXP.surveyNest(nested, mediaTypes, report);
     }
     FXP.trace('survey: ' + FXP.json.stringify(report));

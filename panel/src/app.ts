@@ -8,7 +8,14 @@ import {
   registerKeyInterest,
   setPanelPersistent,
 } from '@shared/cep';
-import { capturedItems, deleteCaptured, listCaptured, saveCaptured } from '@shared/captured';
+import {
+  capturedId,
+  capturedItems,
+  deleteCaptured,
+  listCaptured,
+  renameCaptured,
+  saveCaptured,
+} from '@shared/captured';
 import {
   claimPendingIntent,
   defaultSettings,
@@ -42,7 +49,7 @@ import {
   refreshPresets,
   type IndexedCatalog,
 } from './catalog';
-import { STATIC_COMMANDS, parseMotionQuery } from './commands';
+import { LOCAL_COMMAND_TOOLS, STATIC_COMMANDS, parseMotionQuery } from './commands';
 import { clear, el, highlight } from './dom';
 import { SCOPES, badgeFor, rank, type RankedItem, type Scope } from './search';
 import { Sheets, type Hint, type View } from './sheets';
@@ -76,6 +83,9 @@ export class PaletteApp {
 
   private catalog: IndexedCatalog | null = null;
 
+  /** The last complaint about a preset file, so re-reading them on every summon repeats no toasts. */
+  private saidAboutPresets = '';
+
   private results: RankedItem[] = [];
 
   private quick: QuickGroup[] = [];
@@ -103,9 +113,10 @@ export class PaletteApp {
   private readonly bar = new FavoriteBar({
     settings: () => this.settings,
     query: () => this.input.value.trim(),
-    apply: (item) => void this.pipeline.item(item, 'default'),
+    apply: (item) => void this.activate(item, 'default'),
     status: (text, kind) => this.setStatus(text, kind),
     changed: () => this.updateResults(),
+    menu: (item, at) => this.openItemMenu(item, at),
   });
 
   private readonly pipeline = new ApplyPipeline({
@@ -310,6 +321,15 @@ export class PaletteApp {
     const release = (): void => markPanelOpen(false);
     window.addEventListener('unload', release);
     window.addEventListener('pagehide', release);
+    // A right click anywhere in the palette is ours or it is nothing. CEP hands out Chromium's page
+    // menu otherwise — Back, Reload, View Page Source — which is what came up over the numbered bar
+    // and is never an answer to a right click in here. Fields keep their own, where cut, paste and
+    // the spellchecker live, and they are the only things in the palette anybody types into.
+    document.addEventListener('contextmenu', (event) => {
+      if (!(event.target instanceof HTMLInputElement)) {
+        event.preventDefault();
+      }
+    });
     document.addEventListener('mousedown', (event) => {
       const target = event.target instanceof HTMLElement ? event.target : null;
       if (!target?.closest('.menu')) {
@@ -359,6 +379,10 @@ export class PaletteApp {
     this.flagKnownUpdate();
     this.renderHints();
     void this.refreshSequence();
+    // A preset saved in Premiere since the last summon has to be here now. Cheap enough to do every
+    // time: the host stamps the preset files without opening them and answers with nothing when they
+    // have not moved, and this runs behind the palette rather than in front of it.
+    void this.refreshPresetsOnly();
     if (wantsSettings) {
       this.sheets.openSettings();
       return;
@@ -378,6 +402,13 @@ export class PaletteApp {
       return;
     }
     const attempt = () => {
+      // Checked on every attempt rather than once, because a fifth of a second is long enough to
+      // open a sheet or a row menu, and either of them holds a field of its own. A retry aimed at
+      // the search box then lands in whatever is on screen instead, taking the caret with it: the
+      // Compass path fields could be clicked into and would not keep a keystroke.
+      if (!this.sheets.isSearch() || this.rowMenu?.contains(document.activeElement)) {
+        return;
+      }
       this.input.focus();
       this.input.select();
     };
@@ -442,13 +473,13 @@ export class PaletteApp {
           'button',
           {
             class: `hints__item${hint.scope ? ' hints__scope' : ''}`,
-            title: `${hint.key} \u00b7 ${hint.label}`,
+            title: hint.key === '' ? hint.label : `${hint.key} \u00b7 ${hint.label}`,
             onclick: () => {
               hint.run();
               this.focusInput();
             },
           },
-          [el('span', { class: 'hints__key', text: hint.key }), hint.label],
+          [hint.key === '' ? null : el('span', { class: 'hints__key', text: hint.key }), hint.label],
         ),
       );
     }
@@ -489,6 +520,11 @@ export class PaletteApp {
       { key: '\u2318D', label: 'put on a number', run: () => this.pickActive() },
       { key: '\u2318I', label: 'create preset', run: () => void this.sheets.openInspector() },
       { key: '\u2318Z', label: 'undo', run: () => void this.undoLast() },
+      // A word rather than a key, the way the version at the other end of the line is: the line is
+      // already as long as the window is wide, and the key is written on the screen it opens.
+      // Ahead of the settings hint because that one grows a whole version number when an update is
+      // waiting, and whatever sits behind it then is the part that goes off the edge.
+      { key: '', label: 'tools', run: () => this.sheets.openTools() },
       {
         key: '\u2318,',
         label: this.updateNote === '' ? 'settings' : this.updateNote,
@@ -656,6 +692,12 @@ export class PaletteApp {
   }
 
   private onKeyDown(event: KeyboardEvent): void {
+    // A row menu with a field open owns its keys and answers them itself. This listener is on the
+    // window and on the way down, so it would otherwise reach them first: a digit typed into a name
+    // would fire a favourite, and Escape would close the palette rather than the field.
+    if (this.rowMenu?.contains(event.target as Node)) {
+      return;
+    }
     this.bar.noteModifiers(event);
     if (!this.sheets.isSearch()) {
       this.sheets.handleKey(event);
@@ -725,6 +767,11 @@ export class PaletteApp {
     if (accel && event.key === ',') {
       event.preventDefault();
       this.sheets.openSettings();
+      return;
+    }
+    if (accel && event.key === '/') {
+      event.preventDefault();
+      this.sheets.openTools();
     }
   }
 
@@ -746,29 +793,41 @@ export class PaletteApp {
   }
 
   private openRowMenu(index: number, x: number, y: number): void {
-    this.closeRowMenu();
     const entry = this.results[index];
     if (!entry) {
       return;
     }
     this.active = index;
     this.paintResults();
-    this.rowMenu = openRowMenu(this.root, entry.item, { x, y }, {
-      starred: this.bar.has(entry.item.id),
+    this.openItemMenu(entry.item, { x, y });
+  }
+
+  /** One menu for both ways of pointing at something: a row in the list and a chip on the bar. */
+  private openItemMenu(item: CatalogItem, at: { x: number; y: number }): void {
+    this.closeRowMenu();
+    this.rowMenu = openRowMenu(this.root, item, at, {
+      starred: this.bar.has(item.id),
       favorite: () => {
         this.closeRowMenu();
-        this.bar.toggle(entry.item);
+        this.bar.toggle(item);
       },
       apply: () => {
         this.closeRowMenu();
-        void this.pipeline.item(entry.item, 'default');
+        void this.activate(item, 'default');
       },
-      remove: entry.item.captured
+      remove: item.captured
         ? () => {
             this.closeRowMenu();
-            this.forgetCaptured(entry.item);
+            this.forgetCaptured(item);
           }
         : undefined,
+      rename: item.captured
+        ? (name) => {
+            this.closeRowMenu();
+            this.renameCaptured(item, name);
+          }
+        : undefined,
+      close: () => this.closeRowMenu(),
     });
   }
 
@@ -810,10 +869,14 @@ export class PaletteApp {
     }
     this.catalog = await refreshPresets(this.catalog, this.settings.presetSources);
     // A preset file that will not parse is worth a word on the warm path too, not just on a
-    // full reindex: the warm path is the common one.
-    if (this.catalog.warnings.length > 0) {
-      this.toast(this.catalog.warnings[0], 'error');
+    // full reindex: the warm path is the common one. Said once and not again while it says the same
+    // thing, because this runs on every summon and a file that will not parse will not parse later
+    // either: a palette that reports it every open is one nobody reads.
+    const warning = this.catalog.warnings[0] ?? '';
+    if (warning !== '' && warning !== this.saidAboutPresets) {
+      this.toast(warning, 'error');
     }
+    this.saidAboutPresets = warning;
     this.updateResults();
   }
 
@@ -822,7 +885,20 @@ export class PaletteApp {
     if (!entry) {
       return;
     }
-    await this.pipeline.item(entry.item, intent);
+    await this.activate(entry.item, intent);
+  }
+
+  /**
+   * Where a chosen row goes, whether it came from the list, the numbered bar or the right click menu.
+   * Opening the tools screen never leaves the panel, so the palette does that itself; everything else
+   * goes to the pipeline, which is the part that knows how to reach Premiere.
+   */
+  private async activate(item: CatalogItem, intent: ApplyIntent): Promise<void> {
+    if (item.commandId === LOCAL_COMMAND_TOOLS) {
+      this.sheets.openTools();
+      return;
+    }
+    await this.pipeline.item(item, intent);
   }
 
   private async confirmTransition(item: CatalogItem, options: TransitionOptions): Promise<void> {
@@ -931,6 +1007,43 @@ export class PaletteApp {
   private storeCaptured(preset: CapturedPreset): void {
     saveCaptured(preset);
     this.captured = capturedItems(listCaptured());
+  }
+
+  /**
+   * Only presets the palette saved can be renamed, and their id is a slug of the name, so the rename
+   * moves the id as well as the file. Everything holding the old one is walked over to the new one:
+   * a favourite keeps its number and a recent its place, because neither has anything to do with
+   * what the preset is called. A name already taken is refused rather than written over the file
+   * that is under it.
+   */
+  private renameCaptured(item: CatalogItem, to: string): void {
+    const preset = item.captured;
+    const name = to.trim();
+    if (!preset || name === '' || name === preset.name) {
+      return;
+    }
+    const id = capturedId(name);
+    if (id !== item.id && this.captured.some((other) => other.id === id)) {
+      this.toast(`There is already a preset called ${name}.`, 'error');
+      return;
+    }
+    renameCaptured(preset, name);
+    this.captured = capturedItems(listCaptured());
+    this.settings.recents = this.settings.recents.map((entry) => (entry === item.id ? id : entry));
+    if (this.settings.remembered[item.id]) {
+      delete this.settings.remembered[item.id];
+      this.settings.remembered[id] = { ...item, id, name, captured: { ...preset, name } };
+    }
+    const used = this.settings.usage[item.id];
+    if (used !== undefined) {
+      delete this.settings.usage[item.id];
+      this.settings.usage[id] = used;
+    }
+    // After the remembered copy has moved, because the bar draws the names out of it.
+    this.bar.renamed(item.id, id);
+    saveSettings(this.settings);
+    this.updateResults();
+    this.toast(`${item.name} is now ${name}.`);
   }
 
   private forgetCaptured(item: CatalogItem): void {

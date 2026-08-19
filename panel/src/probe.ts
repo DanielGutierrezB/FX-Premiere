@@ -3,6 +3,17 @@ import { nodeRequire } from '@shared/node';
 import { settingsDir } from '@shared/paths';
 import type { MulticamProbe } from '@shared/types';
 
+const componentLines = (components: MulticamProbe['components']): string[] => {
+  const lines: string[] = [];
+  for (const component of components) {
+    lines.push(`  ${component.matchName} (${component.name})`);
+    for (const param of component.params) {
+      lines.push(`    ${param.name} = ${param.value}`);
+    }
+  }
+  return lines;
+};
+
 const asText = (probe: MulticamProbe): string => {
   const lines = [
     `clip: ${probe.clipName}`,
@@ -11,13 +22,11 @@ const asText = (probe: MulticamProbe): string => {
     `isMulticamClip: ${probe.isMulticam}`,
     '',
     'components',
+    ...componentLines(probe.components),
+    '',
+    'qe components',
+    ...componentLines(probe.qeComponents),
   ];
-  for (const component of probe.components) {
-    lines.push(`  ${component.matchName} (${component.name})`);
-    for (const param of component.params) {
-      lines.push(`    ${param.name} = ${param.value}`);
-    }
-  }
   lines.push('', 'names tried');
   for (const candidate of probe.candidates) {
     lines.push(`  ${candidate.name} = ${candidate.value}`);
@@ -27,8 +36,9 @@ const asText = (probe: MulticamProbe): string => {
 
 /**
  * Asks the host for everything a selected clip will say about itself and leaves it in a file next
- * to the settings. It exists for one question that no API answers: whether the active multicam
- * angle is readable at all. Somebody with a real multicam clip runs this once and sends the file.
+ * to the settings. It exists for one question no API found so far answers: whether the active multicam
+ * angle is readable at all. Un-nesting a multicam brings every angle out and leaves the first one
+ * playing until it is; somebody with a real multicam clip runs this once and sends the file.
  */
 export const probeMulticam = async (): Promise<{ ok: boolean; message: string }> => {
   const response = await callHost<MulticamProbe>({ op: 'probeMulticam' });

@@ -11,7 +11,7 @@ const slug = (name: string): string =>
     .replace(/^-+|-+$/g, '')
     .slice(0, 60) || 'preset';
 
-const capturedId = (name: string): string => `captured:${slug(name)}`;
+export const capturedId = (name: string): string => `captured:${slug(name)}`;
 
 export const listCaptured = (): CapturedPreset[] => {
   try {
@@ -54,6 +54,18 @@ export const deleteCaptured = (name: string): void => {
   const fs = nodeRequire()('fs') as typeof import('fs');
   const path = nodeRequire()('path') as typeof import('path');
   fs.rmSync(path.join(capturedDir(), `${slug(name)}${EXTENSION}`), { force: true });
+};
+
+/**
+ * A preset is filed under a slug of its name, so a rename is a new file and the old one thrown away.
+ * Not always, though: capitalisation and punctuation leave the slug where it was, and deleting the
+ * old name would then delete the file that was just written.
+ */
+export const renameCaptured = (preset: CapturedPreset, name: string): void => {
+  saveCaptured({ ...preset, name });
+  if (slug(name) !== slug(preset.name)) {
+    deleteCaptured(preset.name);
+  }
 };
 
 /** Captured presets carry their values inline, so they need no file lookup to apply. */

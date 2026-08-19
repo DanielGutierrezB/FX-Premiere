@@ -175,19 +175,50 @@ export const wildcardsAt = (value: string, caret: number): WildcardHint | null =
   return { from: typed.index, to: at, matches };
 };
 
+/** A wildcard already written out, at the very end of the text before the caret. */
+const ENDS_IN_WILDCARD = /#(?:PROD|PROJ|YYYY|PRJ|SEQ|BIN|YY|MM|DD|hh|mm)$/;
+
+/**
+ * Whether a wildcard dropped in here needs a separator in front of it to be its own folder.
+ *
+ * A wildcard is a path segment, so `EXPORT` and `#PRJ` written together are one folder called
+ * `EXPORTVikings` — never what anybody meant by picking `#PRJ` at the end of a folder name. What is
+ * left alone is everything somebody could have meant: the start of the path, a separator already
+ * there, a wildcard right before (`#YYYY#MM#DD` is one folder on purpose, and Compass's own example
+ * writes it), and a joining character typed deliberately, as in `render_#PRJ` or `#PRJ-#SEQ`.
+ */
+const needsSeparator = (before: string): boolean =>
+  before !== '' && /[A-Za-z0-9)\]]$/.test(before) && !ENDS_IN_WILDCARD.test(before);
+
+/** The separator a template is already written with, since one path cannot sensibly hold both. */
+const separatorIn = (value: string, fallback: Separator): Separator => {
+  if (value.includes('/')) {
+    return '/';
+  }
+  return value.includes('\\') ? '\\' : fallback;
+};
+
 /**
  * Puts a wildcard over the range given, which is the selection or the `#…` that was being typed, and
  * says where the caret belongs afterwards: just past what was inserted, so typing carries on.
+ *
+ * The separator that makes it a folder of its own comes with it when one is missing, because the
+ * whole point of picking from a list is not having to know that.
  */
 export const insertWildcard = (
   value: string,
   start: number,
   end: number,
   token: WildcardToken,
+  sep: Separator = '/',
 ): { value: string; caret: number } => {
   const from = Math.max(0, Math.min(value.length, start));
   const to = Math.max(from, Math.min(value.length, end));
-  return { value: value.slice(0, from) + token + value.slice(to), caret: from + token.length };
+  const before = value.slice(0, from);
+  // Never a trailing one: the resolver puts that on the end itself, and one typed here would make
+  // the next thing typed a folder deeper than it looked.
+  const written = `${needsSeparator(before) ? separatorIn(value, sep) : ''}${token}`;
+  return { value: before + written + value.slice(to), caret: from + written.length };
 };
 
 /** The separator this platform's paths are written with. Passed in, so both can be tested anywhere. */
@@ -300,6 +331,95 @@ export const resolveExportPath = (input: PathInput): ResolvedPath => {
     missing: expanded.missing,
     error: '',
   };
+};
+
+/**
+ * Something to say about a path that resolves perfectly well and is still not what was meant.
+ *
+ * `resolveExportPath` answers one question — where does this go — and refuses what it cannot answer.
+ * This is the other half: the paths it can answer for, where the answer is somewhere nobody wanted.
+ * They have to be told apart, because a refusal stops the export and this does not: it is a line of
+ * text next to the field, and the editor is free to mean exactly what they typed.
+ */
+export interface PathAdvice {
+  /** What is probably wrong, as the sheet shows it. */
+  text: string;
+  /** The one sensible repair, when there is one, ready to be applied as it stands. */
+  fix: { label: string; template: string; relative: boolean } | null;
+}
+
+/**
+ * The folders at the root of a Mac, which is what a full path with its leading slash lost looks
+ * like. Kept to the ones that really are at the root of the two systems Premiere runs on: a template
+ * relative to the project could plausibly be called `media` or `var`, and never `Volumes`.
+ */
+const ROOT_FOLDERS = /^(?:Volumes|Users|Applications|Library|System|Network|private|Macintosh HD)(?:[\\/]|$)/i;
+
+const segmentsOf = (text: string): string[] => text.split(/[\\/]/);
+
+/** Puts every segment back without the spaces around it, leaving the separators as they were. */
+const trimSegments = (text: string): string =>
+  text
+    .split(/([\\/])/)
+    .map((part) => (/^[\\/]$/.test(part) ? part : part.trim()))
+    .join('');
+
+export const advisePath = (input: {
+  template: string;
+  relative: boolean;
+  /** What R is hanging the path off, named for the message. */
+  baseName?: string;
+  /** This machine's home folder, so `~` can be offered a real path instead of a warning alone. */
+  home?: string;
+}): PathAdvice | null => {
+  const template = input.template.trim();
+  if (template === '') {
+    return null;
+  }
+  const base = input.baseName ?? 'another folder';
+  if (input.relative) {
+    if (template.startsWith('~')) {
+      const home = (input.home ?? '').trim();
+      return {
+        // Premiere is handed this path as text and creates exactly what it is given, so a `~` here
+        // is a folder called `~` sitting inside the export folder, not the home folder it looks like.
+        text: '~ does not mean your home folder here. It would make a folder actually called ~.',
+        fix: home === '' ? null : { label: 'Write it out in full', template: home + template.slice(1), relative: false },
+      };
+    }
+    if (isAbsolutePath(template)) {
+      return {
+        text: `This is already a full path, but R is on, so it is being added to the end of ${base}.`,
+        fix: { label: 'Turn R off', template, relative: false },
+      };
+    }
+    if (ROOT_FOLDERS.test(template)) {
+      return {
+        text: `This looks like a full path with its first / missing, so it is being added to the end of ${base}.`,
+        fix: { label: 'Add the / and turn R off', template: `/${template}`, relative: false },
+      };
+    }
+  }
+  if (segmentsOf(template).some((part) => part !== '' && part !== part.trim())) {
+    return {
+      text: 'A folder name here starts or ends with a space, and that space is part of the name on disk.',
+      fix: { label: 'Take the spaces out', template: trimSegments(template), relative: input.relative },
+    };
+  }
+  // A server share really does start with two, and only there.
+  const unc = template.startsWith('\\\\');
+  const body = unc ? template.slice(2) : template;
+  if (/[\\/]{2,}/.test(body)) {
+    return {
+      text: 'A doubled separator makes no folder of its own: it resolves as one.',
+      fix: {
+        label: 'Tidy it up',
+        template: `${unc ? '\\\\' : ''}${body.replace(/([\\/])[\\/]+/g, '$1')}`,
+        relative: input.relative,
+      },
+    };
+  }
+  return null;
 };
 
 /** A name safe to write to disk on either platform, since a sequence may be called anything at all. */

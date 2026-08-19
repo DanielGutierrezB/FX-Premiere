@@ -8,9 +8,19 @@ export type ItemKind =
 
 export type MediaType = 'video' | 'audio';
 
+/**
+ * Where a preset is in a library file, and what it is. Premiere writes its whole library out again
+ * whenever it saves and numbers the objects afresh, so `objectId` is a guess at where the preset
+ * will be next time and the three fields under it are what identifies it. They are absent on
+ * references stored before that was understood.
+ */
 export interface PresetRef {
   file: string;
   objectId: string;
+  name?: string;
+  /** The bin it sits in inside the library, empty at the root. */
+  path?: string;
+  mediaType?: MediaType;
 }
 
 export interface CatalogItem {
@@ -19,6 +29,8 @@ export interface CatalogItem {
   name: string;
   matchName?: string;
   group?: string;
+  /** Which half of the timeline a preset belongs on, which its kind cannot say the way an effect's does. */
+  mediaType?: MediaType;
   preset?: PresetRef;
   /** Set on presets captured from a clip, which carry their values inline instead of on disk. */
   captured?: CapturedPreset;
@@ -136,6 +148,12 @@ export interface UnnestSurvey {
   transitions: number;
   multicam: number;
   speedChanges: number;
+  /**
+   * The angles of the first selected multicam clip, named, angle one first, and empty when none is
+   * selected. No API says which angle was on air, so the dialog has to say which one will be left
+   * playing before Enter rather than only reporting it afterwards.
+   */
+  angles: string[];
   /** Nests whose sequence is not in this project, which are refused rather than warned about. */
   missing: number;
   /**
@@ -236,6 +254,8 @@ export interface MulticamProbe {
   isSequence: boolean;
   isMulticam: boolean;
   components: ProbeComponent[];
+  /** The same clip as the QE DOM sees it, which need not carry the same components. */
+  qeComponents: ProbeComponent[];
   /** Names tried on the clip and its project item, with what each one answered. */
   candidates: ProbeEntry[];
 }
@@ -379,6 +399,11 @@ export interface ApplyOutcome {
   /** Clips that should have changed but could not, which is the only case worth interrupting for. */
   failed: number;
   messages: string[];
+  /**
+   * Where the preset that was applied really sits, present only when that was not where the request
+   * pointed. The panel keeps it, so the library is searched once rather than on every apply.
+   */
+  preset?: PresetRef;
 }
 
 export type HostRequest =
@@ -389,7 +414,8 @@ export type HostRequest =
   | { op: 'presets'; presetSources: string[]; knownStamp: string }
   | { op: 'applyEffect'; name: string; matchName?: string; mediaType: MediaType }
   | { op: 'applyTransition'; name: string; mediaType: MediaType; options: TransitionOptions }
-  | { op: 'applyPreset'; preset: PresetRef }
+  /** `presetSources` are the extra libraries to look in when the preset has moved out of its own. */
+  | { op: 'applyPreset'; preset: PresetRef; presetSources: string[] }
   | { op: 'motion'; command: MotionCommand }
   | { op: 'command'; commandId: string }
   | { op: 'applyCaptured'; preset: CapturedPreset }
@@ -533,6 +559,7 @@ export const VIEWS = [
   'compass',
   'settings',
   'inspect',
+  'tools',
 ] as const;
 
 export type View = (typeof VIEWS)[number];

@@ -22,6 +22,7 @@ import { EaseDialog } from './views/ease';
 import { InspectView } from './views/inspect';
 import { PasteDialog } from './views/paste';
 import { SettingsSheet } from './views/settings';
+import { ToolsSheet } from './views/tools';
 import { TransitionDialog } from './views/transition';
 import { UnnestDialog } from './views/unnest';
 
@@ -93,6 +94,8 @@ export class Sheets {
   private readonly settingsSheet: SettingsSheet;
 
   private readonly inspectView: InspectView;
+
+  private readonly toolsSheet: ToolsSheet;
 
   /** What Premiere last said about the open project, read when a sheet that needs it opens. */
   private projectContext: ProjectContext = { ...EMPTY_CONTEXT };
@@ -174,6 +177,7 @@ export class Sheets {
       toast: (message, kind) => host.toast(message, kind),
       back: () => host.back(),
     });
+    this.toolsSheet = new ToolsSheet({ back: () => host.back() });
   }
 
   isSearch(): boolean {
@@ -205,6 +209,9 @@ export class Sheets {
         return;
       case 'inspect':
         this.inspectView.handleKey(event);
+        return;
+      case 'tools':
+        this.toolsSheet.handleKey(event);
         return;
       case 'search':
         return;
@@ -261,6 +268,10 @@ export class Sheets {
           { key: '\u21b5', label: 'save preset', run: () => void this.inspectView.save() },
           { key: 'esc', label: 'back', run: () => this.host.back() },
         ];
+      // Nothing to press but the way out: it is a page to read, and every key it names belongs to
+      // the tool it is describing rather than to this screen.
+      case 'tools':
+        return [{ key: 'esc', label: 'back', run: () => this.host.back() }];
       case 'search':
         return [];
       default: {
@@ -344,6 +355,11 @@ export class Sheets {
     // afterwards would mean drawing the row wrong and then correcting it.
     this.settingsSheet.opened();
     this.settingsSheet.render(this.host.body());
+  }
+
+  openTools(): void {
+    this.enter('tools');
+    this.toolsSheet.render(this.host.body());
   }
 
   /** Reads the clip before showing anything: an inspector with nothing in it explains nothing. */

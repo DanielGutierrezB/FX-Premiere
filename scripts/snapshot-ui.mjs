@@ -106,6 +106,12 @@ window.dispatchEvent(new window.KeyboardEvent('keydown', { key: ',', metaKey: tr
 await settle(30);
 shot('Settings');
 
+window.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+await settle(10);
+window.dispatchEvent(new window.KeyboardEvent('keydown', { key: '/', metaKey: true, bubbles: true }));
+await settle(30);
+shot('What the tools do');
+
 const css = panelCss(root);
 const page = `<!doctype html>
 <html><head><meta charset="utf-8"><title>FX Premiere UI</title>

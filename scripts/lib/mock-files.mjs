@@ -2,7 +2,7 @@
 // timeline mock because nothing here knows what a clip is: this is the half of the host environment
 // that is a disk.
 
-import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 
 /** Every file the host script opens, so a test can prove a parse did not happen. */
@@ -73,6 +73,15 @@ export class FolderStub {
   }
   getFolders() {
     return this.getFiles().filter((entry) => entry instanceof FolderStub);
+  }
+  /** ExtendScript makes the missing parents with it, and answers false rather than throwing. */
+  create() {
+    try {
+      mkdirSync(this.path, { recursive: true });
+      return this.exists;
+    } catch {
+      return false;
+    }
   }
 }
 
@@ -181,5 +190,30 @@ export const writePresetFixture = (directory) => {
   mkdirSync(directory, { recursive: true });
   const file = join(directory, 'fixture.prfpset');
   writeFileSync(file, PRESET_FIXTURE, 'utf8');
+  return file;
+};
+
+/**
+ * The library as Premiere leaves it after a save. Saving does not edit the file in place: Premiere
+ * holds the library in memory and writes the whole of it out again, numbering the objects as it
+ * goes, so every ObjectID moves and one preset can end up under the id another had. `without` names
+ * the presets deleted in Premiere before that save.
+ */
+export const rewritePresetFixture = (file, { shift = 10, without = [] } = {}) => {
+  let text = existsSync(file) ? readFileSync(file, 'utf8') : PRESET_FIXTURE;
+  for (const name of without) {
+    const block = new RegExp(`\t<TreeItem ObjectID="(\\d+)"[\\s\\S]*?<Name>${name}</Name>[\\s\\S]*?</TreeItem>\n`);
+    const match = block.exec(text);
+    if (!match) {
+      throw new Error(`The fixture has no preset called ${name} to delete`);
+    }
+    text = text.replace(match[0], '').replace(new RegExp(`<Item Index="\\d+" ObjectRef="${match[1]}"/>`), '');
+  }
+  text = text.replace(/(ObjectID|ObjectRef)="(\d+)"/g, (_all, attribute, id) => `${attribute}="${Number(id) + shift}"`);
+  writeFileSync(file, text, 'utf8');
+  // The host keeps its parsed copy of a library until the file's size or save date moves, and two
+  // rewrites in the same millisecond would otherwise read as the same library.
+  const when = new Date(Date.now() + 1000);
+  utimesSync(file, when, when);
   return file;
 };

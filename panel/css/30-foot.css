@@ -20,9 +20,11 @@
   display: none;
 }
 
+/* Tight on purpose: the resting line names six things, and the window is only as wide as the
+   numbered bar above it needs. Anything looser and the last of them is off the right edge. */
 .hints {
   display: flex;
-  gap: 11px;
+  gap: 9px;
   flex-shrink: 0;
 }
 

@@ -3,13 +3,13 @@
 // Usage: node scripts/test-host.mjs
 
 import { check, finish } from './lib/check.mjs';
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { FileStub, writePresetFixture } from './lib/mock-files.mjs';
-import { createHost } from './lib/mock-premiere.mjs';
+import { FileStub, fileReads, rewritePresetFixture, writePresetFixture } from './lib/mock-files.mjs';
+import { CYAN, createHost, dropShadowComponent, keyframedColor } from './lib/mock-premiere.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const hostScript = join(root, 'dist', 'host', 'fxpremiere.jsx');
@@ -47,6 +47,11 @@ const presets = items.filter((item) => item.kind === 'preset');
 check('both fixture presets are indexed', presets.length === 2, JSON.stringify(presets.map((item) => item.name)));
 const nested = presets.find((item) => item.name === 'Soft Blur');
 check('nested presets keep their folder path', nested?.group === 'Preset \u00b7 My Folder', nested?.group);
+check(
+  'no preset id carries the library file it was read out of, which an upgrade moves',
+  presets.every((item) => !item.id.includes('.prfpset')),
+  JSON.stringify(presets.map((item) => item.id)),
+);
 
 console.log('\nPresets are stamped rather than re-read');
 const stamped = call({ op: 'presets', presetSources: [fixtureFile], knownStamp: '' });
@@ -55,6 +60,33 @@ const again = call({ op: 'presets', presetSources: [fixtureFile], knownStamp: st
 check('asking again with the same stamp reads nothing back', again.data.items === null, JSON.stringify(again.data));
 check('and answers with the same stamp it was given', again.data.presetStamp === stamped.data.presetStamp);
 check('the stamp is short enough to carry on every open', stamped.data.presetStamp.length < 40, stamped.data.presetStamp);
+
+console.log('\nThe same preset in two libraries');
+{
+  // Upgrading Premiere copies the preset library forward, so an editor who has been through five
+  // versions has five libraries holding the same "Soft Blur", and the palette listed all five one
+  // under the other. A row shows a name, a bin and a media type: two presets that agree on all
+  // three are one row to whoever is reading it.
+  const old = writePresetFixture(join(stage, 'library-2024'));
+  const live = writePresetFixture(join(stage, 'library-now'));
+  utimesSync(old, new Date('2024-01-01T00:00:00Z'), new Date('2024-01-01T00:00:00Z'));
+  const both = call({ op: 'presets', presetSources: [old, live], knownStamp: '' }).data.items;
+  check(
+    'a preset in both is listed once, not once per library',
+    both.length === 2,
+    JSON.stringify(both.map((item) => `${item.name} [${item.group}]`)),
+  );
+  check(
+    'and the copy kept is from the library Premiere last wrote to',
+    both.every((item) => item.preset.file === live),
+    JSON.stringify(both.map((item) => item.preset.file)),
+  );
+  check(
+    'both files were still read, because only their contents can say they hold the same presets',
+    fileReads.includes(old) && fileReads.includes(live),
+    JSON.stringify(fileReads.filter((path) => path.indexOf('library-') >= 0)),
+  );
+}
 
 console.log('\nWindows compares paths without caring about case');
 FileStub.fs = 'Windows';
@@ -347,6 +379,137 @@ check(
   JSON.stringify(blursOnB().map((component) => component.paramList[0].current)),
 );
 
+console.log('\nCapturing a colour and replaying it');
+/**
+ * The path the editor took: a clip with a colour on it, captured, written to disk, read back and
+ * replayed onto another clip whose copy of the effect arrives at its own default. Answers with what
+ * was written down and what landed, which is the whole of what "the colour I saved" means.
+ */
+let colorRun = 0;
+const replayColor = (color, keys = null) => {
+  colorRun += 1;
+  const at = 20 + colorRun * 8;
+  const source = world.addClip({ name: `shadow-from-${colorRun}.mp4`, start: at, end: at + 3, track: 1 });
+  const target = world.addClip({ name: `shadow-onto-${colorRun}.mp4`, start: at + 4, end: at + 7, track: 1 });
+  const shadow = dropShadowComponent(color);
+  if (keys) {
+    keyframedColor(shadow.paramList[0], keys);
+  }
+  source.componentList.push(shadow);
+
+  world.select(source.name);
+  const taken = call({ op: 'capture' });
+  const file = join(stage, `shadow-${colorRun}.fxpreset.json`);
+  writeFileSync(file, JSON.stringify(taken.data, null, 2), 'utf8');
+  const reloaded = JSON.parse(readFileSync(file, 'utf8'));
+
+  world.select(target.name);
+  const replayed = call({ op: 'applyCaptured', preset: reloaded });
+  const shadowOf = (clip) => clip.componentList.find((component) => component.matchName === 'AE.ADBE Drop Shadow');
+  return {
+    taken,
+    replayed,
+    stored: reloaded.effects.find((effect) => effect.matchName === 'AE.ADBE Drop Shadow')?.params[0],
+    landed: shadowOf(target)?.paramList[0],
+  };
+};
+
+const BLACK = [255, 0, 0, 0];
+const black = replayColor(BLACK);
+check('capturing a clip with a colour on it succeeds', black.taken.ok, black.taken.error);
+check('and replaying it succeeds', black.replayed.ok, JSON.stringify(black.replayed.error));
+// Premiere answers `getValue` on a colour with a packed 64-bit integer and takes only normalised
+// channels back, so a colour written down as it was read is written down in a form that cannot be
+// replayed. Storing the channels is what makes the two halves of the trip agree.
+check(
+  'a colour is written down as channels, not as the packed integer Premiere answers with',
+  Array.isArray(black.stored?.value) && black.stored.value.length === 4,
+  JSON.stringify(black.stored?.value),
+);
+check(
+  'an opaque black shadow comes back opaque black rather than the effect default',
+  JSON.stringify(black.landed?.bytes()) === JSON.stringify(BLACK),
+  JSON.stringify(black.landed?.bytes()),
+);
+check(
+  'the rest of the effect lands with it',
+  black.landed && black.landed.calls.length > 0 && JSON.stringify(black.landed.bytes()) !== JSON.stringify(CYAN),
+  JSON.stringify(black.landed?.bytes()),
+);
+
+const WHITE = [255, 255, 255, 255];
+const white = replayColor(WHITE);
+check(
+  'pure white survives, though its blue channel is the one a double rounds away',
+  JSON.stringify(white.landed?.bytes()) === JSON.stringify(WHITE),
+  JSON.stringify(white.landed?.bytes()),
+);
+check(
+  'and it is stored as four channels at full scale',
+  JSON.stringify(white.stored?.value) === JSON.stringify([1, 1, 1, 1]),
+  JSON.stringify(white.stored?.value),
+);
+
+// The packed value of an opaque colour is over 1.8e19, where a double can only land on multiples of
+// 2048. That is the whole blue channel, and rounding a full blue up carries into green: cyan and
+// white are the colours where the loss is plainest.
+const cyan = replayColor(CYAN);
+check(
+  'a full blue channel is not lost to the rounding, nor read as the carry it leaves in green',
+  JSON.stringify(cyan.stored?.value) === JSON.stringify([1, 0, 1, 1]),
+  JSON.stringify(cyan.stored?.value),
+);
+check(
+  'a colour whose packed value cannot fit in a double still comes back',
+  JSON.stringify(cyan.landed?.bytes()) === JSON.stringify(CYAN),
+  JSON.stringify(cyan.landed?.bytes()),
+);
+
+const HALF = [128, 200, 100, 0];
+const half = replayColor(HALF);
+check(
+  'a half-transparent colour keeps its alpha',
+  JSON.stringify(half.landed?.bytes()) === JSON.stringify(HALF),
+  JSON.stringify(half.landed?.bytes()),
+);
+
+const RED = [255, 255, 0, 0];
+const animated = replayColor(BLACK, [
+  [0, BLACK],
+  [1, RED],
+]);
+check(
+  'a keyframed colour is stored as channels at every key',
+  animated.stored?.keyframes.length === 2 && animated.stored.keyframes.every((key) => Array.isArray(key.value)),
+  JSON.stringify(animated.stored?.keyframes),
+);
+check(
+  'and every key lands with the colour it was captured with',
+  JSON.stringify(animated.landed?.keyBytes()) === JSON.stringify([BLACK, RED]),
+  JSON.stringify(animated.landed?.keyBytes()),
+);
+
+console.log('\nCaptured presets saved before colours were understood');
+// The presets already on this machine hold the packed integer. They are read back rather than
+// thrown away: the number in the file is the same one a fresh capture would start from, so the
+// same decode recovers the same colour and nobody has to save their work again.
+{
+  const stale = replayColor(BLACK);
+  const target = world.addClip({ name: 'shadow-stale.mp4', start: 200, end: 203, track: 1 });
+  const preset = JSON.parse(JSON.stringify(stale.taken.data));
+  const shadow = preset.effects.find((effect) => effect.matchName === 'AE.ADBE Drop Shadow');
+  shadow.params[0].value = 18374686479671624000;
+  world.select('shadow-stale.mp4');
+  const replayed = call({ op: 'applyCaptured', preset });
+  check('a preset holding the old packed colour still replays', replayed.ok, JSON.stringify(replayed.error));
+  const landed = target.componentList.find((component) => component.matchName === 'AE.ADBE Drop Shadow');
+  check(
+    'and the black it was saved with comes back black',
+    JSON.stringify(landed?.paramList[0].bytes()) === JSON.stringify(BLACK),
+    JSON.stringify(landed?.paramList[0].bytes()),
+  );
+}
+
 console.log('\nUndo');
 const undone = call({ op: 'undo' });
 check('undo reaches the QE undo stack', undone.ok && undone.data.undone === true, JSON.stringify(undone.data));
@@ -356,6 +519,143 @@ console.log('\nEmpty selection is reported clearly');
 world.select();
 const empty = call({ op: 'applyEffect', name: 'Gaussian Blur', mediaType: 'video' });
 check('no selection returns a helpful error', empty.ok === false && /select at least one clip/i.test(empty.error), empty.error);
+
+console.log('\nWhich of Premiere’s own preset libraries is read');
+{
+  // Each of these files is a whole library. Upgrading Premiere copies it into the new version's
+  // folder and leaves the old one there, and a profile from before you signed in to Creative Cloud
+  // sits beside the one in use, so a preset deleted in Premiere survives in every copy but the live
+  // one. Reading them all was listing an editor's presets as they were before they ever tidied up.
+  const libraries = mkdtempSync(join(tmpdir(), 'fxp-profiles-'));
+  const premiere = join(libraries, 'Documents', 'Adobe', 'Premiere Pro');
+  const library = (version, profile, name, when) => {
+    const folder = join(premiere, version, profile);
+    const seed = writePresetFixture(folder);
+    // Premiere's own name for it, taken from the host so the test cannot drift from what it looks for.
+    const file = join(folder, FXP.PRESET_FILE_NAME);
+    writeFileSync(file, readFileSync(seed, 'utf8').replaceAll('Soft Blur', name), 'utf8');
+    rmSync(seed);
+    utimesSync(file, new Date(when), new Date(when));
+    return file;
+  };
+  const oldVersion = library('25.0', 'Profile-me', 'Deleted Last Year', '2025-06-01T00:00:00Z');
+  library('26.0', 'Profile-CreativeCloud-', 'Deleted Before Signing In', '2024-11-29T00:00:00Z');
+  const live = library('26.0', 'Profile-me', 'Still In Premiere', Date.now());
+
+  const found = createHost({ hostScript, documentsRoot: join(libraries, 'Documents') });
+  check(
+    'the library read is the one this Premiere is saving to',
+    JSON.stringify(found.FXP.discoverPresetFiles()) === JSON.stringify([live]),
+    JSON.stringify(found.FXP.discoverPresetFiles()),
+  );
+  const listed = found.call({ op: 'presets', presetSources: [], knownStamp: '' }).data.items.map((item) => item.name);
+  check('so a preset still in Premiere is listed', listed.includes('Still In Premiere'), JSON.stringify(listed));
+  check(
+    'and presets deleted in Premiere are not, though old copies of the library still hold them',
+    !listed.includes('Deleted Last Year') && !listed.includes('Deleted Before Signing In'),
+    JSON.stringify(listed),
+  );
+
+  // A Premiere that has not written its own library yet is about to inherit the previous version's,
+  // and showing nothing at all until it does would be worse than showing what is coming.
+  rmSync(join(premiere, '26.0'), { recursive: true, force: true });
+  const upgraded = createHost({ hostScript, documentsRoot: join(libraries, 'Documents') });
+  check(
+    'with no library for this version, the newest older one is read instead',
+    JSON.stringify(upgraded.FXP.discoverPresetFiles()) === JSON.stringify([oldVersion]),
+    JSON.stringify(upgraded.FXP.discoverPresetFiles()),
+  );
+  rmSync(libraries, { recursive: true, force: true });
+}
+
+console.log('\nA stored preset after Premiere has rewritten its library');
+{
+  // Premiere holds its preset library in memory and writes the whole of it out again on every save,
+  // numbering the objects as it goes. So the ObjectID a favourite was stored with is a place and not
+  // a name: by the next save it can be empty, and it can hold a different preset entirely. What the
+  // palette shows of a preset — its name, its bin and whether it is video or audio — is what an
+  // editor picked the row by, so that is what has to decide which preset is applied.
+  const shelf = mkdtempSync(join(tmpdir(), 'fxp-renumber-'));
+  const library = writePresetFixture(shelf);
+  const saved = createHost({ hostScript, documentsRoot: join(shelf, 'Documents') });
+  const indexed = saved.call({ op: 'presets', presetSources: [library], knownStamp: '' }).data.items;
+  const zoomRef = indexed.find((item) => item.name === 'Zoom In Test').preset;
+  const blurRef = indexed.find((item) => item.name === 'Soft Blur').preset;
+  check(
+    'a preset row says what it is, not only where it was found',
+    zoomRef.name === 'Zoom In Test' && zoomRef.mediaType === 'video' && zoomRef.path === '',
+    JSON.stringify(zoomRef),
+  );
+  const blursOnA = () =>
+    saved.world.clips.clipA.componentList.filter((component) => component.matchName === 'AE.ADBE Gaussian Blur 2');
+  const apply = (preset) => saved.call({ op: 'applyPreset', preset, presetSources: [library] });
+
+  // The save: the same two presets, every id moved. "Soft Blur" was stored under 20, and 20 now
+  // belongs to the tree item for "Zoom In Test".
+  rewritePresetFixture(library, { shift: 10 });
+  const rowIds = (items) =>
+    items
+      .map((item) => item.id)
+      .sort()
+      .join(', ');
+  const renumbered = saved.call({ op: 'presets', presetSources: [library], knownStamp: '' }).data.items;
+  check(
+    'a row keeps the same id through a save that renumbered the library',
+    rowIds(renumbered) === rowIds(indexed),
+    `${rowIds(indexed)} -> ${rowIds(renumbered)}`,
+  );
+  check(
+    'and the id says which preset it is rather than where it was read from',
+    rowIds(indexed) === 'preset:Soft Blur:video:My Folder, preset:Zoom In Test:video',
+    rowIds(indexed),
+  );
+  const blursBefore = blursOnA().length;
+  const moved = apply(zoomRef);
+  check('a stored id that now points at nothing still finds its preset', moved.ok && moved.data.applied === 2, JSON.stringify(moved.data ?? moved.error));
+  check('and the panel is told where it moved to', moved.data?.preset?.objectId === '20', JSON.stringify(moved.data?.preset));
+  check(
+    'the preset that was applied is the intrinsic one it named',
+    blursOnA().length === blursBefore,
+    `${blursBefore} -> ${blursOnA().length}`,
+  );
+
+  const reused = apply(blurRef);
+  check('an id Premiere has given to another preset applies the one that was asked for', reused.ok && blursOnA().length === blursBefore + 1, JSON.stringify(reused.data ?? reused.error));
+  check(
+    'which is the preset the row named, with its own values',
+    blursOnA().at(-1).paramList[0].current === 25.5,
+    String(blursOnA().at(-1).paramList[0].current),
+  );
+  check('and it is reported at the id it really has now', reused.data?.preset?.objectId === '30', JSON.stringify(reused.data?.preset));
+
+  // Applying it again from where it was found: nothing moved this time, so there is nothing to say.
+  const settled = apply(reused.data?.preset ?? blurRef);
+  check('a reference that is still good is applied without a word about moving', settled.ok && settled.data.preset === undefined, JSON.stringify(settled.data ?? settled.error));
+
+  // The library an upgrade left behind: the file the reference names is not there at all, and the
+  // preset it names is in the one Premiere writes to now.
+  const carried = apply({ ...blurRef, file: join(shelf, 'from-an-older-premiere.prfpset') });
+  check(
+    'a preset whose library is gone is found in the one being read now',
+    carried.ok && carried.data?.preset?.file === library,
+    JSON.stringify(carried.data?.preset ?? carried.error),
+  );
+
+  // Now the editor deletes "Soft Blur" in Premiere, which writes the library out again without it
+  // and leaves the id it was last found at holding "Zoom In Test".
+  rewritePresetFixture(library, { shift: 10, without: ['Soft Blur'] });
+  const scaleWrites = () => saved.world.clips.clipA.componentList[0].paramList[1].calls.length;
+  const writesBefore = scaleWrites();
+  const gone = apply(reused.data?.preset ?? blurRef);
+  check('a preset deleted in Premiere is refused by name', gone.ok === false && /Soft Blur/.test(gone.error), gone.error);
+  check('and the refusal says what happened to it, not which file was read', /renamed or deleted/.test(gone.error) && !/\.prfpset/.test(gone.error), gone.error);
+  check(
+    'the preset now sitting at its id is not applied in its place',
+    scaleWrites() === writesBefore,
+    `${writesBefore} -> ${scaleWrites()}`,
+  );
+  rmSync(shelf, { recursive: true, force: true });
+}
 
 rmSync(stage, { recursive: true, force: true });
 finish('host');

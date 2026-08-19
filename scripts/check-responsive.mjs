@@ -107,6 +107,7 @@ for (const [label, open] of [
   }],
   ['settings', () => press(',', { metaKey: true })],
   ['the effects on this clip', () => press('i', { metaKey: true })],
+  ['what the tools do', () => press('/', { metaKey: true })],
 ]) {
   views.push({ label, markup: await sheet(open) });
 }

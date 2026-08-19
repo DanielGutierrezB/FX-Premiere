@@ -3,7 +3,7 @@
 // the disk — where the PNG ended up, what the folder is called, which key was written — rather than
 // the classes each one renders.
 
-import { existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { check } from './check.mjs';
@@ -242,7 +242,46 @@ export const pasteAndCompassViews = async ({ window, world, cep, cepCalls, stage
 
   const inputs = () => [...window.document.querySelectorAll('.compass__input')];
   const previews = () => [...window.document.querySelectorAll('.compass__preview')].map((node) => node.textContent ?? '');
-  check('with a field for each of the two paths, plus the preset', inputs().length === 3, String(inputs().length));
+  const switches = () => [...window.document.querySelectorAll('.switch')];
+  const named = (label) => [...window.document.querySelectorAll('.button')].find((node) => node.textContent.startsWith(label));
+  check('with a field for each of the two paths, plus the export preset', inputs().length === 3, String(inputs().length));
+
+  // The switch at the top has to mean it. A screen of live fields under a switch that says nothing
+  // is being steered is how a path gets carefully typed into a Compass that is turned off.
+  check('it opens switched off, the way the settings have it', savedSettings().compass.enabled === false);
+  check('so every field under the switch is disabled', inputs().every((input) => input.disabled), String(inputs().filter((input) => input.disabled).length));
+  check('and applying is too', named('Apply now').disabled === true);
+  await click(switches()[0]);
+  check('turning it on is remembered', savedSettings().compass.enabled === true);
+  check('and hands the fields back', inputs().every((input) => !input.disabled), String(inputs().filter((input) => input.disabled).length));
+
+  // Clicking into a field used to rebuild the sheet, which threw away the very field the caret had
+  // just landed in: the screen looked right and would not take a keystroke.
+  inputs()[0].focus();
+  await settle(4);
+  check(
+    'clicking into a path leaves the caret in the field that is on screen',
+    window.document.activeElement === inputs()[0],
+    window.document.activeElement?.className ?? 'nothing focused',
+  );
+
+  // And keeps it. The search box asks for the caret back twice more after the palette opens, in case
+  // Premiere took it, and a sheet opened inside that fifth of a second used to have the caret pulled
+  // out from under it: the field could be clicked into and would not keep a keystroke.
+  await press('Escape');
+  await settle(6);
+  await type('compass export paths');
+  await press('Enter');
+  await settle(20);
+  inputs()[0].focus();
+  await new Promise((resolve) => setTimeout(resolve, 260));
+  await settle(4);
+  check(
+    'and keeps it while the search box is still asking for it back',
+    window.document.activeElement === inputs()[0],
+    window.document.activeElement?.className ?? 'nothing focused',
+  );
+
   check('the media path previews as a real folder', /\/project\/EXPORT\/\d{8}\/$/.test(previews()[0]), previews()[0]);
   check('and so does the frame path', previews()[1].endsWith('/project/EXPORT/Frames/'), previews()[1]);
 
@@ -259,7 +298,6 @@ export const pasteAndCompassViews = async ({ window, world, cep, cepCalls, stage
     input.dispatchEvent(new window.Event('input', { bubbles: true }));
     await settle(4);
   };
-  check('nothing is offered before a # is typed', options().length === 0, String(options().length));
   await typeInto(media, 'EXPORT/');
   check('a path with no wildcard in it offers none', options().length === 0, String(options().length));
   await typeInto(media, 'EXPORT/#');
@@ -297,9 +335,144 @@ export const pasteAndCompassViews = async ({ window, world, cep, cepCalls, stage
   check('the path starts out relative', relative().className.includes('compass__relative--on'), relative().className);
   await click(relative());
   check('the toggle turns it absolute', savedSettings().compass.media.relative === false, JSON.stringify(savedSettings().compass.media));
-  check('and the preview refuses a relative template used as an absolute one', previews()[0] === '\u2014' || previews()[0].includes('absoluta'), previews()[0]);
+  check('and the row says why there is no path, where the path would have been', previews()[0].includes('not absolute'), previews()[0]);
   await click(window.document.querySelectorAll('.compass__relative')[0]);
   check('turning it back restores the preview', previews()[0].endsWith('/project/EXPORT/Mock Sequence/'), previews()[0]);
+  check(
+    'which shows the folder R hung it off apart from the part that was typed',
+    (window.document.querySelector('.compass__from')?.textContent ?? '') === `${projectRoot}/`,
+    window.document.querySelector('.compass__from')?.textContent ?? 'nothing dimmed',
+  );
+
+  // A wildcard nobody has heard of is a wildcard nobody uses, so arriving in the field is what brings
+  // the list up: today it took a `#`, and there was nothing anywhere to say that.
+  const frame = inputs()[1];
+  media.blur();
+  frame.focus();
+  await settle(4);
+  check('arriving in a field offers every wildcard, unasked', options().length === 10, String(options().length));
+  await press('Escape');
+  check('Escape puts it away', options().length === 0, String(options().length));
+  frame.blur();
+  frame.focus();
+  await settle(4);
+  check('and coming back into the field brings it up again', options().length === 10, String(options().length));
+
+  // A list that opened on its own must not take the keys the sheet owns: nothing in it is pointed at
+  // until an arrow says so, and until then Tab is still Tab.
+  const onField = () => window.document.querySelector('.compass__path--active .field__label')?.textContent ?? '';
+  await press('Tab');
+  await settle(4);
+  check('Tab moves on rather than taking a wildcard nobody pointed at', onField() === 'Export Path', onField());
+  check('and the field it lands in offers its own', options().length === 10, String(options().length));
+  await press('ArrowDown');
+  check('an arrow steps into the list', (window.document.querySelector('.compass__option--active')?.textContent ?? '').includes('#PROD'), pointed());
+  await press('Escape');
+
+  // A wildcard is a folder of its own, so it arrives with the separator that makes it one — and not
+  // where one would be wrong, which is what `#YYYY#MM#DD` is.
+  // Looked up rather than held on to: the sheet is rebuilt whenever R is pressed, and a field kept
+  // from before that is a node nothing on screen is showing any more.
+  const mediaField = () => inputs()[0];
+  const enterField = async (value) => {
+    const input = mediaField();
+    input.blur();
+    input.value = value;
+    input.dispatchEvent(new window.Event('input', { bubbles: true }));
+    await settle(2);
+    input.selectionStart = value.length;
+    input.selectionEnd = value.length;
+    input.focus();
+    await settle(4);
+  };
+  const takeOption = async (token) => {
+    const option = options().find((node) => (node.textContent ?? '').includes(token));
+    option?.dispatchEvent(new window.MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+    await settle(4);
+  };
+  await enterField('EXPORT');
+  await takeOption('#PRJ');
+  check('picking one after a folder name writes the / that was missing', mediaField().value === 'EXPORT/#PRJ', mediaField().value);
+  await enterField('EXPORT/');
+  await takeOption('#PRJ');
+  check('and does not double one that is already there', mediaField().value === 'EXPORT/#PRJ', mediaField().value);
+  await enterField('EXPORT/#YYYY');
+  await takeOption('#MM');
+  check('nor split a date, which is one folder on purpose', mediaField().value === 'EXPORT/#YYYY#MM', mediaField().value);
+
+  // A list pinned to the left edge of a long path points at nothing in particular, so it goes under
+  // the caret. Nothing in this DOM has a width of its own, so one is lent to it: the list is what it
+  // really is and everything else is as wide as its text, which is enough to place a caret with.
+  const realWidth = Object.getOwnPropertyDescriptor(window.HTMLElement.prototype, 'offsetWidth');
+  Object.defineProperty(window.HTMLElement.prototype, 'offsetWidth', {
+    configurable: true,
+    get() {
+      return this.classList.contains('compass__suggest') ? 240 : (this.textContent ?? '').length * 7;
+    },
+  });
+  const listLeft = () => parseFloat(window.document.querySelector('.compass__suggest--open')?.style.left ?? 'NaN');
+  await enterField('EXPORT/2026/CLIENT');
+  check('the list opens under the caret, not at the left edge of the field', listLeft() > 100, String(listLeft()));
+  await enterField(`EXPORT/${'a'.repeat(400)}`);
+  check(
+    'and a caret past the edge of the window pulls it back inside',
+    listLeft() + 240 <= window.innerWidth,
+    `${listLeft()} + 240 in ${window.innerWidth}`,
+  );
+  Object.defineProperty(window.HTMLElement.prototype, 'offsetWidth', realWidth);
+
+  // The path that started this: it reads as a full one, it is missing its leading slash, and R is on,
+  // so Premiere was quietly exporting into a folder called Volumes inside the project.
+  const rows = () => [...window.document.querySelectorAll('.compass__path')];
+  const warnText = () => rows()[0].querySelector('.compass__warn--on')?.textContent ?? '';
+  const fixButton = () => rows()[0].querySelector('.compass__warn--on .compass__fix');
+  const write = async (value) => {
+    const input = mediaField();
+    input.focus();
+    input.value = value;
+    input.dispatchEvent(new window.Event('input', { bubbles: true }));
+    input.dispatchEvent(new window.Event('change', { bubbles: true }));
+    await settle(6);
+  };
+  await write('Volumes/Extreme_SSD/2607_bi-deep-research-ai/Project');
+  check('a full path with its first / missing is called out', /first \/ missing/.test(warnText()), warnText() || 'nothing said');
+  check('and the message names what it is being added to', /project's own folder/.test(warnText()), warnText());
+  check('the preview does resolve, which is the whole problem with it', previews()[0].includes('/project/Volumes/Extreme_SSD/'), previews()[0]);
+  await click(window.document.querySelectorAll('.compass__relative')[0]);
+  check('turning R off takes the warning with it', warnText() === '', warnText());
+  await click(window.document.querySelectorAll('.compass__relative')[0]);
+  check('and turning it back on brings it back', /first \/ missing/.test(warnText()), warnText());
+  check('with the fix offered rather than only named', fixButton()?.textContent === 'Add the / and turn R off', fixButton()?.textContent ?? 'no fix offered');
+  await click(fixButton());
+  check(
+    'taking it writes the path they meant',
+    savedSettings().compass.media.template === '/Volumes/Extreme_SSD/2607_bi-deep-research-ai/Project' &&
+      savedSettings().compass.media.relative === false,
+    JSON.stringify(savedSettings().compass.media),
+  );
+  check('and there is nothing left to warn about', warnText() === '', warnText());
+  check('the preview is the folder that was typed', previews()[0] === '/Volumes/Extreme_SSD/2607_bi-deep-research-ai/Project/', previews()[0]);
+
+  // The same mistake with the slash in place, which R turns into a path bolted onto another one.
+  await click(window.document.querySelectorAll('.compass__relative')[0]);
+  check('a full path with R on is called out too', /already a full path/.test(warnText()), warnText() || 'nothing said');
+  await click(fixButton());
+  check('and its fix is simply to turn R off', savedSettings().compass.media.relative === false, JSON.stringify(savedSettings().compass.media));
+
+  await click(window.document.querySelectorAll('.compass__relative')[0]);
+  await write('~/Movies/EXPORT');
+  check('a ~ is called out as the folder it would really make', /~ does not mean your home folder/.test(warnText()), warnText() || 'nothing said');
+  await click(fixButton());
+  check(
+    'and is offered this machine’s home folder written out',
+    savedSettings().compass.media.template.startsWith('/') &&
+      savedSettings().compass.media.template.endsWith('/Movies/EXPORT'),
+    savedSettings().compass.media.template,
+  );
+
+  await write('EXPORT/#SEQ');
+  await click(window.document.querySelectorAll('.compass__relative')[0]);
+  check('the path goes back to the one the rest of this runs on', previews()[0].endsWith('/project/EXPORT/Mock Sequence/'), previews()[0]);
 
   // Typing a path is fine for one somebody knows by heart, and hopeless for one they are looking for.
   const browse = () => [...window.document.querySelectorAll('.compass__browse')];
@@ -333,35 +506,74 @@ export const pasteAndCompassViews = async ({ window, world, cep, cepCalls, stage
   await click(window.document.querySelectorAll('.compass__relative')[0]);
   check('the path can be put back to a relative one', savedSettings().compass.media.relative === true, JSON.stringify(savedSettings().compass.media));
 
-  const switches = () => [...window.document.querySelectorAll('.switch')];
+  const notice = () => text('.compass__notice');
+  const project = () => savedSettings().compass.overrides[world.projectPath];
   await click(switches()[1]);
-  check('a project can take an override of its own', savedSettings().compass.overrides[world.projectPath]?.enabled === true, JSON.stringify(savedSettings().compass.overrides));
+  check('a project can take a pair of paths of its own', project()?.enabled === true, JSON.stringify(savedSettings().compass.overrides));
   check(
-    'which starts as a copy of the global pair rather than empty',
-    savedSettings().compass.overrides[world.projectPath].media.template === 'EXPORT/#SEQ',
-    JSON.stringify(savedSettings().compass.overrides[world.projectPath].media),
+    'which starts empty, since the reason to have one is that it goes somewhere else',
+    project().media.template === '' && project().frame.template === '',
+    JSON.stringify(project()),
   );
-  inputs()[0].focus();
-  inputs()[0].value = 'SOLO-ESTE';
-  inputs()[0].dispatchEvent(new window.Event('input', { bubbles: true }));
-  inputs()[0].dispatchEvent(new window.Event('change', { bubbles: true }));
-  await settle(6);
-  check('editing now writes to the override', savedSettings().compass.overrides[world.projectPath].media.template === 'SOLO-ESTE', JSON.stringify(savedSettings().compass.overrides[world.projectPath].media));
-  check('and leaves the global pair alone', savedSettings().compass.media.template === 'EXPORT/#SEQ', savedSettings().compass.media.template);
+  check('the fields are empty with it, waiting to be told where', inputs()[0].value === '' && inputs()[1].value === '', `${inputs()[0].value} | ${inputs()[1].value}`);
+  check('and the sheet says whose paths these now are', /Only Vikings exports here/.test(notice()), notice());
+  const typeAndSave = async (input, value) => {
+    input.focus();
+    input.value = value;
+    input.dispatchEvent(new window.Event('input', { bubbles: true }));
+    input.dispatchEvent(new window.Event('change', { bubbles: true }));
+    await settle(6);
+  };
+  await typeAndSave(inputs()[0], 'SOLO-ESTE');
+  await typeAndSave(inputs()[1], 'SOLO-ESTE/Frames');
+  check('editing now writes to the project’s pair', project().media.template === 'SOLO-ESTE', JSON.stringify(project().media));
+  check('and leaves the general one alone', savedSettings().compass.media.template === 'EXPORT/#SEQ', savedSettings().compass.media.template);
+
+  // Both pairs are kept, so switching between them costs nothing and neither has to be typed twice.
+  await click(switches()[1]);
+  check('switching it off puts the general path back on screen', inputs()[0].value === 'EXPORT/#SEQ', inputs()[0].value);
+  check('and takes the notice with it', notice() === '', notice());
+  check('while the project keeps its own pair, switched off', project().enabled === false && project().media.template === 'SOLO-ESTE', JSON.stringify(project()));
+  await click(switches()[1]);
+  check('switching it on again brings this project’s back rather than emptying it a second time', inputs()[0].value === 'SOLO-ESTE', inputs()[0].value);
 
   await press('Tab');
   await settle(4);
   const active = () => window.document.querySelector('.compass__path--active .field__label')?.textContent ?? '';
-  check('Tab walks to the frame path', active() === 'Export Frame', active());
+  check('Tab walks to the frame path', active() === 'Export Frame Path', active());
   await press('Tab');
-  check('and back round to the media one', active() === 'Export Media', active());
+  check('and back round to the media one', active() === 'Export Path', active());
 
   world.properties.set('MZ.Prefs.Export.Media.Path', '/nothing/yet/');
   await press('Enter');
   await settle(30);
   check('Enter points Premiere at the resolved path', world.properties.get('MZ.Prefs.Export.Media.Path').endsWith('/project/SOLO-ESTE/'), world.properties.get('MZ.Prefs.Export.Media.Path'));
-  check('and the folder is on disk', existsSync(join(projectRoot, 'SOLO-ESTE')));
   check('with the round trip reported as a success', /is pointed at/.test(toastText()), toastText());
+
+  // Pointing Premiere somewhere is not a reason for a folder to exist. This runs when a project
+  // opens and every time the sequence changes, so with a date in the template it used to leave an
+  // empty folder behind for every project an editor merely opened, on every day they opened it.
+  check('applying does not create the folder', !existsSync(join(projectRoot, 'SOLO-ESTE')));
+  await press('Enter');
+  await settle(30);
+  check('and applying a second time still does not', !existsSync(join(projectRoot, 'SOLO-ESTE')));
+  const wasSequence = world.current;
+  world.current = world.nestedSequences.nested;
+  await press('Enter');
+  await settle(30);
+  check('nor does the sequence changing under it', !existsSync(join(projectRoot, 'SOLO-ESTE')));
+  world.current = wasSequence;
+  await settle(10);
+
+  // Which is worth saying out loud, because a path that is not there yet is exactly the thing to
+  // know before exporting into it.
+  const rowWarn = (index) => rows()[index].querySelector('.compass__warn--on')?.textContent ?? '';
+  check('the row says the folder is not there yet', /not on disk yet/.test(rowWarn(0)), rowWarn(0) || 'nothing said');
+  check('and that nothing is going to make it behind their back', /Nothing is created until an export goes there/.test(rowWarn(0)), rowWarn(0));
+  mkdirSync(join(projectRoot, 'SOLO-ESTE'), { recursive: true });
+  await typeAndSave(inputs()[0], 'SOLO-ESTE');
+  check('a folder that is already there is simply used, with nothing said about it', rowWarn(0) === '', rowWarn(0));
+  rmSync(join(projectRoot, 'SOLO-ESTE'), { recursive: true, force: true });
 
   // A Premiere that takes the write and keeps its own value. The stored value has to go back to
   // something else first, or the previous successful write would still be sitting there to read.
@@ -377,6 +589,15 @@ export const pasteAndCompassViews = async ({ window, world, cep, cepCalls, stage
   check('and the user is pointed at the fallback that does work', /Export via Compass/.test(toastText()), toastText());
   world.readOnlyProperties.delete('MZ.Prefs.Export.Media.Path');
 
+  // The list that comes up on the way into a field is what Escape answers first. Only once there is
+  // nothing on screen to put away does Escape mean the sheet.
+  inputs()[0].blur();
+  await settle(4);
+  inputs()[0].focus();
+  await settle(4);
+  await press('Escape');
+  await settle(4);
+  check('Escape with the wildcard list up puts the list away and stays', Boolean(window.document.querySelector('.compass')));
   await press('Escape');
   await settle(10);
   check('Escape goes back to the search view', !window.document.querySelector('.compass'));
@@ -387,9 +608,14 @@ export const pasteAndCompassViews = async ({ window, world, cep, cepCalls, stage
   await settle(30);
   check('without a preset it says which setting is missing rather than queueing', /\.epr/.test(toastText()), toastText());
   check('and nothing reached Media Encoder', world.encodeCalls.length === 0, String(world.encodeCalls.length));
+  // An export that was refused is not a render, and a folder made for one would outlive it.
+  check('an export that never happened leaves no folder behind', !existsSync(join(projectRoot, 'SOLO-ESTE')));
 
   const settings = savedSettings();
   settings.compass.presetFile = '/presets/h264.epr';
+  // Left open, so what the export reported is still on screen to read: a palette that dismisses
+  // itself on success takes its own report with it.
+  settings.closeAfterApply = false;
   writeFileSync(join(stage, 'Library', 'Application Support', 'FX Premiere', 'settings.json'), JSON.stringify(settings, null, 2), 'utf8');
   await summon();
   await type('export via compass');
@@ -398,4 +624,13 @@ export const pasteAndCompassViews = async ({ window, world, cep, cepCalls, stage
   check('with one, the sequence is queued', world.encodeCalls.length === 1, String(world.encodeCalls.length));
   check('at the path Compass resolved, named after the sequence', world.encodeCalls[0].output.endsWith('/project/SOLO-ESTE/Mock Sequence'), world.encodeCalls[0].output);
   check('using the chosen preset', world.encodeCalls[0].preset === '/presets/h264.epr', world.encodeCalls[0].preset);
+  // Media Encoder does not make the folder it is handed: a queue whose output directory is missing
+  // fails outright. So the render is where the folder finally appears, and it appears once.
+  check('the render is what brings the folder into being', existsSync(join(projectRoot, 'SOLO-ESTE')));
+  check('and it says so, since a folder appearing on disk is worth a word', /Created the folder/.test(toastText()), toastText());
+  await type('export via compass');
+  await press('Enter');
+  await settle(30);
+  check('a second export into it queues too', world.encodeCalls.length === 2, String(world.encodeCalls.length));
+  check('without claiming to have created a folder that was already there', !/Created the folder/.test(toastText()), toastText());
 };
