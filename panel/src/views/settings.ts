@@ -88,10 +88,8 @@ export class SettingsSheet {
   render(container: HTMLElement): void {
     this.container = container;
     const settings = this.host.settings();
-    const status = readHelperStatus();
     clear(container);
     container.className = 'sheet';
-
     container.appendChild(el('h1', { class: 'sheet__title', text: 'FX Premiere settings' }));
     container.appendChild(
       el('p', {
@@ -99,12 +97,35 @@ export class SettingsSheet {
         text: `FX Premiere ${localVersion()} \u00b7 Premiere ${this.host.hostVersion()} \u00b7 ${this.host.indexedItems()} indexed items`,
       }),
     );
-
-    container.appendChild(el('div', { class: 'section-title', text: 'Updates' }));
-    container.appendChild(this.updateRow());
-
-    container.appendChild(el('div', { class: 'section-title', text: 'Shortcut' }));
+    this.section(container, 'Updates', [this.updateRow()]);
+    this.section(container, 'Shortcut', this.shortcutRows(settings));
+    this.section(container, 'Behaviour', this.behaviourRows(settings));
+    this.section(container, 'Un-nesting', this.unnestRows(settings));
+    this.section(container, 'The resting list', [this.recentsRow(settings)]);
+    this.section(container, 'The numbered bar', [this.slotsRow(settings), this.rowsList(settings)]);
+    this.section(container, 'Presets', this.presetRows(settings));
+    this.section(container, 'Appearance', this.appearanceRows(settings));
+    this.section(container, 'Index', this.indexRows());
     container.appendChild(
+      buttonRow('Esc returns to the search palette.', [
+        el('button', { class: 'button button--primary', text: 'Done', onclick: () => this.host.close() }),
+      ]),
+    );
+  }
+
+  /** A titled run of rows. Rows are allowed to be null, so a section can leave one out. */
+  private section(container: HTMLElement, title: string, rows: (HTMLElement | null)[]): void {
+    container.appendChild(el('div', { class: 'section-title', text: title }));
+    for (const row of rows) {
+      if (row) {
+        container.appendChild(row);
+      }
+    }
+  }
+
+  private shortcutRows(settings: Settings): HTMLElement[] {
+    const status = readHelperStatus();
+    return [
       fieldRow(
         'Open the palette',
         status?.running
@@ -116,8 +137,6 @@ export class SettingsSheet {
           onclick: () => this.startRecording('hotkey'),
         }),
       ),
-    );
-    container.appendChild(
       fieldRow(
         'Open settings directly',
         'Optional second shortcut that opens this screen.',
@@ -145,8 +164,6 @@ export class SettingsSheet {
             : null,
         ]),
       ),
-    );
-    container.appendChild(
       fieldRow(
         'Enable the global listener',
         'Turn this off to stop the background hotkey process entirely.',
@@ -155,8 +172,6 @@ export class SettingsSheet {
           this.save(true);
         }),
       ),
-    );
-    container.appendChild(
       fieldRow(
         'Restart listener',
         status?.running ? 'Reload the helper process after changing keyboard layouts.' : 'Try to start the helper again.',
@@ -169,12 +184,11 @@ export class SettingsSheet {
           },
         }),
       ),
-    );
+    ];
+  }
 
-    container.appendChild(el('div', { class: 'section-title', text: 'Un-nest' }));
-
-    container.appendChild(el('div', { class: 'section-title', text: 'Behaviour' }));
-    container.appendChild(
+  private behaviourRows(settings: Settings): HTMLElement[] {
+    return [
       fieldRow(
         'Close the palette after applying',
         'Keeps the keyboard flow: summon, type, Enter, back to the timeline.',
@@ -183,8 +197,6 @@ export class SettingsSheet {
           this.save(false);
         }),
       ),
-    );
-    container.appendChild(
       fieldRow(
         'Keep the palette loaded',
         'Premiere holds the palette in memory once you close it, so every summon after the first is instant. It costs the memory of one loaded panel, and the first summon after Premiere starts is slow either way.',
@@ -194,8 +206,6 @@ export class SettingsSheet {
           this.save(false);
         }),
       ),
-    );
-    container.appendChild(
       fieldRow(
         'Ask for transition duration',
         'When off, transitions apply with the last used duration. Shift+Enter always shows the dialog.',
@@ -204,8 +214,6 @@ export class SettingsSheet {
           this.save(false);
         }),
       ),
-    );
-    container.appendChild(
       fieldRow(
         'Show type badges',
         'The VFX / VTR / PRE tags on the left of each row.',
@@ -214,9 +222,11 @@ export class SettingsSheet {
           this.save(false);
         }),
       ),
-    );
-    container.appendChild(el('div', { class: 'section-title', text: 'Un-nesting' }));
-    container.appendChild(
+    ];
+  }
+
+  private unnestRows(settings: Settings): HTMLElement[] {
+    return [
       fieldRow(
         'The nest itself',
         'Disabled by default, so its audio does not play under the clips that just came out of it. Deleting cannot be taken back by a glance at the timeline, and keeping it means hearing it twice.',
@@ -233,8 +243,6 @@ export class SettingsSheet {
           },
         ),
       ),
-    );
-    container.appendChild(
       fieldRow(
         'Go into nests inside nests',
         `Un-nests what came out of a nest as well, up to ${settings.unnest.maxDepth} levels deep.`,
@@ -243,48 +251,56 @@ export class SettingsSheet {
           this.save(false);
         }),
       ),
-    );
+    ];
+  }
 
-    container.appendChild(el('div', { class: 'section-title', text: 'The resting list' }));
-    container.appendChild(
-      fieldRow(
-        'Recents to show',
-        'What the palette offers before you type anything, newest first.',
-        segmented(
-          LIST_COUNTS.map((count) => ({ value: count, label: String(count) })),
-          settings.recentCount,
-          (value) => {
-            settings.recentCount = value;
-            this.save(false);
-          },
-        ),
+  private recentsRow(settings: Settings): HTMLElement {
+    return fieldRow(
+      'Recents to show',
+      'What the palette offers before you type anything, newest first.',
+      segmented(
+        LIST_COUNTS.map((count) => ({ value: count, label: String(count) })),
+        settings.recentCount,
+        (value) => {
+          settings.recentCount = value;
+          this.save(false);
+        },
       ),
     );
+  }
 
-    container.appendChild(el('div', { class: 'section-title', text: 'The numbered bar' }));
-    container.appendChild(
-      fieldRow(
-        'Slots per row',
-        'Every row offers the same numbers, and the window widens to keep their names readable.',
-        segmented(
-          SLOT_COUNTS.map((count) => ({ value: count, label: String(count) })),
-          settings.favoriteSlots,
-          (value) => {
-            settings.favoriteSlots = value;
-            resizeRows(settings);
-            this.save(false);
-          },
-        ),
+  private slotsRow(settings: Settings): HTMLElement {
+    return fieldRow(
+      'Slots per row',
+      'Every row offers the same numbers, and the window widens to keep their names readable.',
+      segmented(
+        SLOT_COUNTS.map((count) => ({ value: count, label: String(count) })),
+        settings.favoriteSlots,
+        (value) => {
+          settings.favoriteSlots = value;
+          resizeRows(settings);
+          this.save(false);
+        },
       ),
     );
-    container.appendChild(this.rowsList(settings));
+  }
 
-    container.appendChild(el('div', { class: 'section-title', text: 'Presets' }));
+  private presetRows(settings: Settings): (HTMLElement | null)[] {
     const folderInput = el('input', {
       type: 'text',
       placeholder: navigator.platform.startsWith('Win') ? 'C:\\Users\\you\\Presets' : '/path/to/my/presets',
     });
-    container.appendChild(
+    const add = (): void => {
+      const value = folderInput.value.trim();
+      if (value === '') {
+        return;
+      }
+      settings.presetSources = [...new Set([...settings.presetSources, value])];
+      this.host.persist(false);
+      void this.host.refreshPresets();
+      this.rerender();
+    };
+    return [
       fieldRow(
         'Extra preset folders',
         'Premiere profile presets are found automatically. Add folders that hold exported .prfpset files.',
@@ -300,47 +316,40 @@ export class SettingsSheet {
               }
             },
           }),
+          el('button', { class: 'button', text: 'Add', onclick: add }),
+        ]),
+      ),
+      settings.presetSources.length > 0 ? this.folderList(settings) : null,
+    ];
+  }
+
+  private folderList(settings: Settings): HTMLElement {
+    const list = el('div', { class: 'folder-list' });
+    for (const folder of settings.presetSources) {
+      list.appendChild(
+        el('div', { class: 'folder-row' }, [
+          el('span', { text: folder }),
           el('button', {
-            class: 'button',
-            text: 'Add',
+            class: 'icon-button',
+            text: '\u2715',
             onclick: () => {
-              const value = folderInput.value.trim();
-              if (value === '') {
-                return;
-              }
-              settings.presetSources = [...new Set([...settings.presetSources, value])];
+              settings.presetSources = settings.presetSources.filter((entry) => entry !== folder);
               this.host.persist(false);
               void this.host.refreshPresets();
               this.rerender();
             },
           }),
         ]),
-      ),
-    );
-    if (settings.presetSources.length > 0) {
-      const list = el('div', { class: 'folder-list' });
-      for (const folder of settings.presetSources) {
-        list.appendChild(
-          el('div', { class: 'folder-row' }, [
-            el('span', { text: folder }),
-            el('button', {
-              class: 'icon-button',
-              text: '\u2715',
-              onclick: () => {
-                settings.presetSources = settings.presetSources.filter((entry) => entry !== folder);
-                this.host.persist(false);
-                void this.host.refreshPresets();
-                this.rerender();
-              },
-            }),
-          ]),
-        );
-      }
-      container.appendChild(list);
+      );
     }
+    return list;
+  }
 
-    container.appendChild(el('div', { class: 'section-title', text: 'Appearance' }));
-    container.appendChild(
+  private appearanceRows(settings: Settings): HTMLElement[] {
+    // A window that decides its own width, or was dragged to one, matches none of the offered widths.
+    const sizedByHand =
+      settings.width !== null || settings.height !== null || Object.keys(settings.sheetSizes).length > 0;
+    return [
       fieldRow(
         'Accent colour',
         'Used for the active row and every highlight.',
@@ -350,10 +359,6 @@ export class SettingsSheet {
           this.save(false);
         }),
       ),
-    );
-    const sheetsSized = Object.keys(settings.sheetSizes).length > 0;
-    const sizedByHand = settings.width !== null || settings.height !== null || sheetsSized;
-    container.appendChild(
       fieldRow(
         'Window width',
         sizedByHand
@@ -362,7 +367,6 @@ export class SettingsSheet {
         el('div', { class: 'field__control' }, [
           segmented(
             WIDTHS.map((width) => ({ value: width, label: `${width}` })),
-            // A window that decides its own width, or was dragged to one, matches none of these.
             settings.width,
             (value) => {
               settings.width = value;
@@ -384,8 +388,6 @@ export class SettingsSheet {
             : null,
         ]),
       ),
-    );
-    container.appendChild(
       fieldRow(
         'Text size',
         'Scales the whole palette between 80% and 140%.',
@@ -405,10 +407,11 @@ export class SettingsSheet {
           },
         }),
       ),
-    );
+    ];
+  }
 
-    container.appendChild(el('div', { class: 'section-title', text: 'Index' }));
-    container.appendChild(
+  private indexRows(): HTMLElement[] {
+    return [
       fieldRow(
         'Rebuild the effect index',
         'Run this after installing new plug-ins. Presets refresh on every launch already.',
@@ -418,8 +421,6 @@ export class SettingsSheet {
           onclick: () => void this.host.reindex().then(() => this.rerender()),
         }),
       ),
-    );
-    container.appendChild(
       fieldRow(
         'Reset everything',
         'Clears favourites, usage history and preferences.',
@@ -435,12 +436,7 @@ export class SettingsSheet {
           },
         }),
       ),
-    );
-    container.appendChild(
-      buttonRow('Esc returns to the search palette.', [
-        el('button', { class: 'button button--primary', text: 'Done', onclick: () => this.host.close() }),
-      ]),
-    );
+    ];
   }
 
   private updateRow(): HTMLElement {

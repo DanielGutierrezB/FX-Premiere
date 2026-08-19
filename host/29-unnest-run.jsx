@@ -285,53 +285,16 @@ FXP.unnestCleanSpills = function (state) {
  * error, and the caller takes everything this nest placed back off.
  */
 FXP.unnestPlacePiece = function (state, piece) {
-    var room = state.rooms[piece.mediaType];
-    if (!room || piece.trackOffset >= room.count) {
-        return { error: 'it needs more ' + piece.mediaType + ' tracks than were reserved for it' };
+    var where = FXP.unnestWhere(state, piece);
+    if (where.error) {
+        return { error: where.error };
     }
-    var dest = room.base + piece.trackOffset;
-    var length = FXP.unnestPlacedLength(piece);
-    if (!(length > 0)) {
-        return { error: '"' + piece.name + '" inside it has no length Premiere will say' };
-    }
-    // Where the other half has to go. A pair keeps its own tracks; anything else gets the spare.
-    var audioDest = null;
-    var videoDest = null;
-    if (piece.mediaType === 'video' && piece.hasAudio) {
-        audioDest = piece.audioOffset !== null && state.rooms.audio
-            ? state.rooms.audio.base + piece.audioOffset
-            : FXP.unnestSpill(state, 'audio', piece.start, piece.start + length);
-        if (audioDest === null) {
-            return { error: 'there was nowhere to put the sound that comes with "' + piece.name + '"' };
-        }
-    }
-    if (piece.mediaType === 'audio' && piece.hasVideo) {
-        videoDest = FXP.unnestSpill(state, 'video', piece.start, piece.start + length);
-        if (videoDest === null) {
-            return { error: 'there was nowhere to put the picture that comes with "' + piece.name + '"' };
-        }
-    }
-    // The clip lands at the length of the source it shows, which is longer than its place on the
-    // timeline whenever it was sped up. An overwrite is exactly that, so the room it will actually
-    // occupy is what has to be free — and this is the last moment that can be true.
-    if (!FXP.trackIsFree(piece.mediaType, dest, piece.start, piece.start + length)) {
-        return {
-            error: FXP.trackLabel(piece.mediaType, dest) + ' is not free where "' + piece.name + '" has to go'
-        };
-    }
-    if (audioDest !== null && !FXP.trackIsFree('audio', audioDest, piece.start, piece.start + length)) {
-        return { error: FXP.trackLabel('audio', audioDest) + ' is not free where its sound has to go' };
-    }
-    if (videoDest !== null && !FXP.trackIsFree('video', videoDest, piece.start, piece.start + length)) {
-        return { error: FXP.trackLabel('video', videoDest) + ' is not free where its picture has to go' };
-    }
-
     var ranged = FXP.setItemRange(piece.item, piece.srcIn, piece.srcOut);
     if (!ranged.ok) {
         FXP.restoreItemRange(piece.item, ranged.had);
         return { error: 'this Premiere would not point "' + piece.name + '" at the part of it the nest shows' };
     }
-    var written = FXP.unnestOverwrite(state, piece, dest, videoDest, audioDest);
+    var written = FXP.unnestOverwrite(state, piece, where.dest, where.videoDest, where.audioDest);
     FXP.restoreItemRange(piece.item, ranged.had);
     if (written.error) {
         return { error: written.error };
@@ -345,33 +308,90 @@ FXP.unnestPlacePiece = function (state, piece) {
                 '. Press Cmd+Z in Premiere to take this back.'
         };
     }
-    var placed = null;
-    var partner = null;
-    var strays = [];
-    for (var i = 0; i < written.made.length; i++) {
-        var arrival = written.made[i];
-        if (!placed && FXP.unnestIsWanted(arrival, piece.mediaType, dest, piece.start)) {
-            placed = arrival;
-            continue;
-        }
-        if (!partner && piece.partner && audioDest !== null &&
-            FXP.unnestIsWanted(arrival, 'audio', audioDest, piece.start)) {
-            partner = arrival;
-            continue;
-        }
-        strays[strays.length] = arrival;
-    }
-    if (!placed) {
+    var sorted = FXP.unnestSortArrivals(written.made, piece, where);
+    if (!sorted.placed) {
         FXP.unnestDropStrays(written.made, state.outcome);
-        return { error: '"' + piece.name + '" did not land on ' + FXP.trackLabel(piece.mediaType, dest) };
+        return {
+            error: '"' + piece.name + '" did not land on ' + FXP.trackLabel(piece.mediaType, where.dest)
+        };
     }
-    FXP.unnestDropStrays(strays, state.outcome);
-    var entries = [placed];
+    FXP.unnestDropStrays(sorted.strays, state.outcome);
+    return FXP.unnestSettle(state, piece, sorted.placed, sorted.partner);
+};
+
+/**
+ * Where a piece and whatever comes with it have to land, checked free at the last moment it can be.
+ *
+ * A clip lands at the length of the source it shows, which is longer than its place on the timeline
+ * whenever it was sped up, and an overwrite takes exactly the room it lands in — so the span checked
+ * here is the one the clip will occupy, not the one the nest gave it.
+ */
+FXP.unnestWhere = function (state, piece) {
+    var room = state.rooms[piece.mediaType];
+    if (!room || piece.trackOffset >= room.count) {
+        return { error: 'it needs more ' + piece.mediaType + ' tracks than were reserved for it' };
+    }
+    var length = FXP.unnestPlacedLength(piece);
+    if (!(length > 0)) {
+        return { error: '"' + piece.name + '" inside it has no length Premiere will say' };
+    }
+    var to = piece.start + length;
+    // Where the other half has to go. A pair keeps its own tracks; anything else gets the spare.
+    var where = { dest: room.base + piece.trackOffset, videoDest: null, audioDest: null, to: to };
+    if (piece.mediaType === 'video' && piece.hasAudio) {
+        where.audioDest = piece.audioOffset !== null && state.rooms.audio
+            ? state.rooms.audio.base + piece.audioOffset
+            : FXP.unnestSpill(state, 'audio', piece.start, to);
+        if (where.audioDest === null) {
+            return { error: 'there was nowhere to put the sound that comes with "' + piece.name + '"' };
+        }
+    }
+    if (piece.mediaType === 'audio' && piece.hasVideo) {
+        where.videoDest = FXP.unnestSpill(state, 'video', piece.start, to);
+        if (where.videoDest === null) {
+            return { error: 'there was nowhere to put the picture that comes with "' + piece.name + '"' };
+        }
+    }
+    if (!FXP.trackIsFree(piece.mediaType, where.dest, piece.start, to)) {
+        return {
+            error: FXP.trackLabel(piece.mediaType, where.dest) + ' is not free where "' + piece.name +
+                '" has to go'
+        };
+    }
+    if (where.audioDest !== null && !FXP.trackIsFree('audio', where.audioDest, piece.start, to)) {
+        return { error: FXP.trackLabel('audio', where.audioDest) + ' is not free where its sound has to go' };
+    }
+    if (where.videoDest !== null && !FXP.trackIsFree('video', where.videoDest, piece.start, to)) {
+        return { error: FXP.trackLabel('video', where.videoDest) + ' is not free where its picture has to go' };
+    }
+    return where;
+};
+
+/**
+ * Sorts what turned up into the clip that was asked for, the linked half that was expected, and the
+ * strays: a build that sends a half somewhere else puts it on the timeline all the same.
+ */
+FXP.unnestSortArrivals = function (made, piece, where) {
+    var sorted = { placed: null, partner: null, strays: [] };
+    for (var i = 0; i < made.length; i++) {
+        var arrival = made[i];
+        if (!sorted.placed && FXP.unnestIsWanted(arrival, piece.mediaType, where.dest, piece.start)) {
+            sorted.placed = arrival;
+        } else if (!sorted.partner && piece.partner && where.audioDest !== null &&
+            FXP.unnestIsWanted(arrival, 'audio', where.audioDest, piece.start)) {
+            sorted.partner = arrival;
+        } else {
+            sorted.strays[sorted.strays.length] = arrival;
+        }
+    }
+    return sorted;
+};
+
+/** A clip that is down and staying: it counts as this run's, and it gets back what it had inside. */
+FXP.unnestSettle = function (state, piece, placed, partner) {
+    state.placed[state.placed.length] = placed;
     if (partner) {
-        entries[entries.length] = partner;
-    }
-    for (var e = 0; e < entries.length; e++) {
-        state.placed[state.placed.length] = entries[e];
+        state.placed[state.placed.length] = partner;
     }
     if (!FXP.unnestSetSpeed(placed, piece)) {
         return { error: 'this Premiere would not put "' + piece.name + '" back at ' +
