@@ -59,6 +59,27 @@ FXP.pathKey = function (path) {
     return text;
 };
 
+/**
+ * The calls something really has, for a log line about the one it turned out not to have.
+ *
+ * QE objects are not JavaScript objects and will not enumerate, but ExtendScript describes them all
+ * the same, and that description is the difference between knowing what this Premiere offers and
+ * guessing at method names one release at a time.
+ */
+FXP.callNames = function (thing) {
+    try {
+        var found = thing.reflect.methods;
+        var names = [];
+        for (var i = 0; i < found.length; i++) {
+            names[names.length] = String(found[i].name);
+        }
+        names.sort();
+        return names.join(' ');
+    } catch (error) {
+        return 'this build will not say';
+    }
+};
+
 FXP.errorText = function (error) {
     if (!error) {
         return 'Unknown error';

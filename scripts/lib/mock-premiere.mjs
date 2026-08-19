@@ -328,6 +328,18 @@ export const buildWorld = () => {
      * the whole point of asking is that a wrong assumption overwrites a clip.
      */
     qeTracksArriveUnder: false,
+    /**
+     * Whether this Premiere's `addTracks` brings an audio track along with the video ones it was asked
+     * for. Some builds default the audio count rather than reading the zero that was passed, and the
+     * caller is then holding a track it never asked for and has no note of.
+     */
+    qeTracksBringAudio: false,
+    /**
+     * Whether this Premiere has a QE call that removes a track at all. Adobe has been taking calls out
+     * of the QE DOM — `unlinkSelection` is gone from Premiere 26 — so a run has to end sensibly on a
+     * build where a track it added cannot be given back.
+     */
+    qeCanRemoveTracks: true,
     /** Whether this Premiere's QE track items can delete themselves. Older ones cannot. */
     qeRemoveSupported: true,
     /** Whether they can move to another track, and with how many arguments. */
@@ -661,41 +673,49 @@ export const buildWorld = () => {
       getVideoTransitionByName: (name) => lookup(TRANSITION_LIBRARY.video, name, false),
       getAudioTransitionByName: (name) => lookup(TRANSITION_LIBRARY.audio, name, false),
       // Follows whichever sequence is current, which is what makes activating a nest observable.
-      getActiveSequence: () => ({
-        getVideoTrackAt: (index) => qeTrack(qeItemsFor(false, index)),
-        getAudioTrackAt: (index) => qeTrack(qeItemsFor(true, index)),
-        unlinkSelection: () => {
-          world.linkCalls.push('unlink');
-          return true;
-        },
-        linkSelection: () => {
-          world.linkCalls.push('link');
-          return true;
-        },
-        /**
-         * Taking a track away again, which only QE offers. A run that had to add a track to catch a
-         * half nobody asked for takes it back off with this, and a build without it leaves the track.
-         */
-        removeVideoTrack: (index) => removeTrack(false, index),
-        removeAudioTrack: (index) => removeTrack(true, index),
-        // The only way a script grows a sequence. New tracks arrive on top of the existing ones,
-        // unless this Premiere is one of the ones that puts them underneath.
-        addTracks: (...args) => {
-          world.addTrackCalls.push([...args]);
-          if (args.length > world.qeTrackArity) {
-            throw new Error(`addTracks takes ${world.qeTrackArity} arguments in this Premiere`);
-          }
-          const [videoCount = 0, , audioCount = 0] = args;
-          if (world.qeTracksArriveUnder) {
-            world.current.growUnder(false, videoCount);
-            world.current.growUnder(true, audioCount);
+      getActiveSequence: () => {
+        const active = {
+          getVideoTrackAt: (index) => qeTrack(qeItemsFor(false, index)),
+          getAudioTrackAt: (index) => qeTrack(qeItemsFor(true, index)),
+          unlinkSelection: () => {
+            world.linkCalls.push('unlink');
             return true;
-          }
-          world.current.grow(false, world.current.videoTrackList.length + videoCount);
-          world.current.grow(true, world.current.audioTrackList.length + audioCount);
-          return true;
-        },
-      }),
+          },
+          linkSelection: () => {
+            world.linkCalls.push('link');
+            return true;
+          },
+          /**
+           * Taking a track away again, which only QE offers. A run that had to add a track to catch a
+           * half nobody asked for takes it back off with this, and a build without it leaves the track.
+           */
+          removeVideoTrack: (index) => removeTrack(false, index),
+          removeAudioTrack: (index) => removeTrack(true, index),
+          // The only way a script grows a sequence. New tracks arrive on top of the existing ones,
+          // unless this Premiere is one of the ones that puts them underneath.
+          addTracks: (...args) => {
+            world.addTrackCalls.push([...args]);
+            if (args.length > world.qeTrackArity) {
+              throw new Error(`addTracks takes ${world.qeTrackArity} arguments in this Premiere`);
+            }
+            const [videoCount = 0, , audioCount = 0] = args;
+            const audioMade = audioCount + (world.qeTracksBringAudio && audioCount === 0 ? 1 : 0);
+            if (world.qeTracksArriveUnder) {
+              world.current.growUnder(false, videoCount);
+              world.current.growUnder(true, audioMade);
+              return true;
+            }
+            world.current.grow(false, world.current.videoTrackList.length + videoCount);
+            world.current.grow(true, world.current.audioTrackList.length + audioMade);
+            return true;
+          },
+        };
+        if (!world.qeCanRemoveTracks) {
+          delete active.removeVideoTrack;
+          delete active.removeAudioTrack;
+        }
+        return active;
+      },
     },
   };
 

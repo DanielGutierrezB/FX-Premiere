@@ -229,6 +229,48 @@ export const hostUnnestTests = (fresh) => {
     check('and the video half keeps playing', world.clips.nestClip.disabled === false, String(world.clips.nestClip.disabled));
   }
 
+  console.log('\nTracks Premiere adds of its own accord');
+  // Nothing free above the nest, so the run has to grow the sequence, on a build whose addTracks
+  // brings an audio track along with the video ones it was asked for. The reported symptom: an
+  // un-nest of video only that ends with a new empty audio track nobody asked for.
+  const crowded = (world) => {
+    for (const track of [1, 2, 3]) {
+      world.addClip({ name: `Blocker${track}.mp4`, start: 12, end: 16, track });
+    }
+    world.qeTracksBringAudio = true;
+    world.select('Nested Sequence');
+    return world.tracks.audio.length;
+  };
+  {
+    const { world, call } = fresh();
+    const audioTracksBefore = crowded(world);
+    const result = run(call, { media: 'video' });
+    check('the nest comes out even though the stack had to grow', result.ok && result.outcome.applied === 1, JSON.stringify(result));
+    check(
+      'and the audio track that came with the growth is given back, because nothing was put on it',
+      world.tracks.audio.length === audioTracksBefore,
+      `${audioTracksBefore} before, ${world.tracks.audio.length} after`,
+    );
+    check('so there is nothing to say about it', !/empty/.test(messages(result)), messages(result));
+  }
+
+  {
+    const { world, call } = fresh();
+    // Premiere 26 no longer has QE's unlinkSelection, so a build without its track removal is not a
+    // hypothetical: what matters then is that the run says what it left rather than leaving it to be
+    // found on the timeline.
+    const audioTracksBefore = crowded(world);
+    world.qeCanRemoveTracks = false;
+    const result = run(call, { media: 'video' });
+    check('the nest still comes out', result.ok && result.outcome.applied === 1, JSON.stringify(result));
+    check(
+      'the track this Premiere will not take back off is still there',
+      world.tracks.audio.length === audioTracksBefore + 1,
+      `${audioTracksBefore} before, ${world.tracks.audio.length} after`,
+    );
+    check('and the run names it instead of leaving it to be found', /empty audio track/.test(messages(result)), messages(result));
+  }
+
   console.log('\nWhat was on the clips comes with them');
   {
     const { world, call } = fresh();

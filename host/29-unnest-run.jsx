@@ -409,8 +409,43 @@ FXP.unnestFinishPiece = function (state, piece, entry) {
  * is at stake — including a track the reservation found rather than added.
  */
 FXP.unnestShrinkBack = function (state) {
-    FXP.shrinkTracksTo('video', state.grew.video);
-    FXP.shrinkTracksTo('audio', state.grew.audio);
+    var left = { video: 0, audio: 0 };
+    for (var g = 0; g < FXP.BOTH_MEDIA.length; g++) {
+        var mediaType = FXP.BOTH_MEDIA[g];
+        var floor = state.grew[mediaType];
+        var had = FXP.trackCount(mediaType);
+        FXP.shrinkTracksTo(mediaType, floor);
+        var now = FXP.trackCount(mediaType);
+        left[mediaType] = FXP.emptyTracksAbove(mediaType, floor);
+        // Where an unasked-for track came from is the one thing a report of one cannot say: Premiere
+        // adds tracks of its own to fit the sound of a clip, and reading three numbers is how the next
+        // report of an empty audio track says whether this run asked for it.
+        if (had !== floor || now !== floor) {
+            FXP.trace(mediaType + ' tracks: ' + floor + ' before this nest, ' + had + ' after it, ' + now +
+                ' once what it was not using was given back');
+        }
+    }
+    return left;
+};
+
+/**
+ * Says what a nest grew the sequence by and did not manage to give back.
+ *
+ * Premiere places both halves of a linked clip whatever the call asks for, so an un-nest of video only
+ * has to have an audio track for the sound to land on before throwing it away — and the track is the
+ * one part of that nobody asked for. It is taken back off when this Premiere has a call that removes a
+ * track; when it has not, saying so is the least that is owed, because the alternative is an editor
+ * finding empty tracks and no reason for them.
+ */
+FXP.unnestNoteEmptyTracks = function (state, left) {
+    for (var g = 0; g < FXP.BOTH_MEDIA.length; g++) {
+        var mediaType = FXP.BOTH_MEDIA[g];
+        if (left[mediaType] > 0) {
+            state.outcome.messages[state.outcome.messages.length] =
+                left[mediaType] + ' empty ' + mediaType + ' track(s) had to be added to place the clips and ' +
+                'could not be taken back off. Delete them from the timeline if they are in the way.';
+        }
+    }
 };
 
 /** Everything this nest put on the timeline, taken back off, leaving the nest the nest it was. */
@@ -480,6 +515,10 @@ FXP.unnestOne = function (state, job) {
     }
     FXP.retireNest(entry, state.options, state.outcome);
     FXP.unnestCleanSpills(state);
+    // A nest that came out cleanly still has to give back what it grew the sequence by and is not
+    // using. Until now only a nest that failed did that, so every successful un-nest of video only
+    // left the audio track it had needed for a moment sitting there empty.
+    FXP.unnestNoteEmptyTracks(state, FXP.unnestShrinkBack(state));
     FXP.deselectAll(state.parent);
     for (var s = 0; s < state.placed.length; s++) {
         FXP.setClipSelected(state.placed[s].clip, true);

@@ -316,14 +316,25 @@ FXP.removeTrackAt = function (mediaType, index) {
         return false;
     }
     var before = FXP.trackCount(mediaType);
+    var audio = mediaType === 'audio';
     var attempts = [
         function () {
-            return mediaType === 'audio' ? qeSeq.removeAudioTrack(index) : qeSeq.removeVideoTrack(index);
+            return audio ? qeSeq.removeAudioTrack(index) : qeSeq.removeVideoTrack(index);
         },
         function () {
-            return mediaType === 'audio' ? qeSeq.deleteAudioTrack(index) : qeSeq.deleteVideoTrack(index);
+            return audio ? qeSeq.deleteAudioTrack(index) : qeSeq.deleteVideoTrack(index);
         }
     ];
+    // Only for the track on top, because a call that takes no index takes the last one: aimed anywhere
+    // else that is a different track being deleted, which is worse than an empty track being kept.
+    if (index === before - 1) {
+        attempts[attempts.length] = function () {
+            return audio ? qeSeq.removeAudioTrack() : qeSeq.removeVideoTrack();
+        };
+        attempts[attempts.length] = function () {
+            return qeSeq.removeTracks(audio ? 0 : 1, audio ? 1 : 0);
+        };
+    }
     for (var i = 0; i < attempts.length; i++) {
         try {
             attempts[i]();
@@ -334,6 +345,13 @@ FXP.removeTrackAt = function (mediaType, index) {
         if (FXP.trackCount(mediaType) < before) {
             return true;
         }
+    }
+    // Said once, with what this build does offer: Adobe has been taking calls out of the QE DOM —
+    // `unlinkSelection` is already gone from Premiere 26 — and the list is what the next version of
+    // this function would be written from, instead of another round of guessing at names.
+    if (!FXP.loggedTrackApi) {
+        FXP.loggedTrackApi = true;
+        FXP.trace('nothing here removes a ' + mediaType + ' track. QE offers: ' + FXP.callNames(qeSeq));
     }
     return false;
 };
@@ -353,6 +371,23 @@ FXP.shrinkTracksTo = function (mediaType, floor) {
             return;
         }
     }
+};
+
+/**
+ * Empty tracks from `floor` up: what a run added, has nothing on, and could not give back.
+ *
+ * Worth counting rather than assuming, because the shrink above stops at the first track with a clip
+ * on it, and an empty one underneath that is one this run is still answerable for — an editor who
+ * asked for video only should hear about the audio track left over instead of finding it.
+ */
+FXP.emptyTracksAbove = function (mediaType, floor) {
+    var left = 0;
+    for (var index = Math.max(0, floor); index < FXP.trackCount(mediaType); index++) {
+        if (FXP.trackClipCount(mediaType, index) === 0) {
+            left++;
+        }
+    }
+    return left;
 };
 
 /** Whether `count` adjacent tracks from `base` upwards are all free across the span. */

@@ -32,7 +32,10 @@ Ctrl + Space  →  gsblr  →  Enter  →  Gaussian Blur en los 8 clips seleccio
   hay dentro: cuántos clips, y si hay títulos, transiciones, multicámara o cambios de velocidad. Es
   un aviso, no un obstáculo. Los clips salen **apilados sobre lo que ya hay**, en pistas consecutivas
   y sin dejar pistas vacías en medio; si no caben, añade las pistas que falten en vez de rendirse, y
-  **solo del tipo que estás sacando**: sacar solo audio no crea pistas de video vacías. Respeta el
+  **solo del tipo que estás sacando**: al terminar devuelve las pistas que añadió y no está usando,
+  incluidas las que Premiere agrega por su cuenta al colocar un clip con sonido, así que sacar solo
+  video no te deja pistas de audio vacías (y si esta versión de Premiere no deja quitarlas, lo dice en
+  vez de dejártelas encontrar). Respeta el
   recorte del nest: sale exactamente lo que estaba en la línea de tiempo, ni un frame más. El nest
   original queda **desactivado** (no borrado) para que su audio no suene por debajo de lo que acaba
   de salir; en los ajustes puedes cambiarlo a dejarlo como está o borrarlo. Los efectos y sus
