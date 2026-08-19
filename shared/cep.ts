@@ -198,20 +198,25 @@ export const resizeSelf = (width: number, height: number): void => {
     appendLog('panel', 'this host has no resizeContent, so the window keeps whatever size it had');
     return;
   }
-  if (!loggedResize) {
-    loggedResize = true;
-    // Both sizes, because the gap between them is the flicker when the window opens: closing it
-    // means matching the manifest to what the palette actually asks for.
-    appendLog(
-      'panel',
-      `window arrived ${window.innerWidth}x${window.innerHeight}, asked for ${Math.round(width)}x${Math.round(height)}`,
-    );
-  }
+  const asked = `${Math.round(width)}x${Math.round(height)}`;
+  const arrived = `${window.innerWidth}x${window.innerHeight}`;
+  const first = !loggedResize;
+  loggedResize = true;
   try {
     api.resizeContent(Math.round(width), Math.round(height));
   } catch (error) {
     appendLog('panel', `resize failed: ${String(error)}`);
+    return;
   }
+  if (!first) {
+    return;
+  }
+  // Once per page, and after the fact rather than before it: what the host did with the request is
+  // the only part worth reading. A size back that is neither the one arrived with nor the one asked
+  // for is the ceiling the manifest is really granting, which is otherwise pure guesswork.
+  setTimeout(() => {
+    appendLog('panel', `window arrived ${arrived}, asked for ${asked}, host gave ${window.innerWidth}x${window.innerHeight}`);
+  }, 0);
 };
 
 /**

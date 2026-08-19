@@ -44,7 +44,13 @@
                sheet asking for more than the maximum opens quietly cut down to it, and a dialog
                whose maximum equals its minimum cannot be resized by hand at all: the border does
                not even take a resize cursor. They pair with WINDOW_BOUNDS in window-size.ts, and
-               scripts/test-panel.mjs fails if the two stop agreeing. -->
+               scripts/test-panel.mjs fails if the two stop agreeing.
+
+               The minimum comes before the maximum because that is the order every extension that
+               works writes them in, Adobe's own among them. Written the other way round the window
+               could be dragged smaller but not larger, which is a maximum being read past rather
+               than a maximum being read: the size of the pair is not the only thing about it that
+               has to be right. -->
           <Geometry>
             <!-- What the palette asks for on a first run, with four slots and nothing used yet: the
                  window opens at it instead of being resized a moment later. Once there are recents
@@ -56,14 +62,16 @@
               <Width>534</Width>
               <Height>332</Height>
             </Size>
-            <MaxSize>
-              <Width>1400</Width>
-              <Height>1000</Height>
-            </MaxSize>
             <MinSize>
               <Width>380</Width>
               <Height>120</Height>
             </MinSize>
+            <!-- Far past any screen, so what stops the drag is the screen rather than a number
+                 guessed here: the CC Libraries panel states 7680 for the same reason. -->
+            <MaxSize>
+              <Width>7680</Width>
+              <Height>7680</Height>
+            </MaxSize>
           </Geometry>
           <Icons>
             <Icon Type="Normal">./icons/icon-dark.png</Icon>

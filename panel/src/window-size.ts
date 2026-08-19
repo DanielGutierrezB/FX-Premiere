@@ -8,8 +8,12 @@ import type { QuickGroup, Settings, View, WindowBox } from '@shared/types';
  * The manifest has to allow all of this: CEP clamps `resizeContent` to the geometry declared there,
  * and a dialog whose max and min are the same is one the mouse cannot resize at all. Exported so a
  * test can hold CSXS/manifest.xml to these numbers rather than the two drifting apart in silence.
+ *
+ * The maximum is a screen rather than a taste: what a window is worth being is decided by dragging
+ * it, and a cap under that is a size somebody chose being quietly taken back on the next summon.
+ * `fit` clamps to the screen actually there, which is the limit that means anything.
  */
-export const WINDOW_BOUNDS = { minWidth: 380, minHeight: 120, maxWidth: 1400, maxHeight: 1000 };
+export const WINDOW_BOUNDS = { minWidth: 380, minHeight: 120, maxWidth: 3840, maxHeight: 2160 };
 
 const MIN_HEIGHT = WINDOW_BOUNDS.minHeight;
 const MAX_HEIGHT = WINDOW_BOUNDS.maxHeight;

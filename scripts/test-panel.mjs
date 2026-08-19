@@ -155,6 +155,14 @@ const savedSettings = () => JSON.parse(readFileSync(join(settingsDir, 'settings.
   const max = box('MaxSize');
   const min = box('MinSize');
   check('the manifest states a maximum, without which the window cannot be resized by hand', max !== null, geometry);
+  // Written the other way round, the window could be dragged smaller but never larger: the maximum
+  // was read past rather than read. Every extension that works states them in this order, Adobe's own
+  // among them, so the order is as much a part of the pair as the numbers are.
+  check(
+    'with the minimum stated before it, which is the order that is honoured',
+    geometry.indexOf('<MinSize>') < geometry.indexOf('<MaxSize>'),
+    geometry.replace(/<!--[\s\S]*?-->/g, '').replace(/\s+/g, ' ').trim(),
+  );
   check(
     'and it is not the minimum, which would be the same as stating none',
     max !== null && min !== null && max.width > min.width && max.height > min.height,
