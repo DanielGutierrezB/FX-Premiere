@@ -11,7 +11,16 @@ import { createCepWindow, settle, waitFor } from './mock-cep.mjs';
 import { fileReads } from './mock-files.mjs';
 import { createHost } from './mock-premiere.mjs';
 
-export const laterOpens = async ({ hostScript, panelHtml, panelBundle, stage, storage, presetFixture, settingsDir }) => {
+export const laterOpens = async ({
+  hostScript,
+  panelHtml,
+  panelBundle,
+  stage,
+  storage,
+  presetFixture,
+  settingsDir,
+  githubHits,
+}) => {
   console.log('\nOpening it again');
   // A second open, as Premiere does it: the page is loaded from scratch and the host script is
   // evaluated again, so everything the palette knows has to come from what it wrote down last time.
@@ -177,6 +186,34 @@ export const laterOpens = async ({ hostScript, panelHtml, panelBundle, stage, st
   );
   sized.close();
   rmSync(sizedStage, { recursive: true, force: true });
+
+  // A release found once is worth saying on every summon after it, and no summon is worth a round trip
+  // to say it. So the version comes off the settings file and the network is left alone.
+  console.log('\nA profile that already knows about a newer release');
+  const knownStage = mkdtempSync(join(tmpdir(), 'fxp-known-'));
+  const knownSettingsDir = join(knownStage, 'Library', 'Application Support', 'FX Premiere');
+  mkdirSync(knownSettingsDir, { recursive: true });
+  writeFileSync(
+    join(knownSettingsDir, 'settings.json'),
+    JSON.stringify({ update: { version: '9.9.9', checkedAt: Date.now() - 3600_000 } }),
+    'utf8',
+  );
+  writeFileSync(join(knownStage, 'version.json'), JSON.stringify({ version: '1.0.0' }), 'utf8');
+  const asked = githubHits();
+  const knownHost = createHost({ hostScript, documentsRoot: join(knownStage, 'Documents') });
+  const known = createCepWindow({ html: panelHtml, home: knownStage, evalScript: knownHost.evalInHost, storage: {} });
+  known.run(panelBundle);
+  await settle(80);
+  const chip = known.window.document.querySelector('.hints__version');
+  check('the footer offers the release the last check found', chip?.textContent === '1.0.0 \u2192 9.9.9', chip?.textContent ?? '(no chip)');
+  check('without anybody having asked GitHub again', githubHits() === asked, `${githubHits() - asked} new request(s)`);
+  known.window.dispatchEvent(new known.window.KeyboardEvent('keydown', { key: ',', metaKey: true, bubbles: true }));
+  await settle(40);
+  const knownSheet = known.window.document.querySelector('.sheet')?.textContent ?? '';
+  check('settings offers it too, and says when that was learnt', /Update to 9\.9\.9/.test(knownSheet), knownSheet.slice(0, 200));
+  check('and opening settings did not ask either', githubHits() === asked, `${githubHits() - asked} new request(s)`);
+  known.close();
+  rmSync(knownStage, { recursive: true, force: true });
 
   // A host that will not grow the window says so by handing back the size it already had. That is not
   // a size anybody chose, and recording it as one is what left the palette pinned to the only box the

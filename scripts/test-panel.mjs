@@ -40,7 +40,10 @@ const { world, evalInHost } = createHost({ hostScript, documentsRoot: join(stage
 
 // Stands in for the GitHub releases API so the settings screen can be driven offline.
 let release = { tag_name: 'v1.0.0', assets: [] };
+/** Every question anybody asked GitHub. Opening the palette, or settings, must not add to it. */
+let releaseHits = 0;
 const releaseServer = createServer((request, response) => {
+  releaseHits += 1;
   response.writeHead(200, { 'content-type': 'application/json' });
   response.end(JSON.stringify(release));
 });
@@ -540,8 +543,10 @@ await press(',', { metaKey: true, code: 'Comma' });
 check('Cmd+, opens settings', Boolean(window.document.querySelector('.sheet')));
 const sheetText = () => window.document.querySelector('.sheet')?.textContent ?? '';
 check('the installed version is shown', /FX Premiere 1\.0\.0/.test(sheetText()), sheetText().slice(0, 90));
-const upToDate = await waitFor(() => /latest release/.test(sheetText()), { label: 'the update check to finish' });
-check('settings has an update section that checks on open', upToDate, sheetText().slice(0, 200));
+// Opening settings asks GitHub nothing. A check on every visit is a round trip in front of a sheet
+// that had nothing to wait for, for an answer that changes a few times a year, so it waits to be asked.
+check('settings does not go to the network on its own', /nothing has been checked yet/.test(sheetText()), sheetText().slice(0, 220));
+check('and nobody has asked GitHub anything yet', releaseHits === 0, `${releaseHits} request(s)`);
 check('nothing is flagged while the installed version is current', !/update to/.test(foot()), foot());
 check(
   'the helper status is surfaced',
@@ -602,7 +607,14 @@ release = {
 versionButton().dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
 const offered = await waitFor(() => versionButton()?.textContent === 'Update to 9.9.9', { label: 'the update offer' });
 check('a newer release turns the button into an update action', offered, versionButton()?.textContent ?? '');
+check('the button asked once, which is the only thing that ever asks', releaseHits === 1, `${releaseHits} request(s)`);
 check('the update is announced with both versions', /1\.0\.0 → 9\.9\.9 available/.test(sheetText()), sheetText().slice(0, 220));
+// Written down, because nothing will ask again on its own: a release found once has to stay found.
+check(
+  'and what it found is kept, so the next session knows without asking',
+  savedSettings().update?.version === '9.9.9' && savedSettings().update?.checkedAt > 0,
+  JSON.stringify(savedSettings().update),
+);
 check('only the first line of the release notes is shown', /Arregla el zoom/.test(sheetText()) && !/mas detalles/.test(sheetText()));
 
 // The download endpoint is unreachable on purpose: a failed install must not break the panel.
@@ -971,7 +983,16 @@ await pasteAndCompassViews({ window, world, cep, cepCalls, stage, type, press, s
 
 console.log('\nOpening it again');
 cep.close();
-await laterOpens({ hostScript, panelHtml, panelBundle, stage, storage, presetFixture, settingsDir });
+await laterOpens({
+  hostScript,
+  panelHtml,
+  panelBundle,
+  stage,
+  storage,
+  presetFixture,
+  settingsDir,
+  githubHits: () => releaseHits,
+});
 
 releaseServer.close();
 rmSync(stage, { recursive: true, force: true });

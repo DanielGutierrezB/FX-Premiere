@@ -14,6 +14,7 @@ import {
   type EaseSettings,
   type FavoriteRow,
   type HelperStatus,
+  type KnownUpdate,
   type Modifiers,
   type PendingIntent,
   type Settings,
@@ -143,6 +144,7 @@ export const defaultSettings = (): Settings => ({
   recentCount: 6,
   favoriteSlots: 4,
   sizes: {},
+  update: { version: '', checkedAt: 0 },
 });
 
 /** Choices offered in the settings sheet. Anything else in the file is pulled back into range. */
@@ -276,7 +278,20 @@ const mergeSettings = (raw: Partial<Settings> | null): Settings => {
     accent: raw.accent === LEGACY_ACCENT || !raw.accent ? base.accent : raw.accent,
     recentCount: inRange(raw.recentCount, base.recentCount, 0, 12),
     sizes: sizesFrom(raw),
+    update: updateFrom(raw.update, base.update),
   };
+};
+
+/**
+ * What a check last found. A version that is not one is dropped rather than shown, since the only
+ * thing this is for is saying "there is a newer one" in a way that can be believed.
+ */
+const updateFrom = (raw: unknown, base: KnownUpdate): KnownUpdate => {
+  const found = (raw ?? {}) as Partial<KnownUpdate>;
+  if (typeof found.version !== 'string' || !/^\d+(\.\d+)*$/.test(found.version)) {
+    return base;
+  }
+  return { version: found.version, checkedAt: Number.isFinite(found.checkedAt) ? Number(found.checkedAt) : 0 };
 };
 
 /**

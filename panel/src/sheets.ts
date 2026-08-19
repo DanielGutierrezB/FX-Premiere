@@ -340,8 +340,10 @@ export class Sheets {
 
   openSettings(): void {
     this.enter('settings');
-    this.settingsSheet.render(this.host.body());
+    // Before the paint, because what it takes off the settings file is what the version row says:
+    // afterwards would mean drawing the row wrong and then correcting it.
     this.settingsSheet.opened();
+    this.settingsSheet.render(this.host.body());
   }
 
   /** Reads the clip before showing anything: an inspector with nothing in it explains nothing. */

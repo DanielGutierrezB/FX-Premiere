@@ -245,8 +245,9 @@ listener.
 
 ## Actualizar
 
-Ajustes (`Cmd/Ctrl + ,`) > sección *Updates*. Al abrir los ajustes consulta el
-último release de GitHub:
+Ajustes (`Cmd/Ctrl + ,`) > sección *Updates*. **Nada consulta GitHub por su cuenta**: ni abrir la
+paleta, ni abrir los ajustes. Se pregunta cuando pulsas *Check for updates*, y la fila dice de cuándo
+es la última respuesta que tiene («latest as of yesterday»), para que sepas si vale creerla.
 
 - Si estás al día lo dice y no hace nada más.
 - Si hay una versión nueva el botón pasa a *Update to X*: baja el `.zxp` del release, lo
@@ -254,9 +255,10 @@ Ajustes (`Cmd/Ctrl + ,`) > sección *Updates*. Al abrir los ajustes consulta el
   el listener en segundo plano sigue con la versión anterior hasta que reinicies Premiere.
 
 A la izquierda de la línea inferior de la paleta está **la versión que tienes**, apagada, para que la
-pregunta «¿estoy en la última?» se conteste sin abrir nada. Cuando la comprobación encuentra una más
+pregunta «¿estoy en la última?» se conteste sin abrir nada. Cuando una comprobación encuentra una más
 nueva, esa misma versión se enciende en el color de acento, pasa a decir `1.6.0 → 1.7.0` y se puede
-pulsar para ir directo a los ajustes.
+pulsar para ir directo a los ajustes. Ese aviso se guarda en los ajustes, así que sigue ahí en las
+sesiones siguientes sin volver a preguntar: una comprobación basta hasta que actualices.
 - Si no hay red, muestra el motivo en vez de fingir que estás actualizado.
 
 En una instalación de desarrollo (la carpeta CEP es un symlink a `dist/`) el botón se desactiva

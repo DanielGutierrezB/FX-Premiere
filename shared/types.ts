@@ -504,6 +504,18 @@ export interface Settings {
    * paths and the palette is a list of names, and sharing a box is what made the dense ones unreadable.
    */
   sizes: Partial<Record<View, WindowBox>>;
+  /**
+   * What the last check for updates found, which is the only thing that ever knows: nothing asks
+   * GitHub on its own. Kept so that one check keeps saying what it found — in the footer, in every
+   * session after it — instead of the answer dying with the window it was asked in.
+   */
+  update: KnownUpdate;
+}
+
+/** The release a check found, and when it was asked. An empty version is a check nobody has run. */
+export interface KnownUpdate {
+  version: string;
+  checkedAt: number;
 }
 
 /**

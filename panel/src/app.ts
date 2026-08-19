@@ -30,7 +30,7 @@ import {
   type TransitionOptions,
   type UnnestMedia,
 } from '@shared/types';
-import { localVersion } from '@shared/updater';
+import { compareVersions, localVersion } from '@shared/updater';
 import { resolveAnchorBounds } from './alpha';
 import { ApplyPipeline, type ApplyIntent } from './apply';
 import { applyCompass, compassMessages, exportViaCompass, roundTripped } from '@shared/compass-run';
@@ -219,6 +219,7 @@ export class PaletteApp {
     const hello = await callHost<{ host: string; sequence: SequenceInfo }>({ op: 'hello' });
     this.hostVersion = hello.data?.host ?? 'unknown';
     this.sequence = hello.data?.sequence ?? null;
+    this.flagKnownUpdate();
     this.renderHints();
     mark('hello');
     // Reading the saved presets is disk work, and it belongs behind the first paint rather than
@@ -355,6 +356,7 @@ export class PaletteApp {
     // what puts away a sheet that was up when the palette was last dismissed.
     this.sheets.toSearch();
     this.updateResults();
+    this.flagKnownUpdate();
     this.renderHints();
     void this.refreshSequence();
     if (wantsSettings) {
@@ -956,6 +958,16 @@ export class PaletteApp {
     this.updateNote = available ? `update to ${remote}` : '';
     this.updateRemote = available ? remote : '';
     this.renderHints();
+  }
+
+  /**
+   * The release the last check found, still offered without asking GitHub again — nothing here goes
+   * near the network, which is the point: what one check learnt is worth saying on every summon after
+   * it, and no summon is worth a round trip.
+   */
+  private flagKnownUpdate(): void {
+    const known = this.settings.update.version;
+    this.flagUpdate(known !== '' && compareVersions(known, localVersion()) > 0, known);
   }
 
   private persistAndNotify(restartHelper: boolean): void {

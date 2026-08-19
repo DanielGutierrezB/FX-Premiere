@@ -15,6 +15,7 @@ import type { Modifiers, Settings } from '@shared/types';
 import {
   applyUpdate,
   checkForUpdate,
+  compareVersions,
   INSTALLER_ONLY_REASON,
   installerOnly,
   isDevInstall,
@@ -25,6 +26,26 @@ import { clear, el } from '../dom';
 import { buttonRow, fieldRow, segmented, swatches, switchNode } from '../widgets';
 
 const RELOAD_DELAY_MS = 900;
+
+/**
+ * When something happened, in the terms anybody reads a last check in. A date would be exact and
+ * useless: what is being asked is whether the answer is still worth believing.
+ */
+const howLongAgo = (when: number): string => {
+  const minutes = Math.round((Date.now() - when) / 60000);
+  if (minutes < 2) {
+    return 'a moment ago';
+  }
+  if (minutes < 60) {
+    return `${minutes} minutes ago`;
+  }
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) {
+    return hours === 1 ? 'an hour ago' : `${hours} hours ago`;
+  }
+  const days = Math.round(hours / 24);
+  return days === 1 ? 'yesterday' : `${days} days ago`;
+};
 
 /** Rows are always exactly as long as the slot count, so every row offers the same numbers. */
 const resizeRows = (settings: Settings): void => {
@@ -84,11 +105,21 @@ export class SettingsSheet {
 
   constructor(private readonly host: SettingsHost) {}
 
-  /** Called every time the sheet is opened, so a release published mid-session is noticed. */
+  /**
+   * Nothing here asks GitHub. A check on every open is a network round trip in front of a sheet that
+   * had nothing to wait for, paid again on every visit for an answer that changes a few times a year,
+   * so the asking is left to the button — and what the last one found comes off the settings file, so
+   * a release already noticed is still offered without asking twice.
+   */
   opened(): void {
-    if (this.update === null && this.state === 'idle' && !isDevInstall()) {
-      void this.checkForUpdate();
+    if (this.update !== null || this.state !== 'idle') {
+      return;
     }
+    const known = this.host.settings().update;
+    if (known.version === '' || compareVersions(known.version, localVersion()) <= 0) {
+      return;
+    }
+    this.update = { current: localVersion(), remote: known.version, available: true, downloadUrl: '', notes: '', error: '' };
   }
 
   closed(): void {
@@ -509,9 +540,13 @@ export class SettingsSheet {
     );
   }
 
+  /** What is known without asking anything: this version, and when GitHub was last asked about it. */
   private lastCheckHint(current: string): string {
     if (!this.update) {
-      return `${current} \u00b7 check GitHub for a newer release.`;
+      const checked = this.host.settings().update.checkedAt;
+      return checked === 0
+        ? `${current} \u00b7 nothing has been checked yet.`
+        : `${current} \u00b7 latest as of ${howLongAgo(checked)}.`;
     }
     return this.update.error
       ? `${current} \u00b7 could not reach GitHub: ${this.update.error}`
@@ -525,6 +560,13 @@ export class SettingsSheet {
     // Only worth asking when there is something to install, and only once per answer.
     this.installerOnly = this.update.available && installerOnly();
     this.state = 'idle';
+    // Written down because nothing will ask again on its own: this is how the palette can still say
+    // there is a newer version tomorrow, and how the row can say when it last knew that.
+    if (this.update.error === '') {
+      const settings = this.host.settings();
+      settings.update = { version: this.update.remote, checkedAt: Date.now() };
+      this.host.persist(false);
+    }
     this.host.flagUpdate(this.update.available, this.update.remote);
     this.rerender();
   }
@@ -533,8 +575,17 @@ export class SettingsSheet {
     if (!this.update?.available || this.state !== 'idle') {
       return;
     }
-    const target = this.update.remote;
-    const url = this.update.downloadUrl;
+    // An update remembered from an earlier session knows which version is out there but not where
+    // its file is, since nobody went and looked. Pressing the button is the going and looking.
+    if (this.update.downloadUrl === '') {
+      await this.checkForUpdate();
+    }
+    const offer = this.update;
+    if (!offer?.available || offer.downloadUrl === '' || this.state !== 'idle') {
+      return;
+    }
+    const target = offer.remote;
+    const url = offer.downloadUrl;
     this.state = 'installing';
     this.rerender();
     try {
