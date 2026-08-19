@@ -22,8 +22,8 @@ FXP.probeValue = function (param) {
 };
 
 /**
- * Names an active-angle query could plausibly hide behind. There is no documented one, so the point
- * of the list is to find out whether any of them answer on a real multicam clip.
+ * Names an active-angle query could plausibly hide behind, asked even when the object does not admit
+ * to having them: a build that will not list what it has may still answer when asked directly.
  */
 FXP.MULTICAM_CANDIDATES = [
     'getMulticamAngle',
@@ -36,6 +36,49 @@ FXP.MULTICAM_CANDIDATES = [
     'isMultiCamEnabled'
 ];
 
+/**
+ * Only a name that reads as a question is called. Reading a property is safe, but calling whatever
+ * an object turns out to have is not: `remove` and `setSelected` are on these same objects, and a
+ * diagnostic that edits the sequence it was pointed at is worse than no diagnostic.
+ */
+FXP.PROBE_ASKS = /^(get|is|has|can)/;
+
+/** Everything an object will admit to having, or an empty list on a build that will not say. */
+FXP.probeNames = function (target) {
+    var names = [];
+    var add = function (name) {
+        if (name !== '' && name.charAt(0) !== '_' && !FXP.contains(names, name)) {
+            names[names.length] = name;
+        }
+    };
+    var kinds = ['properties', 'methods'];
+    for (var k = 0; k < kinds.length; k++) {
+        var found = null;
+        try {
+            found = target.reflect[kinds[k]];
+        } catch (error) {
+            found = null;
+        }
+        var total = 0;
+        try {
+            total = Number(found.length) || 0;
+        } catch (error) {
+            total = 0;
+        }
+        for (var i = 0; i < total; i++) {
+            try {
+                add(String(found[i].name));
+            } catch (error) {
+                /* a reflection entry that will not name itself is nothing to report */
+            }
+        }
+    }
+    for (var c = 0; c < FXP.MULTICAM_CANDIDATES.length; c++) {
+        add(FXP.MULTICAM_CANDIDATES[c]);
+    }
+    return names;
+};
+
 FXP.probeCandidate = function (target, label, name) {
     var value = null;
     try {
@@ -47,19 +90,41 @@ FXP.probeCandidate = function (target, label, name) {
         return null;
     }
     if (typeof value === 'function') {
+        if (!FXP.PROBE_ASKS.test(name)) {
+            return { name: label + '.' + name + '()', value: 'not called: this asks nothing' };
+        }
         try {
             return { name: label + '.' + name + '()', value: FXP.json.stringify(value.call(target)) };
         } catch (error) {
             return { name: label + '.' + name + '()', value: 'threw: ' + FXP.errorText(error) };
         }
     }
+    if (value !== null && typeof value === 'object') {
+        return { name: label + '.' + name, value: FXP.json.stringify(value) };
+    }
     return { name: label + '.' + name, value: String(value) };
 };
 
+/** Everything one object will say about itself, onto `into`. */
+FXP.probeTarget = function (into, target, label) {
+    if (!target) {
+        return;
+    }
+    var names = FXP.probeNames(target);
+    for (var i = 0; i < names.length; i++) {
+        var found = FXP.probeCandidate(target, label, names[i]);
+        if (found) {
+            into[into.length] = found;
+        }
+    }
+};
+
 /**
- * Dumps everything a selected clip will say about itself. It exists because the active multicam
- * angle is not in any documented API and the only way to find out whether it is reachable at all is
- * to look on a machine with a real multicam clip on the timeline.
+ * Dumps everything a selected clip, its project item and its QE item will say about themselves. It
+ * exists because the active multicam angle is not in any documented API, and the only way to find out
+ * whether it is reachable at all is to look on a machine with a real multicam clip on the timeline.
+ * Everything is asked in one pass so that one run answers the question rather than starting a
+ * conversation about which name to try next.
  */
 FXP.probeMulticamClip = function () {
     var selection = FXP.requireSelection();
@@ -98,20 +163,13 @@ FXP.probeMulticamClip = function () {
         }
         components[components.length] = { matchName: described.matchName, name: described.name, params: params };
     }
+    // The QE item is asked too: what is missing from the documented DOM is exactly the kind of thing
+    // that turns up there, and it is the object the rest of this host already reaches for.
+    FXP.attachQEItems([entry]);
     var candidates = [];
-    for (var c = 0; c < FXP.MULTICAM_CANDIDATES.length; c++) {
-        var onClip = FXP.probeCandidate(clip, 'clip', FXP.MULTICAM_CANDIDATES[c]);
-        if (onClip) {
-            candidates[candidates.length] = onClip;
-        }
-        if (!projectItem) {
-            continue;
-        }
-        var onItem = FXP.probeCandidate(projectItem, 'projectItem', FXP.MULTICAM_CANDIDATES[c]);
-        if (onItem) {
-            candidates[candidates.length] = onItem;
-        }
-    }
+    FXP.probeTarget(candidates, clip, 'clip');
+    FXP.probeTarget(candidates, projectItem, 'projectItem');
+    FXP.probeTarget(candidates, entry.qeItem, 'qeItem');
     return {
         clipName: entry.name,
         projectItemName: projectItem ? String(projectItem.name) : '',

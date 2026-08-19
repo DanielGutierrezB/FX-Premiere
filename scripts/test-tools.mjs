@@ -166,8 +166,20 @@ console.log('\nThe multicam probe');
       throw new Error('not in this build');
     },
   });
+  // What ExtendScript offers for looking at a host object it has no documentation for. A build that
+  // answers this is the whole reason to run the probe rather than guess at eight names.
+  let removed = false;
+  world.multicamItem.cameraCount = 4;
+  world.multicamItem.deleteAsset = () => {
+    removed = true;
+  };
+  world.multicamItem.reflect = {
+    properties: [{ name: 'cameraCount' }],
+    methods: [{ name: 'deleteAsset' }],
+  };
   world.select('Multicam Source');
   const probe = call({ op: 'probeMulticam' });
+  const named = (name) => probe.data?.candidates.find((entry) => entry.name === name)?.value ?? '';
   check('the probe knows a multicam clip when it sees one', probe.data?.isMulticam === true, JSON.stringify(probe.data?.isMulticam));
   check(
     'it dumps every component with its parameters and their values',
@@ -178,6 +190,16 @@ console.log('\nThe multicam probe');
     'and a property that throws is reported instead of ending the probe',
     probe.data?.candidates.some((entry) => entry.name === 'projectItem.activeAngle' && /not in this build/.test(entry.value)),
     JSON.stringify(probe.data?.candidates),
+  );
+  check(
+    'a build that will say what it has is taken up on it, not just asked the eight guesses',
+    named('projectItem.cameraCount') === '4',
+    JSON.stringify(probe.data?.candidates),
+  );
+  check(
+    'and a name that would edit the project is listed rather than called',
+    /not called/.test(named('projectItem.deleteAsset()')) && removed === false,
+    `${named('projectItem.deleteAsset()')} removed=${removed}`,
   );
 }
 
