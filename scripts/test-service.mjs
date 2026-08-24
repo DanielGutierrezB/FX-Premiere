@@ -474,10 +474,15 @@ check('a folder the editor picks afterwards is left where they put it', world.ex
 world.exportWindow = '';
 rmSync(join(projectFolder, 'EXPORT'), { recursive: true, force: true });
 
-const pathWhenOff = exportPath();
-world.current = world.sequence;
+// Turned off, and then given something it would certainly have followed: the sequence changes under
+// it. Read after the switch rather than before, because "the path did not change" has to be about a
+// Compass that is already off — taken before, it also passes for a tick that got in first, and which
+// of the two happened depends on where in a four-second cycle the suite happens to be.
 writeSettings({ compass: { enabled: false } });
 await settle(2000);
+const pathWhenOff = exportPath();
+world.current = world.sequence;
+await settle(9000);
 check('turning Compass off stops it writing', exportPath() === pathWhenOff, exportPath());
 
 console.log('\nShutdown');

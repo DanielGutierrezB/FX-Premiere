@@ -136,10 +136,12 @@ Ctrl + Space  →  gsblr  →  Enter  →  Gaussian Blur en los 8 clips seleccio
   proyecto —el sentido de tenerlo es que va a otro sitio— y un aviso en la propia pantalla dice de
   quién son las rutas que estás viendo. Al apagarlo vuelven las generales, y **las dos parejas se
   guardan**: encenderlo otra vez trae de vuelta la del proyecto sin volver a escribirla.
-  **Cómo llega la ruta a tu exportación**: la extensión invisible vigila si abres una ventana de
-  exportación, y en el momento en que aparece —la pestaña *Export* o el *Exportar medios* clásico— le
-  escribe la carpeta al campo *Location*, delante de ti, dejando el nombre de archivo que Premiere ya
-  había puesto. Lo hace **una vez por ventana**: si después eliges otra carpeta a mano para ese
+  **Cómo llega la ruta a tu exportación**: los dos caminos no funcionan igual por dentro. El de
+  fotogramas es directo —el diálogo *Export Frame* lee la preferencia de Premiere y abre en tu
+  carpeta, sin más—. El de medios necesita otra cosa: la extensión invisible vigila si abres una
+  ventana de exportación, y en el momento en que aparece —la pestaña *Export* o el *Exportar medios*
+  clásico— le escribe la carpeta al campo *Location*, delante de ti, dejando el nombre de archivo que
+  Premiere ya había puesto. Lo hace **una vez por ventana**: si después eliges otra carpeta a mano para ese
   entregable, se queda la tuya y nadie te la cambia por detrás. La carpeta **se crea en ese momento**
   si no existía, que es cuando de verdad hace falta, y mientras no exista la fila te lo dice: *This
   folder is not on disk yet*. Resolver la ruta sola —abrir un proyecto, cambiar de secuencia— no crea
@@ -470,25 +472,29 @@ fondo negro en la línea de tiempo.
 Aquí conviene ser exacto, porque es la parte que nadie ha documentado y porque la primera versión de
 esto **estaba equivocada**. Lo que sigue está medido sobre un Premiere 26 abierto, no deducido.
 
-La primera versión escribía dos preferencias:
+La primera versión escribía dos preferencias, y con las dos **no pasa lo mismo**:
 
 ```
-MZ.Prefs.Export.Media.Path        la carpeta de Exportar medios
-Monitor.ExportFrame.CurrentPath   la carpeta de Exportar fotograma
+Monitor.ExportFrame.CurrentPath   la carpeta de Exportar fotograma — sí funciona
+MZ.Prefs.Export.Media.Path        la carpeta de Exportar medios    — no hace nada
 ```
 
-Y esas escrituras **funcionan y no sirven de nada**. La preferencia acepta el valor, lo devuelve
-igual al volver a leerla, sobrevive a reiniciar Premiere… y la pestaña *Export* sigue ofreciendo la
-carpeta que ella quiera. La razón es que **Premiere 26 guarda el destino dentro del proyecto**: un
-`.prproj` contiene un `OutPath` por secuencia y por grupo de exportación, y esa ruta le gana a
-cualquier preferencia. Cuando lo que tiene guardado no le sirve, cae a la carpeta *Documents* del
-usuario, que es exactamente el síntoma que destapó todo esto: un proyecto nuevo hecho a partir de una
-copia arrastraba rutas ajenas —incluidas unas `E:\` de un editor de Windows— y ninguna escritura de
+La de fotogramas **sí dirige su diálogo**, y está comprobado apuntándola a una carpeta que nadie
+había usado: el diálogo *Export Frame* abre justo ahí. Así que para los fotogramas no hace falta
+vigilar nada y la paleta sí puede prometer esa ruta.
+
+La de medios, en cambio, **acepta el valor y no mueve nada**: la escritura entra, se devuelve igual
+al volver a leerla, sobrevive a reiniciar Premiere… y la pestaña *Export* sigue ofreciendo la carpeta
+que ella quiera. La razón es que **Premiere 26 guarda ese destino dentro del proyecto**: un `.prproj`
+contiene un `OutPath` por secuencia y por grupo de exportación, y esa ruta le gana a cualquier
+preferencia. Cuando lo que tiene guardado no le sirve, cae a la carpeta *Documents* del usuario, que
+es exactamente el síntoma que destapó todo esto: un proyecto nuevo hecho a partir de una copia
+arrastraba rutas ajenas —incluidas unas `E:\` de un editor de Windows— y ninguna escritura de
 preferencias podía con ellas. No hay API de ExtendScript que escriba dentro de los ajustes de
-exportación del proyecto, así que por esa vía no se llega. Las escrituras se conservan por si alguna
-versión anterior sí las lee, pero **nada se reporta como hecho** apoyándose en ellas.
+exportación del proyecto, así que por esa vía no se llega: **nada se reporta como hecho** apoyándose
+en esa clave.
 
-Lo que sí mueve la ruta es un objeto que Adobe no documenta en ninguna parte, `ExportSettings`.
+Lo que sí mueve la ruta de medios es un objeto que Adobe no documenta en ninguna parte, `ExportSettings`.
 Mientras hay una ventana de exportación abierta, sostiene un *transcoder* vivo cuyo `outputFilePath`
 es literalmente lo que muestra el campo *Location*:
 

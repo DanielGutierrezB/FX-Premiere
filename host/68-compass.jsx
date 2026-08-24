@@ -3,12 +3,13 @@
  *
  * There are two routes here and only one of them steers Premiere 26.
  *
- * The preference keys are undocumented, and on Premiere 26 they turned out not to be read at all:
- * measured on a real machine, `MZ.Prefs.Export.Media.Path` takes a write, survives a relaunch, and
- * the Export tab goes on offering the folder it had. Premiere keeps the destination in the project
- * now — a `.prproj` holds an `OutPath` per sequence and per export group — and falls back to the
- * user's Documents folder when it has nothing it likes. So the writes stay, for the older versions
- * where they may still mean something, and nothing is promised on the strength of them.
+ * The preference keys are undocumented, and on Premiere 26 they do not fare the same. Measured on a
+ * real machine, `Monitor.ExportFrame.CurrentPath` steers the Export Frame dialog: pointed at a
+ * folder nobody had used, that is where the dialog opens. `MZ.Prefs.Export.Media.Path` steers
+ * nothing — it takes a write, survives a relaunch, and the Export tab goes on offering the folder it
+ * had, because Premiere keeps that destination in the project now (a `.prproj` holds an `OutPath`
+ * per sequence and per export group) and falls back to the user's Documents folder when it has
+ * nothing it likes. Both writes stay; only the frame one is worth promising anything on.
  *
  * What does steer it is `ExportSettings`, an object Adobe documents nowhere: while an export window
  * is open it holds a live transcoder whose `outputFilePath` is exactly what the Location field

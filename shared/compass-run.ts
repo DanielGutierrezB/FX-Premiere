@@ -3,13 +3,16 @@
  *
  * There are three routes to that, and it is worth being clear about which one carries the weight.
  *
- * Steering the open export window is the one that works. Premiere holds a live transcoder while the
- * Export tab or the Export Media dialog is up, and writing its path changes the Location field in
- * front of the editor. It only exists while the window is open, so the service watches for one.
+ * Steering the open export window is what moves a *media* export. Premiere holds a live transcoder
+ * while the Export tab or the Export Media dialog is up, and writing its path changes the Location
+ * field in front of the editor. It only exists while the window is open, so the service watches.
  *
- * Writing the preferences is kept but no longer believed. On Premiere 26 the write takes, survives a
- * relaunch, and changes nothing an editor can see: the destination lives in the project now. Older
- * versions may still read it, so it stays, but nothing is reported as done on the strength of it.
+ * The frame preference is a different story, and both halves of it are measured on Premiere 26.
+ * `Monitor.ExportFrame.CurrentPath` really does steer the Export Frame dialog: pointed at a folder
+ * nobody had used, that is the folder the dialog opens at. `MZ.Prefs.Export.Media.Path` steers
+ * nothing at all — the write takes, survives a relaunch, and the Export tab goes on offering
+ * whatever the project remembers. So the frame path is reported as done on the strength of its round
+ * trip, and the media path never is.
  *
  * Queuing to Media Encoder is the way out when neither of those is in play — the path is handed
  * straight to the encoder, so nothing Premiere remembers can get in the way.
@@ -117,10 +120,11 @@ export const steerCompass = async (
 /**
  * What the sheet and the status line say about a run, most important first.
  *
- * The preferences are deliberately not reported. They are written for the older Premieres that may
- * read them, and on 26 they take a write and mean nothing, so an editor told "Premiere is pointed at
+ * The media preference is deliberately not reported. It is written for the older Premieres that may
+ * read it, and on 26 it takes a write and means nothing, so an editor told "Premiere is pointed at
  * …" on the strength of one would be told something this cannot know — which is exactly the message
- * that sent someone hunting for a bug that was Premiere ignoring us all along.
+ * that sent someone hunting for a bug that was Premiere ignoring us all along. The frame preference
+ * is reported, because that one was measured steering the dialog it is named after.
  */
 export const compassMessages = (result: CompassOutcome): string[] => {
   if (result.error !== '') {
@@ -133,15 +137,16 @@ export const compassMessages = (result: CompassOutcome): string[] => {
   if (result.steer.made) {
     messages.push(`Made the folder ${result.plan.media}`);
   }
-  if (result.steer.steered) {
-    messages.push(`${result.steer.where} is now saving to ${result.steer.path}`);
-    return messages;
-  }
   messages.push(
-    result.steer.open
-      ? `The export window is at ${result.steer.path}`
-      : `Exports will be sent to ${result.plan.media} as soon as you open an export window`,
+    result.steer.steered
+      ? `${result.steer.where} is now saving to ${result.steer.path}`
+      : result.steer.open
+        ? `The export window is at ${result.steer.path}`
+        : `Exports will be sent to ${result.plan.media} as soon as you open an export window`,
   );
+  if (result.writes.some((write) => write.slot === 'frame' && write.ok)) {
+    messages.push(`Frames go to ${result.plan.frame}`);
+  }
   return messages;
 };
 
