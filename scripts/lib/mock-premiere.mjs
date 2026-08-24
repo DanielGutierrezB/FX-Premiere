@@ -490,6 +490,20 @@ export const buildWorld = () => {
   /** Every write attempted, in order, so a test can prove a preference was left alone. */
   world.propertyWrites = [];
 
+  /**
+   * Premiere's export window, which is the only thing that actually steers an export.
+   *
+   * `''` for no window open, which is the ordinary state and the one where the transcoder is null.
+   * The rest models what a real Premiere 26 does: the path reads back as whatever the Location field
+   * shows, and `setOutputFilePath` wants two arguments and says "Not Enough Parameters" to one — the
+   * error that had the first attempt at this looking like a missing API.
+   */
+  world.exportWindow = '';
+  world.exportPath = '/Users/mock/Documents/Mock Sequence.mp4';
+  world.exportPathLocked = false;
+  world.exportPathRefused = false;
+  world.exportSetCalls = [];
+
   /** A bin in the project panel. Bins hold items and answer no to being a sequence. */
   const makeBin = (name) => {
     const itemList = [];
@@ -839,7 +853,42 @@ export const buildWorld = () => {
  * Loads the built host script into a VM with the mock DOM in scope. The context is reused
  * across calls so the host keeps its state, like it does inside Premiere.
  */
-export const createHost = ({ hostScript, documentsRoot, withoutQE = false }) => {
+/**
+ * Premiere's `ExportSettings`, as measured on 26.0: two managers, each with a flag for whether its
+ * window is up and a transcoder that only exists while it is.
+ */
+const makeExportSettings = (world) => {
+  const transcoder = () => ({
+    get outputFilePath() {
+      return world.exportPath;
+    },
+    get isOutputFilePathLocked() {
+      return world.exportPathLocked;
+    },
+    setOutputFilePath: (path, ...rest) => {
+      world.exportSetCalls.push({ path: String(path), rest });
+      if (rest.length === 0) {
+        throw new Error('Not Enough Parameters');
+      }
+      if (world.exportPathRefused) {
+        throw new Error('this build will not have its export path set');
+      }
+      world.exportPath = String(path);
+    },
+  });
+  return {
+    get exportModeManager() {
+      const open = world.exportWindow === 'tab';
+      return { isExportModeRunning: open, transcoder: open ? transcoder() : null };
+    },
+    get exportMenuManager() {
+      const open = world.exportWindow === 'dialog';
+      return { isExportMenuRunning: open, transcoder: open ? transcoder() : null };
+    },
+  };
+};
+
+export const createHost = ({ hostScript, documentsRoot, withoutQE = false, withoutExportSettings = false }) => {
   const world = buildWorld();
   fileReads.length = 0;
   // Read through rather than copied: the sequence a nest stands for is looked up by node id while a
@@ -975,6 +1024,9 @@ export const createHost = ({ hostScript, documentsRoot, withoutQE = false }) => 
     },
     // Premiere without QE: the undocumented DOM the effect lists come from is simply not there.
     qe: withoutQE ? undefined : world.qe,
+    // The undocumented object that holds the live export windows. Absent on request, because a
+    // Premiere old enough not to have it must not take the palette down with it.
+    ExportSettings: withoutExportSettings ? undefined : makeExportSettings(world),
     File: FileStub,
     Folder: Object.assign(FolderStub, { myDocuments: new FolderStub(documentsRoot) }),
     // The host polls for a paste with $.sleep between tries. Here the paste already happened, so

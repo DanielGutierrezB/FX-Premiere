@@ -429,10 +429,10 @@ export class CompassSheet {
   /**
    * A folder that is not there yet, said plainly instead of being made.
    *
-   * Compass points Premiere at a path every time a project opens and every time the sequence
-   * changes; making the folder then meant a folder per project per day for an editor who had only
-   * opened their work. So nothing here reaches the disk, and the row says as much: what the path
-   * resolves to, and that there is nothing at it yet.
+   * Compass resolves a path every time a project opens and every time the sequence changes; making
+   * the folder then meant a folder per project per day for an editor who had only opened their work.
+   * So nothing here reaches the disk, and the row says when it will: an export window opening is the
+   * first moment a render is really on its way, and that is where the folder comes into being.
    */
   private sayIfMissing(warn: HTMLElement, resolved: ResolvedPath): void {
     if (resolved.error !== '' || resolved.path === '' || folderExists(resolved.path)) {
@@ -440,7 +440,9 @@ export class CompassSheet {
       return;
     }
     warn.className = 'compass__warn compass__warn--on compass__warn--quiet';
-    warn.appendChild(el('span', { text: 'This folder is not on disk yet. Nothing is created until an export goes there.' }));
+    warn.appendChild(
+      el('span', { text: 'This folder is not on disk yet. It is made when you open an export window.' }),
+    );
   }
 
   /** The leading part of a resolved path that R supplied, or nothing when the path stands alone. */

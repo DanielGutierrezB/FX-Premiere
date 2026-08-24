@@ -303,6 +303,26 @@ export interface CompassWrite {
   ok: boolean;
 }
 
+/**
+ * What came of trying to steer the export window Premiere had open.
+ *
+ * `open` false is the ordinary answer, since most of the time nobody is exporting. `steered` is only
+ * true when the path came back out of Premiere as the one that went in, which is the whole of the
+ * evidence that an editor will see the right folder.
+ */
+export interface CompassSteer {
+  open: boolean;
+  steered: boolean;
+  /** Which window it was, for a log line that says where the path landed. */
+  where: string;
+  /** What the Location field holds now. */
+  path: string;
+  /** True when the folder had to be made for this. */
+  made: boolean;
+  /** Empty unless something stood in the way and the editor should hear about it. */
+  note: string;
+}
+
 /** How the resolved paths came out, for the service and the panel's live preview alike. */
 export interface CompassPlan {
   media: string;
@@ -429,6 +449,8 @@ export type HostRequest =
   /** `seconds` at zero means the media has a length of its own and is to be placed at it. */
   | { op: 'pasteItem'; path: string; bin: string; seconds: number }
   | { op: 'compassApply'; media: string; frame: string }
+  /** `fileName` is only used when Premiere has not named the file yet. */
+  | { op: 'compassSteer'; media: string; fileName: string }
   | { op: 'compassExport'; path: string; fileName: string; preset: string }
   | { op: 'probeMulticam' }
   | { op: 'inspect' }

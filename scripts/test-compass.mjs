@@ -431,7 +431,7 @@ console.log('\nWhat a saved settings file is read back as');
   check('the folders already made are carried across', paste.createdFolders.join(',') === 'a,b');
 }
 
-const fresh = () => createHost({ hostScript, documentsRoot: join(stage, 'Documents') });
+const fresh = (options = {}) => createHost({ hostScript, documentsRoot: join(stage, 'Documents'), ...options });
 
 console.log('\nWhat the host says about what is open');
 {
@@ -532,12 +532,97 @@ console.log('\nWriting the export paths, and reading them straight back');
   check('a value that differs only by the trailing separator still counts as taken', frame.ok === true, JSON.stringify(frame));
 }
 
+// The measured behaviour of Premiere 26, and the reason all of the above is no longer the feature:
+// the preference takes a write, survives a relaunch, and the Export tab goes on offering the folder
+// it had. Steering the open window is what an editor actually sees.
+console.log('\nSteering the export window that is open');
+{
+  const { world, call } = fresh();
+  const folder = join(stage, 'steer', 'Vikings') + '/';
+  const shut = call({ op: 'compassSteer', media: folder, fileName: 'DrakeShip' });
+  check('with no window open it says so and does nothing', shut.ok && shut.data.open === false, JSON.stringify(shut));
+  check('and no folder was made for a window nobody opened', !existsSync(folder), folder);
+
+  world.exportWindow = 'tab';
+  world.exportPath = '/Users/mock/Documents/DrakeShip.mp4';
+  const steered = call({ op: 'compassSteer', media: folder, fileName: 'Fallback' });
+  check('an open window is steered', steered.ok && steered.data.steered === true, JSON.stringify(steered));
+  check('to the resolved folder', world.exportPath === `${folder}DrakeShip.mp4`, world.exportPath);
+  check("keeping Premiere's own file name", steered.data.path.endsWith('DrakeShip.mp4'), steered.data.path);
+  check('the window is named, for a log line that says where it landed', steered.data.where === 'the Export tab', steered.data.where);
+  check('the folder is made, since a render is now on its way', existsSync(folder) && steered.data.made === true, JSON.stringify(steered.data));
+  check('and the call passed the second argument Premiere insists on', world.exportSetCalls.at(-1).rest.length === 1, JSON.stringify(world.exportSetCalls.at(-1)));
+
+  // Once per window. An editor who types their own path into Location has chosen, and a tick three
+  // quarters of a second later putting it back would be arguing with them.
+  world.exportPath = '/Users/mock/Elsewhere/DrakeShip.mp4';
+  const again = call({ op: 'compassSteer', media: folder, fileName: 'DrakeShip' });
+  check('a path the editor changed afterwards is left alone', world.exportPath === '/Users/mock/Elsewhere/DrakeShip.mp4', world.exportPath);
+  check('and the answer reports where it is rather than claiming a steer', again.data.steered === false && again.data.open === true, JSON.stringify(again.data));
+
+  // A new folder is a new decision, so it is steered again without waiting for the window to close.
+  const moved = join(stage, 'steer', 'Vikings-2') + '/';
+  check('a folder that changed while the window is open is steered again', call({ op: 'compassSteer', media: moved, fileName: 'DrakeShip' }).data.steered === true);
+  check('and it lands there', world.exportPath === `${moved}DrakeShip.mp4`, world.exportPath);
+
+  // Closing the window forgets, so the next opening is steered rather than treated as held.
+  world.exportWindow = '';
+  call({ op: 'compassSteer', media: folder, fileName: 'DrakeShip' });
+  world.exportWindow = 'tab';
+  world.exportPath = '/Users/mock/Documents/DrakeShip.mp4';
+  check('the next opening is steered again', call({ op: 'compassSteer', media: folder, fileName: 'DrakeShip' }).data.steered === true, world.exportPath);
+}
+
+{
+  const { world, call } = fresh();
+  const folder = join(stage, 'dialog') + '/';
+  world.exportWindow = 'dialog';
+  const answer = call({ op: 'compassSteer', media: folder, fileName: 'A' });
+  check('the older Export Media dialog is steered the same way', answer.data.steered === true, JSON.stringify(answer));
+  check('and says which window it was', answer.data.where === 'the Export Media dialog', answer.data.where);
+}
+
+{
+  const { world, call } = fresh();
+  world.exportWindow = 'tab';
+  world.exportPath = '';
+  const answer = call({ op: 'compassSteer', media: join(stage, 'named') + '/', fileName: 'DrakeShip' });
+  check('a window with no name yet takes the one offered', answer.data.path.endsWith('DrakeShip'), answer.data.path);
+}
+
+{
+  const { world, call } = fresh();
+  world.exportWindow = 'tab';
+  world.exportPathLocked = true;
+  const answer = call({ op: 'compassSteer', media: join(stage, 'locked') + '/', fileName: 'A' });
+  check('a path Premiere has locked is left alone', world.exportSetCalls.length === 0, JSON.stringify(world.exportSetCalls));
+  check('and the reason is reported rather than swallowed', answer.data.note.indexOf('locked') > 0, answer.data.note);
+}
+
+{
+  const { world, call } = fresh();
+  world.exportWindow = 'tab';
+  world.exportPathRefused = true;
+  const answer = call({ op: 'compassSteer', media: join(stage, 'refused-steer') + '/', fileName: 'A' });
+  check('a build that refuses the write is reported, not claimed', answer.ok && answer.data.steered === false, JSON.stringify(answer));
+  check('with what it said', answer.data.note.indexOf('refused the export path') > 0, answer.data.note);
+}
+
+{
+  // Premiere old enough not to have the object at all. The palette has to keep working: the
+  // preferences are still written, and this simply reports that there was no window to steer.
+  const { call } = fresh({ withoutExportSettings: true });
+  const answer = call({ op: 'compassSteer', media: join(stage, 'ancient') + '/', fileName: 'A' });
+  check('a Premiere without ExportSettings answers instead of throwing', answer.ok && answer.data.open === false, JSON.stringify(answer));
+  check('and the preferences are still written there', call({ op: 'compassApply', media: '/Users/me/E/', frame: '' }).data.writes.length === 1);
+}
+
 console.log('\nThe Media Encoder fallback');
 {
   const { world, call } = fresh();
-  // Not there yet, and that is the point: this is the one render Compass performs itself, so this is
-  // the one place allowed to bring a folder into being. Nothing before it — not pointing Premiere at
-  // the path, not opening the project, not changing sequence — is allowed to.
+  // Not there yet, and that is the point: a folder comes into being where a render does, which is
+  // this and the export window opening. Resolving a path on its own — opening a project, changing
+  // sequence — still makes nothing.
   const exportFolder = join(stage, 'queued', '20220520') + '/';
   const queued = call({ op: 'compassExport', path: exportFolder, fileName: 'DrakeShip', preset: '/presets/h264.epr' });
   check('the sequence is queued', queued.ok && queued.data.job === 'job-1', JSON.stringify(queued));

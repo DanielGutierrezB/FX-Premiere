@@ -1,11 +1,20 @@
 /**
  * Pointing Premiere's export paths at a folder, and the fallback for when it will not be pointed.
  *
- * The two preference keys are undocumented. They were read out of a real preferences file and are
- * the same in every version on the machine this was written on, but Adobe promises nothing about
- * them, so a write is never believed: it is read straight back and only a value that comes back
- * unchanged counts. What the panel does with a write that did not take is its own business — the
- * honest answer is the point of the exercise.
+ * There are two routes here and only one of them steers Premiere 26.
+ *
+ * The preference keys are undocumented, and on Premiere 26 they turned out not to be read at all:
+ * measured on a real machine, `MZ.Prefs.Export.Media.Path` takes a write, survives a relaunch, and
+ * the Export tab goes on offering the folder it had. Premiere keeps the destination in the project
+ * now — a `.prproj` holds an `OutPath` per sequence and per export group — and falls back to the
+ * user's Documents folder when it has nothing it likes. So the writes stay, for the older versions
+ * where they may still mean something, and nothing is promised on the strength of them.
+ *
+ * What does steer it is `ExportSettings`, an object Adobe documents nowhere: while an export window
+ * is open it holds a live transcoder whose `outputFilePath` is exactly what the Location field
+ * shows, and `setOutputFilePath(path, true)` changes it in front of the editor. The transcoder is
+ * null the rest of the time, which is why steering has to wait for the window rather than run when
+ * a project opens.
  *
  * Adobe's preference documentation is explicit that a path stored in Premiere's preferences must
  * end in a separator. The panel resolves them that way; nothing here adds one, because a path this
@@ -63,6 +72,119 @@ FXP.compassApply = function (request) {
         writes[writes.length] = FXP.compassWrite('frame', frame);
     }
     return { writes: writes };
+};
+
+/**
+ * The two windows Premiere exports from, newest first. Each keeps its own transcoder, and only the
+ * one that is open has a live one, so the pair is walked rather than picked.
+ */
+FXP.COMPASS_WINDOWS = [
+    { where: 'the Export tab', manager: 'exportModeManager', flag: 'isExportModeRunning' },
+    { where: 'the Export Media dialog', manager: 'exportMenuManager', flag: 'isExportMenuRunning' }
+];
+
+/** The folder this run has already steered the open window to, so it is steered once and not held. */
+FXP.compassHeld = '';
+
+FXP.compassOpenWindow = function () {
+    if (typeof ExportSettings === 'undefined') {
+        return null;
+    }
+    for (var i = 0; i < FXP.COMPASS_WINDOWS.length; i++) {
+        var spec = FXP.COMPASS_WINDOWS[i];
+        try {
+            var manager = ExportSettings[spec.manager];
+            if (!manager || !manager[spec.flag]) {
+                continue;
+            }
+            // Null whenever the window is shut, which is the ordinary case and not worth a word.
+            if (manager.transcoder) {
+                return { where: spec.where, transcoder: manager.transcoder };
+            }
+        } catch (error) {
+            FXP.trace('compass could not read ' + spec.manager + ': ' + FXP.errorText(error));
+        }
+    }
+    return null;
+};
+
+/** What Premiere is calling the file, kept as it is: only the folder is ours to change. */
+FXP.compassFileName = function (path, fallback) {
+    var text = String(path);
+    var cut = Math.max(text.lastIndexOf('/'), text.lastIndexOf('\\'));
+    var name = cut < 0 ? text : text.substring(cut + 1);
+    return name === '' ? fallback : name;
+};
+
+FXP.compassMakeFolder = function (folderPath) {
+    if (folderPath === '') {
+        return false;
+    }
+    var folder = new Folder(folderPath);
+    if (folder.exists) {
+        return false;
+    }
+    return Boolean(folder.create());
+};
+
+/**
+ * Point the export window that is open at the folder Compass resolved.
+ *
+ * Once per opening, and once more if the folder itself changes while it stays open. Not on every
+ * tick: an editor who types somewhere else into the Location field has chosen, and putting it back a
+ * second later would be arguing with them rather than helping.
+ */
+FXP.compassSteer = function (request) {
+    var folder = FXP.trim(request.media || '');
+    var open = FXP.compassOpenWindow();
+    if (!open) {
+        FXP.compassHeld = '';
+        return { open: false, steered: false, where: '', path: '', made: false, note: '' };
+    }
+    var answer = { open: true, steered: false, where: open.where, path: '', made: false, note: '' };
+    try {
+        answer.path = String(open.transcoder.outputFilePath);
+    } catch (error) {
+        answer.path = '';
+    }
+    if (folder === '' || FXP.compassHeld === folder) {
+        return answer;
+    }
+    var locked = false;
+    try {
+        locked = Boolean(open.transcoder.isOutputFilePathLocked);
+    } catch (error) {
+        locked = false;
+    }
+    if (locked) {
+        FXP.compassHeld = folder;
+        answer.note = 'Premiere has this export path locked, so it was left alone.';
+        return answer;
+    }
+    var wanted = folder + FXP.compassFileName(answer.path, FXP.trim(request.fileName || '') || 'Export');
+    // Made here because an open export window is the first moment a render is really on its way, and
+    // because a folder that is not there is a render that fails at the end rather than a path refused
+    // now. A window opened and closed without exporting leaves one empty folder behind; the tool this
+    // copies makes the same trade, and the alternative is an export that lands somewhere else.
+    try {
+        answer.made = FXP.compassMakeFolder(folder);
+    } catch (error) {
+        answer.note = 'The folder ' + folder + ' could not be made: ' + FXP.errorText(error);
+    }
+    try {
+        open.transcoder.setOutputFilePath(wanted, true);
+    } catch (error) {
+        answer.note = 'This Premiere refused the export path: ' + FXP.errorText(error);
+        return answer;
+    }
+    FXP.compassHeld = folder;
+    try {
+        answer.path = String(open.transcoder.outputFilePath);
+    } catch (error) {
+        answer.path = wanted;
+    }
+    answer.steered = FXP.samePath(answer.path, wanted);
+    return answer;
 };
 
 /**
@@ -135,13 +257,9 @@ FXP.compassExport = function (request) {
     // folder has to exist by the time this returns. It is made after everything that can refuse the
     // export has had its say, because a folder made for an export that never happened is exactly the
     // litter this whole change is about: pointing Premiere at a path is not a reason for one to exist.
-    var created = false;
-    var folder = new Folder(folderPath);
-    if (folderPath !== '' && !folder.exists) {
-        created = folder.create();
-        if (!created) {
-            throw new Error('The folder ' + folderPath + ' could not be created.');
-        }
+    var created = FXP.compassMakeFolder(folderPath);
+    if (!created && folderPath !== '' && !new Folder(folderPath).exists) {
+        throw new Error('The folder ' + folderPath + ' could not be created.');
     }
     try {
         app.encoder.launchEncoder();

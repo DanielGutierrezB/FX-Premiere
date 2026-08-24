@@ -445,6 +445,35 @@ check(
   join(projectFolder, 'EXPORT'),
 );
 
+// And the route that an editor actually sees. On Premiere 26 the preference above steers nothing:
+// the destination lives in the project, and what the Export tab shows comes from a transcoder that
+// only exists while the window is open. So the service watches for one, quicker than it watches the
+// project, because somebody who just opened Export is already reading the Location field.
+world.exportWindow = 'tab';
+world.exportPath = join(stage, 'Documents', 'Mock Sequence.mp4');
+const steered = await waitFor(() => world.exportPath.includes('EXPORT'), {
+  label: 'the export window to be steered',
+});
+check(
+  'opening an export window points it at the resolved folder',
+  steered && world.exportPath === join(projectFolder, 'EXPORT', 'Nested Sequence', 'Mock Sequence.mp4'),
+  world.exportPath,
+);
+check(
+  'and the folder is made, because this time a render really is on its way',
+  existsSync(join(projectFolder, 'EXPORT', 'Nested Sequence')),
+  join(projectFolder, 'EXPORT', 'Nested Sequence'),
+);
+
+// Once per window, for the same reason the preference is written once per answer: an editor who
+// picks another folder for this one deliverable has chosen, and this runs better than once a second.
+const chosen = join(stage, 'Chosen', 'Mock Sequence.mp4');
+world.exportPath = chosen;
+await settle(2500);
+check('a folder the editor picks afterwards is left where they put it', world.exportPath === chosen, world.exportPath);
+world.exportWindow = '';
+rmSync(join(projectFolder, 'EXPORT'), { recursive: true, force: true });
+
 const pathWhenOff = exportPath();
 world.current = world.sequence;
 writeSettings({ compass: { enabled: false } });

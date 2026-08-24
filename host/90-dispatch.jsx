@@ -47,6 +47,8 @@ FXP.route = function (request) {
             return FXP.pasteItem(request);
         case 'compassApply':
             return FXP.compassApply(request);
+        case 'compassSteer':
+            return FXP.compassSteer(request);
         case 'compassExport':
             return FXP.compassExport(request);
         case 'probeMulticam':

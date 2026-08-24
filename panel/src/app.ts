@@ -40,7 +40,7 @@ import {
 import { compareVersions, localVersion } from '@shared/updater';
 import { resolveAnchorBounds } from './alpha';
 import { ApplyPipeline, type ApplyIntent } from './apply';
-import { applyCompass, compassMessages, exportViaCompass, roundTripped } from '@shared/compass-run';
+import { applyCompass, compassMessages, exportViaCompass } from '@shared/compass-run';
 import { commitPaste, probePaste, withDuration } from './paste';
 import {
   clearCatalogCache,
@@ -980,11 +980,15 @@ export class PaletteApp {
     return commitPaste(withDuration(opened, this.settings.paste.stillSeconds), this.settings);
   }
 
-  /** Reported rather than announced: a write Premiere refused has to reach the status line as one. */
+  /**
+   * Reported rather than announced. Success is the path resolving, since an editor pressing Apply
+   * with no export window open is doing the ordinary thing and there is nothing to steer yet: what
+   * they need to hear is where exports are going to go, not that a preference took a write.
+   */
   private async runCompass(): Promise<void> {
     const result = await applyCompass(this.settings, await this.sheets.context());
     const messages = compassMessages(result);
-    const ok = result.error === '' && roundTripped(result.writes);
+    const ok = result.error === '' && result.steer.note === '';
     this.setStatus(messages[0] ?? '', ok ? 'ok' : 'error');
     this.toast(messages.join(' \u00b7 '), ok ? 'info' : 'error');
   }

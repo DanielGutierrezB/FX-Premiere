@@ -552,7 +552,11 @@ export const pasteAndCompassViews = async ({ window, world, cep, cepCalls, stage
   await press('Enter');
   await settle(30);
   check('Enter points Premiere at the resolved path', world.properties.get('MZ.Prefs.Export.Media.Path').endsWith('/project/SOLO-ESTE/'), world.properties.get('MZ.Prefs.Export.Media.Path'));
-  check('with the round trip reported as a success', /is pointed at/.test(toastText()), toastText());
+  // With no export window open there is nothing to steer, so what an editor is told is where their
+  // exports are going to go. Not that a preference took a write: on Premiere 26 it takes one and
+  // means nothing, and reporting that as success is what sent someone hunting a bug for an evening.
+  check('with the promise being about exports rather than about a preference', /Exports will be sent to/.test(toastText()), toastText());
+  check('and the resolved folder named in it', /project\/SOLO-ESTE/.test(toastText()), toastText());
 
   // Pointing Premiere somewhere is not a reason for a folder to exist. This runs when a project
   // opens and every time the sequence changes, so with a date in the template it used to leave an
@@ -573,25 +577,37 @@ export const pasteAndCompassViews = async ({ window, world, cep, cepCalls, stage
   // know before exporting into it.
   const rowWarn = (index) => rows()[index].querySelector('.compass__warn--on')?.textContent ?? '';
   check('the row says the folder is not there yet', /not on disk yet/.test(rowWarn(0)), rowWarn(0) || 'nothing said');
-  check('and that nothing is going to make it behind their back', /Nothing is created until an export goes there/.test(rowWarn(0)), rowWarn(0));
+  check('and when it will come into being', /made when you open an export window/.test(rowWarn(0)), rowWarn(0));
   mkdirSync(join(projectRoot, 'SOLO-ESTE'), { recursive: true });
   await typeAndSave(inputs()[0], 'SOLO-ESTE');
   check('a folder that is already there is simply used, with nothing said about it', rowWarn(0) === '', rowWarn(0));
   rmSync(join(projectRoot, 'SOLO-ESTE'), { recursive: true, force: true });
 
-  // A Premiere that takes the write and keeps its own value. The stored value has to go back to
-  // something else first, or the previous successful write would still be sitting there to read.
+  // A Premiere that takes the write and keeps its own value — which is every Premiere 26. It is no
+  // longer a failure, because the preference is not what steers an export, so an editor is told the
+  // same thing either way rather than being sent after a fallback for a route nothing depended on.
   world.readOnlyProperties.add('MZ.Prefs.Export.Media.Path');
   world.properties.set('MZ.Prefs.Export.Media.Path', '/Users/mock/Movies/Render/');
   await press('Enter');
   await settle(30);
   check(
-    'a Premiere that ignores the key is not reported as if it had worked',
-    /Premiere answered|did not keep/.test(toastText()),
+    'a Premiere that ignores the preference changes nothing an editor is told',
+    /Exports will be sent to/.test(toastText()),
     toastText(),
   );
-  check('and the user is pointed at the fallback that does work', /Export via Compass/.test(toastText()), toastText());
   world.readOnlyProperties.delete('MZ.Prefs.Export.Media.Path');
+
+  // And with an export window actually open, which is the case the whole feature turns on: the path
+  // goes into the window in front of the editor, and the folder is made because a render is coming.
+  world.exportWindow = 'tab';
+  world.exportPath = '/Users/mock/Documents/Mock Sequence.mp4';
+  await press('Enter');
+  await settle(30);
+  check('an open export window is steered to the resolved folder', world.exportPath === `${join(projectRoot, 'SOLO-ESTE')}/Mock Sequence.mp4`, world.exportPath);
+  check('and the editor is told where it landed', /Export tab is now saving to/.test(toastText()), toastText());
+  check('with the folder made for the render that is coming', existsSync(join(projectRoot, 'SOLO-ESTE')));
+  world.exportWindow = '';
+  rmSync(join(projectRoot, 'SOLO-ESTE'), { recursive: true, force: true });
 
   // The list that comes up on the way into a field is what Escape answers first. Only once there is
   // nothing on screen to put away does Escape mean the sheet.

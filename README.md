@@ -131,22 +131,21 @@ Ctrl + Space  →  gsblr  →  Enter  →  Gaussian Blur en los 8 clips seleccio
   cuando una ruta resuelve pero **no es la que querías**, la fila lo dice y ofrece el arreglo: una
   ruta completa a la que le falta la primera barra con R encendido —el caso de
   `Volumes/Extreme_SSD/…`, que acaba colgando del proyecto—, una unidad de Windows o un `~` en las
-  mismas, una carpeta que termina en espacio o una barra doblada. **Una carpeta que todavía no
-  existe no se crea por apuntar ahí**: la fila te lo dice —*This folder is not on disk yet*— y la
-  carpeta nace con la primera exportación que caiga dentro, que es cuando de verdad hace falta.
-  Apuntar ocurre al abrir cada proyecto y al cambiar de secuencia, así que crearla entonces
-  significaba una carpeta vacía por proyecto y por día para quien solo estaba abriendo su trabajo.
-  Si la prefieres hecha ya, el botón **Create it now** de la propia fila la hace. Justo bajo el interruptor está
+  mismas, una carpeta que termina en espacio o una barra doblada. Justo bajo el interruptor está
   **This project only**: al encenderlo, los dos campos **se vacían** para que digas a dónde va este
   proyecto —el sentido de tenerlo es que va a otro sitio— y un aviso en la propia pantalla dice de
   quién son las rutas que estás viendo. Al apagarlo vuelven las generales, y **las dos parejas se
-  guardan**: encenderlo otra vez trae de vuelta la del proyecto sin volver a escribirla. Y la
-  extensión invisible recalcula y reescribe la ruta sola cada vez que cambias de secuencia o de
-  proyecto, con la paleta cerrada. Si tu versión de
-  Premiere no acepta que un script le escriba esas preferencias, la paleta **lo dice** en vez de
-  fingir que funcionó y te deja el camino que sí funciona siempre: *Export via Compass*, que encola
-  la secuencia en Media Encoder ya apuntando a la ruta resuelta (ver
-  [Qué diálogos de exportación puede mover Compass](#qué-diálogos-de-exportación-puede-mover-compass)).
+  guardan**: encenderlo otra vez trae de vuelta la del proyecto sin volver a escribirla.
+  **Cómo llega la ruta a tu exportación**: la extensión invisible vigila si abres una ventana de
+  exportación, y en el momento en que aparece —la pestaña *Export* o el *Exportar medios* clásico— le
+  escribe la carpeta al campo *Location*, delante de ti, dejando el nombre de archivo que Premiere ya
+  había puesto. Lo hace **una vez por ventana**: si después eliges otra carpeta a mano para ese
+  entregable, se queda la tuya y nadie te la cambia por detrás. La carpeta **se crea en ese momento**
+  si no existía, que es cuando de verdad hace falta, y mientras no exista la fila te lo dice: *This
+  folder is not on disk yet*. Resolver la ruta sola —abrir un proyecto, cambiar de secuencia— no crea
+  nada, porque con una fecha en la plantilla eso dejaba una carpeta vacía por proyecto y por día a
+  quien solo estaba abriendo su trabajo (ver
+  [Cómo Compass mueve de verdad la ruta de exportación](#cómo-compass-mueve-de-verdad-la-ruta-de-exportación)).
 - **Comandos de edición**: Scale to Frame Size, Reset Motion & Opacity, Toggle Clip Enable.
 - **Lista de recientes**: al abrir la paleta, sin escribir nada, ves lo último que aplicaste con el
   primer elemento ya seleccionado. Enter lo repite. Nada más se dibuja hasta que escribes, que es lo
@@ -175,9 +174,9 @@ Ctrl + Space  →  gsblr  →  Enter  →  Gaussian Blur en los 8 clips seleccio
   comandos de edición, el motion escrito— y de cada una: una línea de qué hace, cómo se llega a ella
   y las teclas a las que responde su propio diálogo. Está para leerse y no para operarla: hace
   scroll, `Esc` vuelve y sigue siendo legible en la ventana más estrecha. Dice también lo que una
-  herramienta **no** puede hacer —el nest con un multicámara dentro, la preferencia de exportación
-  que tu Premiere puede rechazar, el deshacer que cuesta una pulsación por keyframe— porque eso es lo
-  que conviene saber antes de usarla y no a mitad.
+  herramienta **no** puede hacer —el nest con un multicámara dentro, la ruta que solo se puede mover
+  con una ventana de exportación abierta, el deshacer que cuesta una pulsación por keyframe— porque
+  eso es lo que conviene saber antes de usarla y no a mitad.
 - **Asignar una ranura**: con el elemento seleccionado, `Cmd/Ctrl + D` y después el número que
   quieras (con los modificadores de la fila si es otra fila). Pulsar la ranura que ya lo tiene lo
   quita, y `Esc` sale sin asignar nada. El clic derecho de cualquier fila hace lo mismo, y si el
@@ -466,31 +465,54 @@ Cuando la fuente que había no llevaba transparencia —un `CF_BITMAP`, una capt
 se hace igual y **el diálogo lo dice antes de que pulses Enter**, en lugar de dejarte descubrir el
 fondo negro en la línea de tiempo.
 
-### Qué diálogos de exportación puede mover Compass
+### Cómo Compass mueve de verdad la ruta de exportación
 
-Aquí conviene ser exacto, porque es la parte que nadie ha documentado. Premiere **no tiene ninguna
-API para fijar la ruta de exportación**. Lo único que un script puede tocar son las preferencias, con
-`app.properties.setProperty`, y Adobe solo lo insinúa al advertir que «para cualquier ruta que se use
-en las preferencias de Premiere Pro, el separador final es obligatorio».
+Aquí conviene ser exacto, porque es la parte que nadie ha documentado y porque la primera versión de
+esto **estaba equivocada**. Lo que sigue está medido sobre un Premiere 26 abierto, no deducido.
 
-Las dos claves existen y están en el archivo de preferencias de esta máquina, con estos nombres y
-con rutas de carpeta por valor:
+La primera versión escribía dos preferencias:
 
 ```
 MZ.Prefs.Export.Media.Path        la carpeta de Exportar medios
 Monitor.ExportFrame.CurrentPath   la carpeta de Exportar fotograma
 ```
 
-Escribirlas es lo que hace Compass. Pero **no lo damos por hecho**: el host escribe, **vuelve a
-leer** y solo entonces dice que la ruta quedó puesta. Si la lectura no devuelve lo que se escribió
-—porque tu versión de Premiere ignore esa clave o la trate como de solo lectura— la paleta te lo
-dice tal cual y no reclama un éxito que no tuvo.
+Y esas escrituras **funcionan y no sirven de nada**. La preferencia acepta el valor, lo devuelve
+igual al volver a leerla, sobrevive a reiniciar Premiere… y la pestaña *Export* sigue ofreciendo la
+carpeta que ella quiera. La razón es que **Premiere 26 guarda el destino dentro del proyecto**: un
+`.prproj` contiene un `OutPath` por secuencia y por grupo de exportación, y esa ruta le gana a
+cualquier preferencia. Cuando lo que tiene guardado no le sirve, cae a la carpeta *Documents* del
+usuario, que es exactamente el síntoma que destapó todo esto: un proyecto nuevo hecho a partir de una
+copia arrastraba rutas ajenas —incluidas unas `E:\` de un editor de Windows— y ninguna escritura de
+preferencias podía con ellas. No hay API de ExtendScript que escriba dentro de los ajustes de
+exportación del proyecto, así que por esa vía no se llega. Las escrituras se conservan por si alguna
+versión anterior sí las lee, pero **nada se reporta como hecho** apoyándose en ellas.
 
-Y hay un límite que ninguna comprobación arregla: **que la preferencia quede escrita no demuestra que
-el diálogo la lea**. Escribir la preferencia es lo que puede influir en el diálogo de *Exportar
-medios*, la pestaña *Exportar*, *Exportación rápida* y la cola de Media Encoder, porque los cuatro
-parten de esa misma carpeta recordada, pero eso solo se confirma exportando de verdad en un Premiere
-abierto. Lo que sí es seguro de punta a punta es el otro camino: **Export via Compass** resuelve los
+Lo que sí mueve la ruta es un objeto que Adobe no documenta en ninguna parte, `ExportSettings`.
+Mientras hay una ventana de exportación abierta, sostiene un *transcoder* vivo cuyo `outputFilePath`
+es literalmente lo que muestra el campo *Location*:
+
+```
+ExportSettings.exportModeManager.isExportModeRunning     la pestaña Export está abierta
+ExportSettings.exportModeManager.transcoder
+    .outputFilePath                                      lo que muestra Location
+    .setOutputFilePath(ruta, true)                       se lo cambia en vivo
+ExportSettings.exportMenuManager.isExportMenuRunning     el Exportar medios clásico
+```
+
+Tres detalles que costaron encontrarse: el segundo argumento de `setOutputFilePath` es
+**obligatorio** —con uno solo responde *Not Enough Parameters*, que parece una API ausente—, el
+`transcoder` es `null` mientras no haya ventana abierta (de ahí que haya que vigilar en vez de
+escribir al abrir el proyecto), y `isOutputFilePathLocked` marca los casos que hay que dejar en paz.
+Un viaje de ida y vuelta a estas llamadas mide alrededor de **un milisegundo**, y por eso el servicio
+puede preguntar cada 700 ms sin que se note.
+
+Se escribe **una sola vez por ventana**, no en cada vuelta del reloj: quien teclea su propia carpeta
+en *Location* está eligiendo, y devolvérsela tres cuartos de segundo después sería discutir con él.
+Si la carpeta cambia mientras la ventana sigue abierta —otro proyecto, otra secuencia— se vuelve a
+escribir, porque eso sí es una decisión nueva.
+
+Queda un camino que no depende de nada de lo anterior: **Export via Compass** resuelve los
 comodines, crea la carpeta si falta —justo ahí, porque Media Encoder no la crea: una cola cuya
 carpeta de salida no existe falla con *The output destination could not be found*— y encola la
 secuencia con `app.encoder.encodeSequence` **en esa ruta exacta**, sin depender de ninguna
@@ -599,7 +621,14 @@ cuesta abrir la paleta en un Premiere de verdad, y no en el navegador de las pru
   Production, rutas de Windows y recursos UNC, la creación de carpetas incluida **una que no se
   puede crear**, la precedencia de la anulación por proyecto sobre la general, y la comprobación de
   ida y vuelta de la preferencia **en sus dos resultados**: un Premiere que la acepta y otro que se
-  queda con su valor. Y que el valor de un comodín no pueda convertirse en estructura de carpetas:
+  queda con su valor. Y el camino que de verdad importa, con la ventana de exportación simulada como
+  se comporta la de Premiere 26: que una ventana abierta se apunte a la carpeta resuelta **dejando el
+  nombre de archivo** que Premiere puso, que la carpeta nazca ahí y no antes, que se escriba **una vez
+  por ventana** y por tanto que la carpeta que elijas tú después sobreviva, que al cambiar la ruta con
+  la ventana abierta se vuelva a apuntar, que el *Exportar medios* clásico se mueva igual, que una
+  ruta bloqueada se deje en paz, que una versión que rechace la escritura se reporte en vez de
+  reclamar éxito y que un Premiere **sin ese objeto** no se lleve la paleta por delante. Y que el
+  valor de un comodín no pueda convertirse en estructura de carpetas:
   una secuencia llamada `../../Desktop` o `S01/E02` produce **una** carpeta con ese nombre saneado, y
   un comodín sin valor rechaza la ruta entera. Cierra con el respaldo del encoder, con y sin preset,
   incluido que dos exportaciones seguidas al mismo sitio no se pisen y **quién crea la carpeta y
@@ -639,7 +668,9 @@ cuesta abrir la paleta en un Premiere de verdad, y no en el navegador de las pru
   dejó una sesión anterior de Premiere, el atajo abre la paleta en vez de gastarse en cerrar algo que
   ya no existe. Y que **Compass siga al proyecto con la paleta cerrada**, que es la única razón por
   la que vive ahí: encenderlo escribe la ruta, cambiar de secuencia activa la mueve con él y apagarlo
-  la deja quieta.
+  la deja quieta. Incluida la vigilancia de la ventana de exportación, que es más rápida que la del
+  proyecto: abrir una apunta el destino a la carpeta resuelta y la crea, y la carpeta que el editor
+  elija después de eso se queda donde la puso.
 
 Dos herramientas que no son pruebas y por eso no están en `npm test`:
 
@@ -770,17 +801,16 @@ Dos herramientas que no son pruebas y por eso no están en `npm test`:
   nombre visible, con la posición habitual como último recurso; si tu versión de Premiere los llama
   de otra manera y no los reconoce, el clip se salta con un mensaje en vez de escribir en el
   parámetro que estuviera en ese hueco.
-- **Las claves de preferencias que usa Compass no están documentadas por Adobe.** Existen y se leen
-  en el archivo de preferencias real de esta máquina, y son las mismas desde Premiere 23 hasta la 26,
-  pero nadie garantiza que una versión futura las conserve ni que el diálogo de exportación las lea
-  siempre. Por eso la escritura va detrás de una comprobación de ida y vuelta y por eso existe
-  *Export via Compass* (ver [Qué diálogos de exportación puede mover
-  Compass](#qué-diálogos-de-exportación-puede-mover-compass)). Lo que **no** podemos hacer es cambiar
-  la ruta de un diálogo que ya está abierto: Premiere lee la preferencia al abrirlo. La extensión
-  invisible **solo escribe cuando la ruta resuelta cambia**, no cada vez que mira, así que si editas
-  la ruta a mano en el diálogo de exportación no te la va a pisar mientras sigas en la misma
-  secuencia. Y *Export via Compass* **nunca pisa una exportación anterior**: si el archivo ya existe
-  le añade `-2`, `-3`, igual que el pegado del portapapeles.
+- **Compass depende de un objeto de Premiere que Adobe no documenta**, `ExportSettings`, y de que su
+  `setOutputFilePath` siga aceptando lo mismo (ver [Cómo Compass mueve de verdad la ruta de
+  exportación](#cómo-compass-mueve-de-verdad-la-ruta-de-exportación)). Está medido en Premiere 26, no
+  garantizado para la siguiente: si una versión lo cambia de nombre o de forma, la paleta lo dice en
+  la línea de estado en vez de fingir que apuntó. Y hay dos cosas que **no** puede hacer. Una:
+  cambiar la carpeta si no tienes una ventana de exportación abierta, porque la ruta que se puede
+  escribir solo existe mientras la ventana está en pantalla —así que Compass espera a que la abras—.
+  Dos: mover la ruta de la **Exportación rápida**, que no pasa por ninguna de las dos ventanas.
+  *Export via Compass* **nunca pisa una exportación anterior**: si el archivo ya existe le añade
+  `-2`, `-3`, igual que el pegado del portapapeles.
 - **Pegar el portapapeles necesita el ayudante nativo**, que es lo único que sabe leer el portapapeles
   del sistema; no pide ningún permiso para hacerlo. Si el ayudante falta, la paleta lo dice y no pega
   nada. Del portapapeles se sacan **imágenes y archivos** (un video copiado en el Finder o el

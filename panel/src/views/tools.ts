@@ -128,7 +128,7 @@ const SECTIONS: Section[] = [
     tools: [
       {
         name: 'Compass Export Paths',
-        does: 'Keeps the folders Premiere remembers for Export Media and Export Frame pointing where you want, from a template with wildcards such as #PROD #PRJ #SEQ #YYYY, absolute or relative to the project, with a live preview of the path underneath. The switch at the top governs the lot: off, none of it is in use and none of it can be edited. "This project only" gives the open project a pair of its own, empty to start and kept when you switch back to the general one. The host writes the preference and reads it back: if your version of Premiere refuses that write it says so instead of claiming it worked, and Export via Compass is the route that never depended on it.',
+        does: 'Sends your exports where you want them, from a template with wildcards such as #PROD #PRJ #SEQ #YYYY, absolute or relative to the project, with a live preview of the path underneath. It works by watching for an export window: the moment you open the Export tab or Export Media, the Location field is pointed at the resolved folder, and the folder is made if it was not there. It does that once per window, so a path you type in yourself afterwards is left alone. The switch at the top governs the lot: off, none of it is in use and none of it can be edited. "This project only" gives the open project a pair of its own, empty to start and kept when you switch back to the general one. Premiere 26 keeps its export destination inside the project and ignores the preference this used to write, which is why the window is steered instead.',
         how: 'Type "compass" or "rutas de exportaci\u00f3n".',
         keys: [
           { key: '\u21e5', does: 'media / frame' },

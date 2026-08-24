@@ -1,24 +1,30 @@
 /**
- * The Compass flow: resolve the two paths and try to point Premiere at them. It does not make the
- * folders — nothing here writes to the disk at all.
+ * The Compass flow: resolve the two paths, and get Premiere to use them.
  *
- * That was not always so, and the reason is worth keeping. Pointing Premiere somewhere runs on every
- * project open and every sequence change, and a template with a date in it names a different folder
- * every day, so creating as we pointed left a trail of empty folders behind an editor who had merely
- * opened their projects. A folder now comes into being where something is actually written into it:
- * the Media Encoder route makes it as it queues, and Paste Clipboard makes its own as it saves.
+ * There are three routes to that, and it is worth being clear about which one carries the weight.
  *
- * The trying is the honest part. `app.properties.setProperty` is the only route CEP has to a
- * preference, the two keys are undocumented, and a write Premiere quietly ignores is indistinguish-
- * able from one it took — so the host writes and reads straight back, and this reports what came
- * back rather than what was asked for. When nothing round-trips there is still the Media Encoder
- * route, which works regardless and is offered as its own command.
+ * Steering the open export window is the one that works. Premiere holds a live transcoder while the
+ * Export tab or the Export Media dialog is up, and writing its path changes the Location field in
+ * front of the editor. It only exists while the window is open, so the service watches for one.
+ *
+ * Writing the preferences is kept but no longer believed. On Premiere 26 the write takes, survives a
+ * relaunch, and changes nothing an editor can see: the destination lives in the project now. Older
+ * versions may still read it, so it stays, but nothing is reported as done on the strength of it.
+ *
+ * Queuing to Media Encoder is the way out when neither of those is in play — the path is handed
+ * straight to the encoder, so nothing Premiere remembers can get in the way.
+ *
+ * Folders: one is made where a render is really on its way, which is an export window that just
+ * opened and the encoder route as it queues. Resolving alone still makes nothing, because a template
+ * with a date in it names a different folder every day and merely opening projects would leave a
+ * trail of empty ones.
  */
 import { callHost } from './cep';
 import { planCompass } from './compass';
 import {
   type ApplyOutcome,
   type CompassPlan,
+  type CompassSteer,
   type CompassWrite,
   type HostResponse,
   type ProjectContext,
@@ -44,6 +50,8 @@ export const readContext = async (): Promise<ProjectContext> => {
 export interface CompassOutcome {
   plan: CompassPlan;
   writes: CompassWrite[];
+  /** What became of the export window, whether or not one was open. */
+  steer: CompassSteer;
   /** Empty when both paths resolved; otherwise the one reason they did not. */
   error: string;
 }
@@ -52,7 +60,26 @@ export interface CompassOutcome {
 export const roundTripped = (writes: CompassWrite[]): boolean =>
   writes.length > 0 && writes.every((write) => write.ok);
 
-/** Resolves and writes. Whether either folder is on disk is not this function's business. */
+const NO_WINDOW: CompassSteer = { open: false, steered: false, where: '', path: '', made: false, note: '' };
+
+const askToSteer = async (plan: CompassPlan, sequence: string): Promise<CompassSteer> => {
+  const response = await callHost<CompassSteer>({
+    op: 'compassSteer',
+    media: plan.media,
+    fileName: safeFileName(sequence) || 'Export',
+  });
+  if (!response.ok || !response.data) {
+    return { ...NO_WINDOW, note: response.error ?? 'Premiere did not answer about the export window.' };
+  }
+  return response.data;
+};
+
+/**
+ * The whole of it: resolve, steer the window if one is open, and write the preferences for the older
+ * versions that may still read them. This is what Apply runs and what a project or sequence change
+ * runs; the fast watch calls `steerCompass` instead, so that opening an export window does not
+ * rewrite preferences that changed nothing the last hundred times.
+ */
 export const applyCompass = async (
   settings: Settings,
   context: ProjectContext,
@@ -60,37 +87,61 @@ export const applyCompass = async (
 ): Promise<CompassOutcome> => {
   const plan = planCompass(settings.compass, context, at);
   if (plan.error !== '') {
-    return { plan, writes: [], error: plan.error };
+    return { plan, writes: [], steer: NO_WINDOW, error: plan.error };
   }
   const response = await callHost<{ writes: CompassWrite[] }>({
     op: 'compassApply',
     media: plan.media,
     frame: plan.frame,
   });
+  const steer = await askToSteer(plan, context.sequence);
   if (!response.ok || !response.data) {
-    return { plan, writes: [], error: response.error ?? 'Premiere did not accept the write.' };
+    return { plan, writes: [], steer, error: response.error ?? 'Premiere did not accept the write.' };
   }
-  return { plan, writes: response.data.writes, error: '' };
+  return { plan, writes: response.data.writes, steer, error: '' };
 };
 
-/** What the sheet and the status line say about a run, in the order that matters most first. */
+/** Just the window, for the watch that has to notice one opening without doing anything else. */
+export const steerCompass = async (
+  settings: Settings,
+  context: ProjectContext,
+  at: Date = new Date(),
+): Promise<{ plan: CompassPlan; steer: CompassSteer }> => {
+  const plan = planCompass(settings.compass, context, at);
+  if (plan.error !== '') {
+    return { plan, steer: { ...NO_WINDOW, note: plan.error } };
+  }
+  return { plan, steer: await askToSteer(plan, context.sequence) };
+};
+
+/**
+ * What the sheet and the status line say about a run, most important first.
+ *
+ * The preferences are deliberately not reported. They are written for the older Premieres that may
+ * read them, and on 26 they take a write and mean nothing, so an editor told "Premiere is pointed at
+ * …" on the strength of one would be told something this cannot know — which is exactly the message
+ * that sent someone hunting for a bug that was Premiere ignoring us all along.
+ */
 export const compassMessages = (result: CompassOutcome): string[] => {
   if (result.error !== '') {
     return [result.error];
   }
   const messages: string[] = [];
-  const refused = result.writes.filter((write) => !write.ok);
-  if (refused.length === 0) {
-    messages.push(`Premiere is pointed at ${result.plan.media}`);
+  if (result.steer.note !== '') {
+    messages.push(result.steer.note);
+  }
+  if (result.steer.made) {
+    messages.push(`Made the folder ${result.plan.media}`);
+  }
+  if (result.steer.steered) {
+    messages.push(`${result.steer.where} is now saving to ${result.steer.path}`);
     return messages;
   }
-  for (const write of refused) {
-    messages.push(
-      write.readBack === ''
-        ? `Premiere did not keep ${write.key}. Use "Export via Compass".`
-        : `Premiere answered ${write.readBack} for ${write.key}. Use "Export via Compass".`,
-    );
-  }
+  messages.push(
+    result.steer.open
+      ? `The export window is at ${result.steer.path}`
+      : `Exports will be sent to ${result.plan.media} as soon as you open an export window`,
+  );
   return messages;
 };
 

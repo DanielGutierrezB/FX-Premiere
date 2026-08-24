@@ -9,13 +9,13 @@ import {
   systemPath,
 } from '@shared/cep';
 import { planCompass } from '@shared/compass';
-import { applyCompass, readContext, roundTripped } from '@shared/compass-run';
+import { EMPTY_CONTEXT, applyCompass, readContext, steerCompass } from '@shared/compass-run';
 import { HELPER_KILL_GRACE_MS } from '@shared/helper-run';
 import { nodeRequire } from '@shared/node';
 import { serializeHotkey } from '@shared/hotkey';
 import { appendLog, settingsFile } from '@shared/paths';
 import { isPanelOpen, loadSettings, markPanelOpen, setPendingIntent, writeHelperStatus } from '@shared/settings';
-import type { Settings } from '@shared/types';
+import type { ProjectContext, Settings } from '@shared/types';
 import type { ChildProcessWithoutNullStreams } from 'child_process';
 
 const RESTART_LIMIT = 5;
@@ -252,14 +252,24 @@ const startHelper = (): void => {
  * Compass follows whatever is open. Premiere exposes no event for "the active sequence changed"
  * that reaches an extension, so the only way to keep the export path in step with the project is to
  * ask. It is one small script call, and only when something is actually different does anything get
- * written: the answer is compared before the properties are touched. Nothing here reaches the disk —
- * a tick that finds a new sequence points Premiere at a folder, and does not create it.
+ * written: the answer is compared before the properties are touched.
+ *
+ * The second, quicker watch is for the export window. Premiere only holds a path to steer while one
+ * is open, and an editor who opens the Export tab is about to read the Location field, so four
+ * seconds is too long to be pointed at the wrong folder. A round trip to the host measures at about
+ * a millisecond, so this asks often; the host writes once per opening rather than once per ask, so
+ * asking often is not the same as arguing with an editor who typed their own path.
  */
 const COMPASS_INTERVAL_MS = 4000;
+const COMPASS_WINDOW_INTERVAL_MS = 700;
 
 let compassKey = '';
 let compassTimer: ReturnType<typeof setInterval> | null = null;
 let compassBusy = false;
+let windowTimer: ReturnType<typeof setInterval> | null = null;
+let windowBusy = false;
+let compassContext: ProjectContext = { ...EMPTY_CONTEXT };
+let steerSaid = '';
 
 const compassTick = async (): Promise<void> => {
   if (compassBusy || !settings.compass.enabled) {
@@ -268,6 +278,7 @@ const compassTick = async (): Promise<void> => {
   compassBusy = true;
   try {
     const context = await readContext();
+    compassContext = context;
     if (context.sequence === '') {
       return;
     }
@@ -285,15 +296,64 @@ const compassTick = async (): Promise<void> => {
       log(`compass: ${result.error}`);
       return;
     }
-    log(
-      roundTripped(result.writes)
-        ? `compass: pointed at ${result.plan.media}`
-        : `compass: Premiere refused ${result.writes.filter((write) => !write.ok).map((write) => write.key).join(', ')}`,
-    );
+    // The plan, and then what Premiere did with it. The two are worth separating in a log: a path
+    // that resolved to the wrong folder and a path Premiere would not take read the same to whoever
+    // is reporting that their renders went somewhere else.
+    log(`compass: resolved ${result.plan.media}`);
+    if (result.steer.note !== '') {
+      log(`compass: ${result.steer.note}`);
+    }
+    if (result.steer.steered) {
+      log(`compass: ${result.steer.where} now saves to ${result.steer.path}`);
+    }
   } catch (error) {
     log(`compass tick failed: ${String(error)}`);
   } finally {
     compassBusy = false;
+  }
+};
+
+/**
+ * Notice an export window and point it at the resolved folder. Uses the project the slower tick last
+ * read, so opening the Export tab costs one script call rather than a fresh look at the project.
+ */
+const windowTick = async (): Promise<void> => {
+  if (windowBusy || !settings.compass.enabled || compassContext.sequence === '') {
+    return;
+  }
+  windowBusy = true;
+  try {
+    const { plan, steer } = await steerCompass(settings, compassContext);
+    // No window and nothing to say is the ordinary answer, several times a second, and forgetting
+    // here is what makes the next window one this reports on rather than one it recognises.
+    if (!steer.open && steer.note === '') {
+      steerSaid = '';
+      return;
+    }
+    // Said once per window rather than once per ask, since this runs better than once a second.
+    const said = `${String(steer.open)}|${String(steer.steered)}|${steer.path}|${steer.note}`;
+    if (said === steerSaid) {
+      return;
+    }
+    steerSaid = said;
+    if (steer.note !== '') {
+      log(`compass: ${steer.note}`);
+    }
+    // A note with no window behind it is this asking and failing — a host that does not know the
+    // call, an error coming back — and reporting it is the difference between a feature that is off
+    // and one that is quietly broken. That distinction cost an afternoon once.
+    if (!steer.open) {
+      return;
+    }
+    log(
+      steer.steered
+        ? `compass: ${steer.where} now saves to ${steer.path}`
+        : `compass: ${steer.where} is at ${steer.path}, wanted ${plan.media}`,
+    );
+  } catch (error) {
+    log(`compass window tick failed: ${String(error)}`);
+  } finally {
+    windowBusy = false;
   }
 };
 
@@ -302,13 +362,19 @@ const watchCompass = (): void => {
     clearInterval(compassTimer);
     compassTimer = null;
   }
+  if (windowTimer) {
+    clearInterval(windowTimer);
+    windowTimer = null;
+  }
   if (!settings.compass.enabled) {
     return;
   }
   // Forgotten on purpose when the feature is switched on, so the first tick writes rather than
   // recognising the project it was already looking at.
   compassKey = '';
+  steerSaid = '';
   compassTimer = setInterval(() => void compassTick(), COMPASS_INTERVAL_MS);
+  windowTimer = setInterval(() => void windowTick(), COMPASS_WINDOW_INTERVAL_MS);
   void compassTick();
 };
 
@@ -390,6 +456,10 @@ const boot = (): void => {
     if (compassTimer) {
       clearInterval(compassTimer);
       compassTimer = null;
+    }
+    if (windowTimer) {
+      clearInterval(windowTimer);
+      windowTimer = null;
     }
     stopHelper();
   };
