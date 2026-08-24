@@ -345,11 +345,16 @@ const windowTick = async (): Promise<void> => {
     if (!steer.open) {
       return;
     }
-    log(
-      steer.steered
-        ? `compass: ${steer.where} now saves to ${steer.path}`
-        : `compass: ${steer.where} is at ${steer.path}, wanted ${plan.media}`,
-    );
+    if (steer.steered) {
+      log(`compass: ${steer.where} now saves to ${steer.path}`);
+      return;
+    }
+    // Only when it really is somewhere else. The tick after a steer finds the same window with the
+    // path already in place and nothing to do, and a line comparing a file to a folder — "is at
+    // …/render/clip.mp4, wanted …/render/" — reads like a failure to whoever reads the log later.
+    if (!steer.path.startsWith(plan.media)) {
+      log(`compass: ${steer.where} is at ${steer.path}, wanted ${plan.media}`);
+    }
   } catch (error) {
     log(`compass window tick failed: ${String(error)}`);
   } finally {
