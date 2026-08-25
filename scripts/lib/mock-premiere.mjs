@@ -155,11 +155,15 @@ export const makeClip = ({
   inPoint,
   selected,
   audio = false,
+  channels = 'Mono',
   projectItem = null,
   sourceLength = null,
 }) => {
+  // A clip's own volume goes by the name Premiere gives it, which carries the channel count and so
+  // is not the same name on a mono clip as on a stereo one, and is not the `AE.ADBE Volume` a
+  // .prfpset holds either. A preset has to reach it through all three namings.
   const componentList = audio
-    ? [makeComponent('AE.ADBE Volume', 'Volume', [makeParam('Bypass', false), makeParam('Level', 0)])]
+    ? [makeComponent(`Internal Volume ${channels}`, 'Volume', [makeParam('Bypass', false), makeParam('Level', 0)])]
     : [motionComponent(), opacityComponent()];
   let startTime = time(start);
   let endTime = time(end);
@@ -252,6 +256,10 @@ export const EFFECT_LIBRARY = {
   audio: [
     { name: 'Studio Reverb', matchName: 'AE.ADBE Studio Reverb' },
     { name: 'Parametric EQ', matchName: 'AE.ADBE Parametric EQ' },
+    // Premiere ships an audio effect called Volume, distinct from the volume every clip already
+    // has. It is what a replay reaches by display name when it fails to recognise a clip's own
+    // volume, and adding it is how a clip ends up with two volume stages.
+    { name: 'Volume', matchName: 'AE.ADBE Volume' },
   ],
 };
 
@@ -812,11 +820,12 @@ export const buildWorld = () => {
     end,
     track = 0,
     audio = false,
+    channels = 'Mono',
     projectItem = null,
     selected = false,
     sourceLength = null,
   }) => {
-    const clip = makeClip({ name, start, end, inPoint: 0, selected, audio, projectItem, sourceLength });
+    const clip = makeClip({ name, start, end, inPoint: 0, selected, audio, channels, projectItem, sourceLength });
     const list = audio ? audioTrackList : videoTrackList;
     list[track].clipList.push(clip);
     kit.resort(list[track]);

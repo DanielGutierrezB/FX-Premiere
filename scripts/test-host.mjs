@@ -9,7 +9,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { FileStub, fileReads, rewritePresetFixture, writePresetFixture } from './lib/mock-files.mjs';
-import { CYAN, createHost, dropShadowComponent, keyframedColor } from './lib/mock-premiere.mjs';
+import { CYAN, createHost, dropShadowComponent, keyframedColor, makeComponent, makeParam } from './lib/mock-premiere.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const hostScript = join(root, 'dist', 'host', 'fxpremiere.jsx');
@@ -377,6 +377,49 @@ check(
   'the captured values landed with them',
   blursOnB().some((component) => component.paramList[0].current === 25.5),
   JSON.stringify(blursOnB().map((component) => component.paramList[0].current)),
+);
+
+console.log('\nCapturing an audio treatment and replaying it');
+/**
+ * The editor's case: a dialogue clip treated by hand or by Essential Sound, captured, and replayed
+ * onto another clip whose channel count is not the same. A clip's own volume is named after its
+ * channels, so the name captured from a mono clip is on nothing at all on a stereo one — and the
+ * replay used to answer that by adding a second volume stage, leaving the clip at a level nobody
+ * had set.
+ */
+const treated = world.addClip({ name: 'dialogue.wav', start: 30, end: 34, audio: true, channels: 'Mono' });
+treated.componentList[0].paramList[1].current = -6;
+treated.componentList.push(makeComponent('AE.ADBE Parametric EQ', 'Parametric EQ', [makeParam('Amount', 42)]));
+
+world.select('dialogue.wav');
+const audioTaken = call({ op: 'capture' });
+check('an audio clip captures', audioTaken.ok, audioTaken.error);
+const capturedVolume = audioTaken.data?.effects.find((effect) => effect.name === 'Volume');
+check(
+  "a clip's own volume is captured as built in, whatever its channels are called",
+  capturedVolume?.intrinsic === true,
+  JSON.stringify(audioTaken.data?.effects.map((effect) => `${effect.matchName}:${effect.intrinsic}`)),
+);
+
+const stereo = world.addClip({ name: 'other.wav', start: 36, end: 40, audio: true, channels: 'Stereo' });
+world.select('other.wav');
+const audioReplay = call({ op: 'applyCaptured', preset: audioTaken.data });
+check('the treatment replays onto a clip with other channels', audioReplay.ok, audioReplay.error);
+const volumesOn = (clip) => clip.componentList.filter((component) => component.displayName === 'Volume');
+check(
+  'no second volume stage is stacked on the clip',
+  volumesOn(stereo).length === 1,
+  JSON.stringify(stereo.componentList.map((component) => component.matchName)),
+);
+check(
+  "the captured level lands in the clip's own volume",
+  volumesOn(stereo)[0].paramList[1].current === -6,
+  String(volumesOn(stereo)[0]?.paramList[1]?.current),
+);
+check(
+  'and the effect beside it came along',
+  stereo.componentList.some((component) => component.matchName === 'AE.ADBE Parametric EQ'),
+  JSON.stringify(stereo.componentList.map((component) => component.matchName)),
 );
 
 console.log('\nCapturing a colour and replaying it');

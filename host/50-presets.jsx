@@ -12,6 +12,18 @@ FXP.INTRINSIC_MATCH_NAMES = [
     'AE.ADBE Audio Time Remapping'
 ];
 
+/**
+ * An intrinsic under the name a live clip gives it rather than the one a .prfpset holds. The two
+ * namings do not meet: a clip's own volume is `Internal Volume Mono`, and a stereo clip's is its own
+ * name again, so the names above match nothing on an audio clip read off a timeline.
+ */
+FXP.INTRINSIC_MATCH_PREFIX = 'Internal ';
+
+FXP.isIntrinsicMatchName = function (matchName) {
+    return FXP.contains(FXP.INTRINSIC_MATCH_NAMES, matchName) ||
+        String(matchName).indexOf(FXP.INTRINSIC_MATCH_PREFIX) === 0;
+};
+
 FXP.PRESET_FILE_NAME = 'Effect Presets and Custom Items.prfpset';
 
 FXP.readTextFile = function (path) {
@@ -732,6 +744,55 @@ FXP.lastComponentWithMatchName = function (clip, matchName) {
     return found;
 };
 
+FXP.componentDisplayName = function (component) {
+    try {
+        var displayName = component.displayName;
+        return displayName ? String(displayName) : '';
+    } catch (error) {
+        return '';
+    }
+};
+
+/**
+ * The clip's own copy of an intrinsic, which is the one a preset has to write into.
+ *
+ * The match name is tried first and settles every video intrinsic, whose name is the same on a clip
+ * as in a preset. Audio is where it comes apart: the built-in volume of a mono clip is
+ * `Internal Volume Mono`, and a clip with a different channel count names its own volume something
+ * else again, so a treatment captured from one clip finds no such name on the next. Falling back to
+ * the display name lands in that clip's own stage, and adding a second volume on top — which is what
+ * happened before — left the clip louder or quieter than the one the preset was read from.
+ *
+ * The fallback only considers stages that are themselves intrinsic, so it can never reach for an
+ * ordinary effect that happens to share a name with one.
+ */
+FXP.intrinsicComponent = function (clip, effect) {
+    var exact = FXP.lastComponentWithMatchName(clip, effect.matchName);
+    if (exact) {
+        return exact;
+    }
+    var wanted = effect.displayName ? String(effect.displayName) : '';
+    if (wanted === '') {
+        return null;
+    }
+    var found = null;
+    try {
+        var components = clip.components;
+        for (var i = 0; i < components.numItems; i++) {
+            var component = components[i];
+            if (!FXP.isIntrinsicMatchName(FXP.componentMatchName(component))) {
+                continue;
+            }
+            if (FXP.componentDisplayName(component) === wanted) {
+                found = component;
+            }
+        }
+    } catch (error) {
+        FXP.trace('intrinsic scan failed: ' + FXP.errorText(error));
+    }
+    return found;
+};
+
 /** How a preset anchors its keyframes to the clip, as stored in the .prfpset. */
 FXP.PRESET_ANCHOR = {
     SCALE_TO_CLIP: 0,
@@ -988,8 +1049,8 @@ FXP.applyPreset = function (request) {
         for (var e = 0; e < detail.effects.length; e++) {
             var effect = detail.effects[e];
             var component = null;
-            if (FXP.contains(FXP.INTRINSIC_MATCH_NAMES, effect.matchName)) {
-                component = FXP.lastComponentWithMatchName(clip, effect.matchName);
+            if (FXP.isIntrinsicMatchName(effect.matchName)) {
+                component = FXP.intrinsicComponent(clip, effect);
             }
             if (!component) {
                 component = FXP.addEffectForPreset(entry, effect, detail.mediaType);

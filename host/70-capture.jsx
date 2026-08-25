@@ -187,7 +187,7 @@ FXP.describeComponent = function (component) {
     return {
         matchName: matchName,
         name: name,
-        intrinsic: FXP.contains(FXP.INTRINSIC_MATCH_NAMES, matchName),
+        intrinsic: FXP.isIntrinsicMatchName(matchName),
         enabled: true,
         paramCount: count,
         keyframedParams: keyframed
@@ -370,8 +370,8 @@ FXP.replayEffects = function (entry, effects, sourceIn, notes) {
     for (var e = 0; e < detail.effects.length; e++) {
         var effect = detail.effects[e];
         var component = null;
-        if (FXP.contains(FXP.INTRINSIC_MATCH_NAMES, effect.matchName)) {
-            component = FXP.lastComponentWithMatchName(FXP.freshClip(entry), effect.matchName);
+        if (FXP.isIntrinsicMatchName(effect.matchName)) {
+            component = FXP.intrinsicComponent(FXP.freshClip(entry), effect);
         }
         if (!component) {
             component = FXP.addEffectForPreset(entry, effect, mediaType);
