@@ -12,6 +12,18 @@ export const mark = (label: string): void => {
   marks.push(`${label} ${Math.round(performance.now())}ms`);
 };
 
+/**
+ * When the page's own markup started running, recorded by an inline script ahead of everything else.
+ * Read from the window rather than taken here, because by the time this module exists the stylesheet
+ * and the bundle have already been parsed — which is exactly the span it is here to reveal.
+ */
+export const markHtml = (): void => {
+  const at = (window as unknown as { __fxpHtmlAt?: number }).__fxpHtmlAt;
+  if (typeof at === 'number') {
+    marks.push(`html ${Math.round(at)}ms`);
+  }
+};
+
 /** Called once the palette has everything it needs, which is the last moment worth recording. */
 export const flushMarks = (): void => {
   if (marks.length === 0) {

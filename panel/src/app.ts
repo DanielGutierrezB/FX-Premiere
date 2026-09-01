@@ -16,6 +16,7 @@ import {
   renameCaptured,
   saveCaptured,
 } from '@shared/captured';
+import { appendLog } from '@shared/paths';
 import {
   claimPendingIntent,
   defaultSettings,
@@ -45,6 +46,7 @@ import { commitPaste, probePaste, withDuration } from './paste';
 import {
   clearCatalogCache,
   fetchCatalog,
+  listsEffects,
   loadCachedCatalog,
   refreshPresets,
   type IndexedCatalog,
@@ -58,26 +60,45 @@ import { WindowSize } from './window-size';
 import { openRowMenu } from './views/row-menu';
 import { FavoriteBar } from './views/slots';
 
+/**
+ * The frame the page's own markup already carries, or a fresh one.
+ *
+ * The palette's shell is in index.html so that the browser can lay it out and paint it while the
+ * bundle is still being fetched, which puts it on screen a hundred and twenty milliseconds earlier
+ * on a real Premiere — the window is built from nothing on every summon, because Premiere 26 does
+ * not keep the page loaded however nicely it is asked.
+ *
+ * Taking those nodes rather than building new ones is what makes it safe: the field on screen is the
+ * field this code types into, so a keystroke that lands in the moment between the paint and the
+ * bundle is still there afterwards. That moment is a few milliseconds on an idle machine and a
+ * second or more on a busy one, which is exactly when somebody is waiting to type. Building one is
+ * the fallback for anything that renders this without the markup, which is every test.
+ */
+const adopt = <T extends HTMLElement>(selector: string, build: () => T): T =>
+  (document.querySelector(selector) as T | null) ?? build();
+
 export class PaletteApp {
   private readonly root: HTMLElement;
 
-  private readonly input = el('input', {
-    class: 'search__input',
-    type: 'text',
-    spellcheck: 'false',
-    autocomplete: 'off',
-    placeholder: 'Search effects, transitions, presets\u2026',
-  });
+  private readonly input = adopt('#app .search__input', () =>
+    el('input', {
+      class: 'search__input',
+      type: 'text',
+      spellcheck: 'false',
+      autocomplete: 'off',
+      placeholder: 'Search effects, transitions, presets\u2026',
+    }),
+  );
 
-  private readonly searchNode = el('header', { class: 'search' });
+  private readonly searchNode = adopt('#app .search', () => el('header', { class: 'search' }));
 
-  private readonly body = el('div', { class: 'results-host' });
+  private readonly body = adopt('#app .results-host', () => el('div', { class: 'results-host' }));
 
-  private readonly statusNode = el('span', { class: 'status' });
+  private readonly statusNode = adopt('#app .status', () => el('span', { class: 'status' }));
 
-  private readonly hintNode = el('div', { class: 'hints' });
+  private readonly hintNode = adopt('#app .hints', () => el('div', { class: 'hints' }));
 
-  private readonly footNode = el('footer', { class: 'foot' });
+  private readonly footNode = adopt('#app .foot', () => el('footer', { class: 'foot' }));
 
   private settings: Settings = defaultSettings();
 
@@ -202,7 +223,7 @@ export class PaletteApp {
     this.bindEvents();
     this.updateResults();
     this.focusInput();
-    mark('paint');
+    mark('ready');
     // Off the opening path: touching files is not something to do before the first keystroke can
     // land. The shortcut only needs the marker by the time it can be pressed again.
     window.setTimeout(() => {
@@ -237,18 +258,29 @@ export class PaletteApp {
     // in front of it: the resting list is drawn from settings and does not need them.
     this.captured = capturedItems(listCaptured());
 
-    const cached = loadCachedCatalog(this.hostVersion);
-    if (cached) {
-      this.catalog = cached;
+    const found = loadCachedCatalog(this.hostVersion);
+    if (found.catalog) {
+      this.catalog = found.catalog;
       this.backfillRemembered();
       if (this.input.value.trim() !== '') {
         this.updateResults();
       }
       mark('catalog');
       flushMarks();
-      void this.refreshPresetsOnly();
+      // An index from another Premiere is searchable now and rebuilt behind the palette. Nothing is
+      // cleared first: what is on screen is what the cache holds, and a rebuild that fails should
+      // leave the next summon with that rather than with nothing.
+      if (found.reason === 'as saved') {
+        void this.refreshPresetsOnly();
+      } else {
+        appendLog('panel', `index ${found.reason}: searching it while a new one is built`);
+        void this.ensureCatalog(false);
+      }
       return;
     }
+    // The only path that indexes in front of anybody, and it says so in the log, because it is four
+    // seconds of a palette that cannot search and it should never be reached twice on one machine.
+    appendLog('panel', `index ${found.reason}: building one now`);
     await this.ensureCatalog(true);
     mark('catalog');
     flushMarks();
@@ -409,8 +441,14 @@ export class PaletteApp {
       if (!this.sheets.isSearch() || this.rowMenu?.contains(document.activeElement)) {
         return;
       }
-      this.input.focus();
-      this.input.select();
+      // `preventScroll` because the default is to bring the field into view, and working out where
+      // it is means laying the page out there and then — a hundred milliseconds of it on the way up,
+      // for a field that sits at the top of a window it fills the width of. Selecting is skipped
+      // while the field is empty, which is every summon: there is nothing in there to replace.
+      this.input.focus({ preventScroll: true });
+      if (this.input.value !== '') {
+        this.input.select();
+      }
     };
     attempt();
     window.setTimeout(attempt, 40);
@@ -674,6 +712,16 @@ export class PaletteApp {
     if (!container || !row) {
       return;
     }
+    /**
+     * The top row needs neither measuring nor moving: the list was just built from nothing, so it is
+     * already against its own top edge. Both halves of that matter, because reading `offsetTop` and
+     * writing `scrollTop` each force the layout, and forcing it here costs the whole first one — a
+     * hundred and seventy milliseconds of it on a real Premiere, in front of the first paint, to
+     * scroll to a row that is already where it needs to be.
+     */
+    if (this.active === 0) {
+      return;
+    }
     const top = row.offsetTop;
     const bottom = top + row.offsetHeight;
     if (top < container.scrollTop) {
@@ -846,14 +894,22 @@ export class PaletteApp {
     }
     this.setStatus('Indexing\u2026');
     try {
-      this.catalog = await fetchCatalog(this.settings.presetSources);
-      this.backfillRemembered();
-      const presets = this.catalog.items.filter((item) => item.kind === 'preset').length;
-      // The size of the index is worth one toast when it was just rebuilt, not a permanent line.
+      const built = await fetchCatalog(this.settings.presetSources);
+      // An index that lists no effects is a session where Premiere would not name them, and what the
+      // palette already has is better than that. Nothing was written to the cache either, so the
+      // next summon reads back the good one rather than this.
+      const keep = listsEffects(built.items) || !this.catalog;
+      if (keep) {
+        this.catalog = built;
+        this.backfillRemembered();
+      }
       this.setStatus('');
-      this.toast(`${this.catalog.items.length} items \u00b7 ${presets} presets`);
-      if (this.catalog.warnings.length > 0) {
-        this.toast(this.catalog.warnings[0], 'error');
+      if (built.warnings.length > 0) {
+        this.toast(built.warnings[0], 'error');
+      } else if (keep) {
+        // The size of the index is worth one toast when it was just rebuilt, not a permanent line.
+        const presets = built.items.filter((item) => item.kind === 'preset').length;
+        this.toast(`${built.items.length} items \u00b7 ${presets} presets`);
       }
     } catch (error) {
       this.setStatus(error instanceof Error ? error.message : String(error), 'error');

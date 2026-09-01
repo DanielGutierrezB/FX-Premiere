@@ -127,6 +127,53 @@ export const laterOpens = async ({
   check('so the next open finds the effects instead of an empty palette', foundLater > 0, `${foundLater} rows`);
   nextOpen.close();
 
+  // Premiere builds the page from nothing on every summon, so the frame is in the markup and gets
+  // painted while the bundle is still loading. What matters here is that the bundle takes those nodes
+  // over: on a busy machine that gap is a second, and whoever summoned the palette is already typing.
+  console.log('\nThe frame the page already carries');
+  const earlyHost = createHost({ hostScript, documentsRoot: join(stage, 'Documents') });
+  const early = createCepWindow({ html: panelHtml, home: stage, evalScript: earlyHost.evalInHost, storage });
+  const fieldBefore = early.window.document.querySelector('.search__input');
+  check('the page carries a search field before the bundle has run', Boolean(fieldBefore));
+  fieldBefore.value = 'gaussian';
+  early.run(panelBundle);
+  await settle(60);
+  const fieldAfter = early.window.document.querySelector('.search__input');
+  check('the palette adopts that field instead of building a second one', fieldAfter === fieldBefore);
+  check('so a word typed into the gap is still there', fieldAfter?.value === 'gaussian', String(fieldAfter?.value));
+  const gapRows = [...early.window.document.querySelectorAll('.row__name')].map((node) => node.textContent);
+  check('and it is searched, not left sitting in the field', gapRows.includes('Gaussian Blur'), gapRows.join(', '));
+  early.close();
+
+  // An index is a list of effect names, and two builds of Premiere agree about nearly all of them.
+  // Throwing one away because the version string moved means four seconds of "Indexing…" in front of
+  // somebody who has already typed, which is the worst moment the palette has.
+  console.log('\nAn index another Premiere left behind');
+  const foreignStorage = { ...storage };
+  foreignStorage['fxp.catalog.v5'] = JSON.stringify({
+    ...JSON.parse(foreignStorage['fxp.catalog.v5']),
+    hostVersion: '19.0.0',
+  });
+  // Rebuilt against a host that cannot list effects, so keeping the old index is the only way any of
+  // these can pass: a palette that discarded it would have nothing to search here.
+  const strangerHost = createHost({ hostScript, documentsRoot: join(stage, 'Documents'), withoutQE: true });
+  const stranger = createCepWindow({
+    html: panelHtml,
+    home: stage,
+    evalScript: strangerHost.evalInHost,
+    storage: foreignStorage,
+  });
+  stranger.run(panelBundle);
+  await settle(60);
+  const strangerRows = await search(stranger, 'gaussian');
+  check('it is searched rather than thrown away', strangerRows > 0, `${strangerRows} rows`);
+  check('while a fresh one is built behind the palette', askedFor(stranger).includes('catalog'), JSON.stringify(askedFor(stranger)));
+  check(
+    'and a rebuild that lists nothing leaves the good index on disk',
+    JSON.parse(foreignStorage['fxp.catalog.v5']).items.length > 0,
+  );
+  stranger.close();
+
   // Favourites used to be an unordered set with a count of how many to list. They become the first
   // row of the bar, in the order they were saved: the same items, reachable by number.
   console.log('\nA profile from before the numbered bar');

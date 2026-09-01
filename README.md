@@ -312,15 +312,30 @@ ambos, `Enter` desanida y `Esc` vuelve.
 Ajustes (`Cmd/Ctrl + ,`, o escribiendo «settings») > *Open the palette* > presiona la combinación que
 quieras. Se aplica al instante, sin reiniciar Premiere.
 
-Dos advertencias sobre `Ctrl + Space`:
+### Cuando el atajo no hace nada
 
-- En macOS puede estar tomado por *Seleccionar la fuente de entrada anterior* si tienes
-  varios idiomas de teclado. Desactívalo en Ajustes del sistema > Teclado > Atajos, o elige
-  otra combinación.
-- En Windows puede chocar con el cambio de IME en teclados asiáticos.
+Hay dos maneras distintas de que un atajo falle, y se parecen poco.
 
-Si otra aplicación ya reservó la combinación, los ajustes lo informan en el estado del
-listener.
+**Otra aplicación reservó la combinación.** El listener no consigue registrarla y lo dice: los
+ajustes muestran el error en el estado, y el registro guarda una línea `ERROR`.
+
+**macOS se la queda antes.** Un atajo del sistema se sirve antes de que ninguna aplicación vea la
+tecla, así que el listener la registra sin problema, contesta `READY`, y la pulsación no llega
+nunca. Todo parece sano y no pasa nada. El caso habitual es el atajo por omisión: `Ctrl + Space` es
+también *Seleccionar la fuente de entrada anterior* en cuanto tienes dos idiomas de teclado
+instalados, que es la situación de casi cualquier editor hispanohablante.
+
+Desde 1.8.4 la paleta lo detecta sola. Al arrancar el listener compara la combinación configurada
+con los atajos del sistema y, si alguno se la queda, los ajustes muestran un aviso encima de la fila
+del atajo con el nombre exacto de lo que la ocupa y un botón **Free the key** que lo desactiva sin
+salir del panel. El aviso también dice en qué panel de Ajustes del Sistema volver a activarlo.
+
+Un detalle que costó encontrar: un Mac donde nadie ha abierto nunca ese panel **no tiene ninguna
+entrada** para el atajo, y eso no significa que esté libre, sino que rige el valor de Apple, que
+viene encendido. Leer la ausencia como «libre» es exactamente el fallo que dejaba pasar el caso.
+
+En Windows la detección no aplica; ahí lo que puede chocar es el cambio de IME en teclados
+asiáticos, y eso sí aparece como `ERROR` del listener.
 
 ## Actualizar
 

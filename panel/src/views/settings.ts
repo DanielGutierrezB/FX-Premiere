@@ -1,5 +1,6 @@
 import { chooseOnDisk } from '@shared/cep';
 import { formatHotkey, formatModifiers, hotkeyFromEvent, isHotkeyUsable, modifiersOf } from '@shared/hotkey';
+import { releaseSystemShortcut } from '@shared/mac-shortcuts';
 import {
   ACCENTS,
   LIST_COUNTS,
@@ -175,9 +176,47 @@ export class SettingsSheet {
     }
   }
 
-  private shortcutRows(settings: Settings): HTMLElement[] {
+  /**
+   * The one failure the rows below cannot describe. Everything is configured correctly, the listener
+   * is up, and macOS is taking the key on its way past: without this the editor reads "Listener
+   * active", presses the shortcut, and has nothing to go on.
+   */
+  private conflictAlert(): HTMLElement | null {
+    const conflict = readHelperStatus()?.conflict;
+    if (!conflict) {
+      return null;
+    }
+    return el('div', { class: 'sheet__alert' }, [
+      el('span', {
+        text:
+          `macOS already uses these keys for \u201c${conflict.name}\u201d and takes them before Premiere ` +
+          `is offered them, so the palette never hears the press. Free the key here, or pick another ` +
+          `shortcut below. To put it back later: System Settings \u203a ${conflict.where}.`,
+      }),
+      el('button', {
+        class: 'button',
+        text: 'Free the key',
+        onclick: () => {
+          const failed = releaseSystemShortcut(conflict);
+          if (failed !== '') {
+            this.host.toast(failed, 'error');
+            this.rerender();
+            return;
+          }
+          // The service decides whether a conflict is still there, and only looks when it starts the
+          // listener, so the warning stays on screen until it has been asked again.
+          this.host.persist(true);
+          this.host.toast(`macOS no longer uses those keys for \u201c${conflict.name}\u201d.`);
+          window.setTimeout(() => this.rerender(), RELOAD_DELAY_MS);
+        },
+      }),
+    ]);
+  }
+
+  private shortcutRows(settings: Settings): (HTMLElement | null)[] {
     const status = readHelperStatus();
     return [
+      this.conflictAlert(),
       fieldRow(
         'Open the palette',
         status?.running

@@ -11,11 +11,12 @@ import {
 import { planCompass } from '@shared/compass';
 import { EMPTY_CONTEXT, applyCompass, readContext, steerCompass } from '@shared/compass-run';
 import { HELPER_KILL_GRACE_MS } from '@shared/helper-run';
+import { findSystemConflict } from '@shared/mac-shortcuts';
 import { nodeRequire } from '@shared/node';
 import { serializeHotkey } from '@shared/hotkey';
 import { appendLog, settingsFile } from '@shared/paths';
 import { isPanelOpen, loadSettings, markPanelOpen, setPendingIntent, writeHelperStatus } from '@shared/settings';
-import type { ProjectContext, Settings } from '@shared/types';
+import type { ProjectContext, Settings, SystemShortcut } from '@shared/types';
 import type { ChildProcessWithoutNullStreams } from 'child_process';
 
 const RESTART_LIMIT = 5;
@@ -26,6 +27,9 @@ let child: ChildProcessWithoutNullStreams | null = null;
 let restarts = 0;
 let restartTimer: ReturnType<typeof setTimeout> | null = null;
 let stopping = false;
+// Two short processes to work out, so it is settled once when the shortcut is chosen rather than on
+// every status write, of which there are several per start.
+let conflict: SystemShortcut | null = null;
 
 const log = (message: string): void => appendLog('service', message);
 
@@ -44,7 +48,23 @@ const status = (running: boolean, message: string): void => {
     message,
     platform: process.platform,
     updatedAt: Date.now(),
+    conflict,
   });
+};
+
+/**
+ * Worked out fresh each time the listener is started, because the editor may have gone to System
+ * Settings and switched the offending shortcut off between one start and the next, and a warning
+ * that outlives the problem it describes is worse than none.
+ */
+const lookForConflict = (): void => {
+  conflict = findSystemConflict(settings.hotkey);
+  if (conflict) {
+    log(
+      `macOS takes ${serializeHotkey(settings.hotkey)} for "${conflict.name}" before Premiere sees it: ` +
+        'the listener below will look healthy and the key will not arrive',
+    );
+  }
 };
 
 const stopHelper = (): void => {
@@ -141,7 +161,14 @@ const handleLine = (line: string): void => {
   }
   if (trimmed.startsWith('READY')) {
     restarts = 0;
-    status(true, `Listening for ${serializeHotkey(settings.hotkey)} while Premiere is in front.`);
+    // Running and useless is a real state, and the one worth spelling out: the listener holds the
+    // chord, macOS holds it harder, and every other sign says everything is fine.
+    status(
+      true,
+      conflict
+        ? `macOS takes ${serializeHotkey(settings.hotkey)} for \u201c${conflict.name}\u201d, so the press never reaches Premiere.`
+        : `Listening for ${serializeHotkey(settings.hotkey)} while Premiere is in front.`,
+    );
     log(trimmed);
     return;
   }
@@ -161,9 +188,11 @@ const startHelper = (): void => {
     return;
   }
   if (!settings.hotkeyEnabled) {
+    conflict = null;
     status(false, 'The global shortcut is disabled in FX Premiere settings.');
     return;
   }
+  lookForConflict();
 
   const fs = nodeRequire()('fs') as typeof import('fs');
   const childProcess = nodeRequire()('child_process') as typeof import('child_process');
@@ -406,6 +435,7 @@ const reload = (forceRestart: boolean): void => {
   // it has actually reserved the shortcut, and that answer is the only thing allowed to report
   // the listener as live.
   if (hotkeyChanged) {
+    lookForConflict();
     status(false, `Switching the shortcut to ${serializeHotkey(settings.hotkey)}\u2026`);
     try {
       child.stdin.write(`HOTKEY ${serializeHotkey(settings.hotkey)}\n`);

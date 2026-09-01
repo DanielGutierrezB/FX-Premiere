@@ -72,18 +72,48 @@ export const clearCatalogCache = (): void => {
   }
 };
 
-export const loadCachedCatalog = (hostVersion: string): IndexedCatalog | null => {
+export interface CachedLookup {
+  /** Something worth searching, even if it is not what this Premiere would build today. */
+  catalog: IndexedCatalog | null;
+  /** Why it is what it is, for the log and for deciding whether to rebuild behind the palette. */
+  reason: 'as saved' | 'nothing saved' | 'saved by another Premiere';
+}
+
+/**
+ * The index from the last time, and what to make of it.
+ *
+ * An index built by a different Premiere is handed back rather than thrown away. It is a list of
+ * effect names, and the overlap between two builds of Premiere is very nearly all of it, so the
+ * palette can search it now and be corrected in a moment — where discarding it means four seconds of
+ * "Indexing…" in front of somebody who has already typed. Only a profile that has never built one
+ * has nothing to go on.
+ */
+export const loadCachedCatalog = (hostVersion: string): CachedLookup => {
   const cached = readCache();
-  if (!cached || cached.hostVersion !== hostVersion) {
-    return null;
+  if (!cached) {
+    return { catalog: null, reason: 'nothing saved' };
   }
   return {
-    items: cached.items,
-    haystacks: lazyHaystacks(cached.items),
-    warnings: [],
-    presetStamp: cached.presetStamp,
+    catalog: {
+      items: cached.items,
+      haystacks: lazyHaystacks(cached.items),
+      warnings: [],
+      presetStamp: cached.presetStamp,
+    },
+    reason: cached.hostVersion === hostVersion ? 'as saved' : 'saved by another Premiere',
   };
 };
+
+/**
+ * Whether this index is one worth keeping.
+ *
+ * Premiere ships effects, so an index that lists none is not a machine without any: it is a session
+ * where the QE DOM would not answer, which happens, and it comes back carrying nothing but the
+ * presets read off disk. Writing that down would leave every later open with a palette that has lost
+ * every effect until somebody works out that reindexing is what fixes it.
+ */
+export const listsEffects = (items: CatalogItem[]): boolean =>
+  items.some((item) => item.kind === 'videoEffect' || item.kind === 'audioEffect');
 
 export const fetchCatalog = async (presetSources: string[]): Promise<IndexedCatalog> => {
   const response = await callHost<Catalog>({ op: 'catalog', presetSources });
@@ -97,9 +127,7 @@ export const fetchCatalog = async (presetSources: string[]): Promise<IndexedCata
     warnings: catalog.warnings ?? [],
     presetStamp: catalog.presetStamp,
   };
-  // An index with nothing in it means Premiere could not list its effects this time. Writing that
-  // to the cache would hand every later open an empty palette that never repairs itself.
-  if (catalog.items.length > 0) {
+  if (listsEffects(catalog.items)) {
     writeCache({ hostVersion: catalog.hostVersion, items: catalog.items, presetStamp: catalog.presetStamp });
   }
   return indexed;

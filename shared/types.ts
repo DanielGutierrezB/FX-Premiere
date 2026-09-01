@@ -472,12 +472,32 @@ export interface PendingIntent {
   settings: boolean;
 }
 
+/**
+ * One of Apple's own keyboard shortcuts, when the palette has been given the same chord. macOS
+ * takes it before Premiere is offered the key, so the listener reports itself healthy and the
+ * press never lands.
+ */
+export interface SystemShortcut {
+  /** Apple's number for it, which is also how it is switched off again. */
+  id: number;
+  /** What System Settings calls the row, so a warning can name what the editor has to find. */
+  name: string;
+  /** The pane the row lives in, for the same reason. */
+  where: string;
+  /** The three numbers Apple stores: an ascii code, a key code, and a modifier mask. */
+  parameters: [number, number, number];
+  /** Switching layouts does nothing with one installed, and macOS does not fire those shortcuts then. */
+  needsTwoLayouts: boolean;
+}
+
 export interface HelperStatus {
   running: boolean;
   hotkey: string;
   message: string;
   platform: string;
   updatedAt: number;
+  /** Absent on Windows, and on a Mac where nothing of Apple's wants the same keys. */
+  conflict?: SystemShortcut | null;
 }
 
 export interface HotkeySpec {

@@ -668,6 +668,44 @@ const rowLabels = () =>
   [...window.document.querySelectorAll('.sheet .field__label')].map((node) => node.textContent).join(' | ');
 check('settings carries no permission for the operating system', !/Permission to press keys/.test(rowLabels()), rowLabels());
 
+// A listener that is running and useless. macOS serves its own shortcuts before any application is
+// offered the press, so every row on this screen reads healthy while nothing happens, and the sheet
+// has to say the part no row can.
+const writeStatus = (extra) =>
+  writeFileSync(
+    join(settingsDir, 'helper-status.json'),
+    JSON.stringify({ running: true, hotkey: 'ctrl+space', message: 'listening', platform: 'darwin', updatedAt: Date.now(), ...extra }),
+    'utf8',
+  );
+const reopenSettings = async () => {
+  await press('Escape');
+  await press(',', { metaKey: true, code: 'Comma' });
+};
+const alertNode = () => window.document.querySelector('.sheet__alert');
+{
+  writeStatus({
+    conflict: {
+      id: 60,
+      name: 'Select the previous input source',
+      where: 'Keyboard \u203a Keyboard Shortcuts \u203a Input Sources',
+      parameters: [32, 49, 262144],
+      needsTwoLayouts: true,
+    },
+  });
+  await reopenSettings();
+  check('a chord macOS has taken is called out above the setting', Boolean(alertNode()), sheetText().slice(0, 140));
+  const said = alertNode()?.textContent ?? '';
+  check('and the warning names what took it', /Select the previous input source/.test(said), said.slice(0, 160));
+  check('and where to put it back afterwards', /Input Sources/.test(said), said.slice(0, 200));
+  // Never clicked here: the click writes a real preference on whoever is running the suite.
+  check('and offers to free it without leaving the panel', /Free the key/.test(said), said.slice(-80));
+}
+{
+  writeStatus({});
+  await reopenSettings();
+  check('and the warning goes once nothing is taking the keys', alertNode() === null, sheetText().slice(0, 140));
+}
+
 console.log('\nA newer release is offered');
 const versionButton = () => {
   const field = [...window.document.querySelectorAll('.sheet .field')].find(

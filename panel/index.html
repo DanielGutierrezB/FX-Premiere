@@ -2,12 +2,37 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
+    <!-- Before the stylesheet and the bundle, so the timing line can tell the engine's own start-up
+         apart from what the page's own bytes cost. Everything before this moment is Chromium and
+         Node coming up, which no amount of our own work makes cheaper. -->
+    <script>
+      window.__fxpHtmlAt = performance.now();
+    </script>
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>FX Premiere</title>
     <link rel="stylesheet" href="css/panel.css" />
   </head>
   <body>
-    <div id="app" class="app"></div>
+    <!--
+      The palette's frame, in the markup rather than built by the bundle, so the browser lays it out
+      and paints it while the bundle is still being fetched. It is the same shell `app.ts` would have
+      built and those exact nodes are what it adopts, so nothing here is thrown away and a keystroke
+      that lands before the bundle runs stays in the field. Anything that depends on what is saved on
+      disk — the rows, the numbered bar, the hints — is filled in from there.
+    -->
+    <div id="app" class="app">
+      <header class="search">
+        <input
+          class="search__input"
+          type="text"
+          spellcheck="false"
+          autocomplete="off"
+          placeholder="Search effects, transitions, presets…"
+        />
+      </header>
+      <div class="results-host"></div>
+      <footer class="foot"><span class="status"></span><div class="hints"></div></footer>
+    </div>
     <script src="panel.js"></script>
   </body>
 </html>

@@ -18,6 +18,31 @@
   margin: 0 0 18px;
 }
 
+/*
+ * Something the editor has to be told before they read the setting underneath, rather than a hint
+ * hanging off it. Used where the panel is working exactly as configured and the result is still
+ * nothing, which no ordinary row can say.
+ */
+.sheet__alert {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 0 10px;
+  padding: 9px 11px;
+  border-left: 2px solid var(--warn);
+  background: var(--warn-dim);
+  border-radius: 0 6px 6px 0;
+  color: var(--text-dim);
+  font-size: calc(11px * var(--font-scale));
+  line-height: 1.55;
+}
+
+.sheet__alert > span {
+  flex: 1;
+  min-width: 200px;
+}
+
 .field {
   display: flex;
   align-items: center;

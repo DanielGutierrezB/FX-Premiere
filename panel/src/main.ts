@@ -1,7 +1,8 @@
 import { isInsideCep } from '@shared/cep';
 import { PaletteApp } from './app';
-import { mark } from './timing';
+import { mark, markHtml } from './timing';
 
+markHtml();
 mark('script');
 
 const mount = (): void => {

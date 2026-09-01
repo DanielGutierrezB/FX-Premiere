@@ -194,7 +194,8 @@ let loggedResize = false;
 
 export const resizeSelf = (width: number, height: number): void => {
   const api = cepApi() as unknown as { resizeContent?: (w: number, h: number) => void };
-  if (typeof api.resizeContent !== 'function') {
+  const resizeContent = api.resizeContent;
+  if (typeof resizeContent !== 'function') {
     appendLog('panel', 'this host has no resizeContent, so the window keeps whatever size it had');
     return;
   }
@@ -203,7 +204,7 @@ export const resizeSelf = (width: number, height: number): void => {
   const first = !loggedResize;
   loggedResize = true;
   try {
-    api.resizeContent(Math.round(width), Math.round(height));
+    resizeContent.call(api, Math.round(width), Math.round(height));
   } catch (error) {
     appendLog('panel', `resize failed: ${String(error)}`);
     return;
@@ -211,12 +212,16 @@ export const resizeSelf = (width: number, height: number): void => {
   if (!first) {
     return;
   }
-  // Once per page, and after the fact rather than before it: what the host did with the request is
-  // the only part worth reading. A size back that is neither the one arrived with nor the one asked
-  // for is the ceiling the manifest is really granting, which is otherwise pure guesswork.
+  /**
+   * Once per page, and late rather than on the next tick. Premiere takes about a tenth of a second to
+   * act on this, so a line written any sooner reports every honoured request as a refused one — which
+   * it did, for a release, and sent somebody looking for a way to make the host listen when it had
+   * been listening all along. A size here that is neither the one arrived with nor the one asked for
+   * is the ceiling the manifest is really granting, which is otherwise pure guesswork.
+   */
   setTimeout(() => {
     appendLog('panel', `window arrived ${arrived}, asked for ${asked}, host gave ${window.innerWidth}x${window.innerHeight}`);
-  }, 0);
+  }, 500);
 };
 
 /**
