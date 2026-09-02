@@ -439,6 +439,22 @@ Reconstruir significa esto, y **nada se escribe hasta que el plan entero está h
    de entrada para que los keyframes caigan donde estaban.
 7. Se retira el nest según lo que digan los ajustes, y los clips nuevos quedan seleccionados.
 
+Un rango de origen **cae en los frames del propio archivo**, no en los de la secuencia, así que un
+material cuya rejilla no es la de la línea de tiempo —cualquier cosa a 29.97 en una secuencia a 30,
+cualquier archivo con timecode de inicio— vuelve una fracción de frame más corto de lo que se pidió,
+y el clip se coloca esa fracción más corto. En la línea de tiempo una fracción de frame no es una
+fracción: redondea a un frame entero, y eso dejaba **un frame vacío al final de cada clip
+reconstruido**, uno por corte. Así que después de colocar cada clip se le escribe el final que tenía
+dentro del nest, que es el único número que ya está en la rejilla de la secuencia (sale de los clips
+de dentro, que están en ella). Se escribe el final y no se pide un rango de origen más largo: eso
+colocaría el clip un frame *más allá* de donde va, encima de lo que tengas después del nest.
+
+Si pides **video y audio** y el nest solo tiene una de las dos cosas —o Premiere no quiere listar las
+pistas del otro tipo, que es lo que pasa con secuencias hechas solo de clips sin sonido— sale lo que
+haya y el resultado dice qué tipo no pudo leer. Antes se rechazaba el nest entero, así que el mismo
+nest fallaba con «video y audio» y salía perfecto con «solo video», que es la opción que tapaba el
+problema. Un tipo que no se puede leer solo es un rechazo cuando es el único que pediste.
+
 Un multicámara es una secuencia cuyas pistas de video son sus ángulos, así que reconstruirlo los saca
 todos de golpe y todos sonando, con el de arriba tapando al resto. **Cuál estaba en el aire no se
 puede leer.** `isMulticamClip()` es el único miembro multicámara del DOM documentado; el `TrackItem`

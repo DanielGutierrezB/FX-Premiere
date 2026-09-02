@@ -373,8 +373,17 @@ export const createSequenceKit = ({ collection, time, makeClip, makeProjectItem,
       growUnder,
       makeTrack,
     };
-    Object.defineProperty(sequence, 'videoTracks', { get: () => collection(videoTrackList, 'numTracks') });
-    Object.defineProperty(sequence, 'audioTracks', { get: () => collection(audioTrackList, 'numTracks') });
+    // `tracksUnlisted` is a real Premiere behaviour, not a convenience: a sequence built out of
+    // video-only clips has been seen to answer nothing at all when asked for its audio tracks, which
+    // is not the same answer as a sequence with none.
+    const trackList = (list, kind) => {
+      if (sequence.tracksUnlisted === kind) {
+        return undefined;
+      }
+      return collection(list, 'numTracks');
+    };
+    Object.defineProperty(sequence, 'videoTracks', { get: () => trackList(videoTrackList, 'video') });
+    Object.defineProperty(sequence, 'audioTracks', { get: () => trackList(audioTrackList, 'audio') });
     return sequence;
   };
 

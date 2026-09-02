@@ -355,15 +355,89 @@ export const hostUnnestTests = (fresh) => {
       placed && placed.end.seconds - placed.start.seconds <= 52.933333 + 0.0005,
       String(placed && placed.end.seconds - placed.start.seconds),
     );
+    // The hole this is here for: the accepted range is a fraction of a frame short of the one asked
+    // for, the clip was placed that fraction short, and a fraction of a frame on a timeline is a
+    // whole frame — every clip an un-nest rebuilt ended one frame before the next one began.
     check(
-      'nor shorter than a frame of it',
-      placed && 52.933333 - (placed.end.seconds - placed.start.seconds) <= 1001 / 30000,
-      String(placed && 52.933333 - (placed.end.seconds - placed.start.seconds)),
+      'nor a fraction of a frame shorter, which is what left an empty frame after every rebuilt clip',
+      placed && Math.abs(placed.end.seconds - placed.start.seconds - 52.933333) <= 0.0005,
+      String(placed && placed.end.seconds - placed.start.seconds),
     );
     check(
       'it shows the piece of source it was showing, on the source\u2019s own frames',
       placed && Math.abs(placed.inPoint.seconds - 310.0097) < 0.001,
       String(placed?.inPoint.seconds),
+    );
+  }
+
+  // Where the editor saw it: a cut, not a single clip. One clip short of its end and the next one
+  // starting where the nest said leaves a hole between them, once per cut, all the way along.
+  {
+    const { world, call } = fresh();
+    const camera = makeProjectItem({
+      name: 'C5749.MP4',
+      mediaPath: '/media/C5749.MP4',
+      duration: 637.637,
+      frameSeconds: 1001 / 30000,
+      needsMediaType: true,
+    });
+    const cut = world.addSequence('CUT', [
+      { name: 'C5749.MP4', start: 0, end: 2.033333, track: 0, audio: false, item: camera, sourceIn: 310.033333 },
+      { name: 'C5749.MP4', start: 2.033333, end: 4.066667, track: 0, audio: false, item: camera, sourceIn: 400.033333 },
+    ]);
+    world.addClip({ name: 'CUT', start: 20, end: 24.066667, projectItem: cut.projectItem });
+    world.select('CUT');
+    const result = run(call, { media: 'video' });
+    check('the cut comes out', result.ok && result.outcome.applied === 1, messages(result));
+    const rebuilt = world.tracks.video[1].clipList;
+    check('both clips are there', rebuilt.length === 2, JSON.stringify(names(world, 'video', 1)));
+    check(
+      'and the second starts exactly where the first ends, with no frame left empty between them',
+      rebuilt.length === 2 && Math.abs(rebuilt[1].start.seconds - rebuilt[0].end.seconds) <= 0.0005,
+      JSON.stringify(spans(world, 'video', 1)),
+    );
+    check(
+      'and the last of them ends where the nest ended, not a frame before it',
+      rebuilt.length === 2 && Math.abs(rebuilt[1].end.seconds - 24.066667) <= 0.0005,
+      JSON.stringify(spans(world, 'video', 1)),
+    );
+  }
+
+  // The other half of what the editor hit: a nest of video-only clips, asked for both kinds, refused
+  // whole over the kind that was not there — and coming out perfectly when asked for video alone,
+  // which left the option that hid the problem as the only one that worked.
+  console.log('\nA nest that will not say what audio it has');
+  {
+    const { world, call } = fresh();
+    const silent = world.addSequence('SILENT', [
+      { name: 'mute-1.mp4', start: 0, end: 2, track: 0, audio: false },
+      { name: 'mute-2.mp4', start: 2, end: 4, track: 0, audio: false },
+    ]);
+    silent.tracksUnlisted = 'audio';
+    world.addClip({ name: 'SILENT', start: 30, end: 34, projectItem: silent.projectItem });
+    world.select('SILENT');
+    const result = run(call, { media: 'both' });
+    check('asking for both kinds still rebuilds the kind that is there', result.ok && result.outcome.applied === 1, messages(result));
+    check(
+      'the clips land where they were',
+      spans(world, 'video', 1).join(',') === 'mute-1.mp4@30-32,mute-2.mp4@32-34',
+      JSON.stringify(spans(world, 'video', 1)),
+    );
+    check('and the run says which kind it could not read', /no audio tracks inside "SILENT"/.test(messages(result)), messages(result));
+  }
+
+  {
+    const { world, call } = fresh();
+    const gone = world.addSequence('GONE', [{ name: 'mute-1.mp4', start: 0, end: 2, track: 0, audio: false }]);
+    gone.tracksUnlisted = 'video';
+    world.addClip({ name: 'GONE', start: 30, end: 32, projectItem: gone.projectItem });
+    world.select('GONE');
+    const result = run(call, { media: 'video' });
+    check('the kind that was asked for on its own is still a refusal', result.outcome.skipped === 1, JSON.stringify(result.outcome));
+    check(
+      'and it says so by name',
+      /would not read the video tracks/.test(messages(result)),
+      messages(result),
     );
   }
 

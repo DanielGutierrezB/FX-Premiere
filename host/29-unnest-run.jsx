@@ -458,6 +458,69 @@ FXP.unnestSortArrivals = function (made, piece, where) {
     return sorted;
 };
 
+/**
+ * Puts a rebuilt clip's end back where the nest had it.
+ *
+ * A placement lands at the length of the source range Premiere accepted, and Premiere puts a source
+ * range on the source's own frames. A file whose grid is not the timeline's — anything at 29.97 in a
+ * 30 sequence, anything with a start timecode — comes back a fraction of a frame short of what was
+ * asked for, `settleItemRange` accepts that on purpose, and the clip is placed that fraction short.
+ * On the timeline the fraction is not a fraction: it rounds to a whole frame, so every rebuilt clip
+ * ended one frame before the next one began and an un-nested nest came out full of one-frame holes.
+ * Which is a frame somebody goes looking for, whatever the comment on `settleItemRange` says.
+ *
+ * The end is what gets written rather than the source range asked for again, because the end is the
+ * one number already on the timeline's own grid: it came off the clips inside the nest, which sit on
+ * it. Asking the item for a longer range instead would land the clip a frame *past* where it
+ * belongs, over whatever the editor has sitting after the nest.
+ */
+FXP.unnestCloseGap = function (entry, piece) {
+    var shortBy = piece.end - FXP.clipSeconds(entry.clip.end);
+    if (shortBy <= FXP.TIME_SLACK) {
+        return;
+    }
+    // Shorter than a snap explains is not a snap. Stretching it would hide whatever it really is.
+    if (shortBy > FXP.SOURCE_FRAME) {
+        FXP.trace('"' + piece.name + '" landed ' + FXP.round(shortBy, 4) +
+            's short of where the nest had it, which is more than a snapped source range explains');
+        return;
+    }
+    var attempts = [
+        // The documented idiom first: the Time object Premiere handed over, moved and handed back.
+        function () {
+            var when = entry.clip.end;
+            when.seconds = piece.end;
+            entry.clip.end = when;
+        },
+        function () {
+            entry.clip.end = FXP.keyAt(piece.end);
+        }
+    ];
+    for (var i = 0; i < attempts.length; i++) {
+        try {
+            attempts[i]();
+        } catch (error) {
+            FXP.trace('end attempt ' + i + ' failed: ' + FXP.errorText(error));
+            continue;
+        }
+        var landed = FXP.clipSeconds(entry.clip.end);
+        if (Math.abs(landed - piece.end) > FXP.TIME_SLACK) {
+            continue;
+        }
+        var ticks = FXP.clipTicks(entry.clip.end);
+        // A build that takes the seconds and leaves the ticks behind has the clip reading as two
+        // different moments at once, and the ticks are the copy everything that matches a clip uses.
+        if (Math.abs(Number(ticks) / FXP.TICKS_PER_SECOND - landed) > FXP.TIME_SLACK) {
+            ticks = String(Math.round(landed * FXP.TICKS_PER_SECOND));
+        }
+        entry.endSeconds = landed;
+        entry.endTicks = ticks;
+        return;
+    }
+    FXP.trace('"' + piece.name + '" is ' + FXP.round(shortBy, 4) +
+        's short of where the nest had it and this Premiere would not move its end');
+};
+
 /** A clip that is down and staying: it counts as this run's, and it gets back what it had inside. */
 FXP.unnestSettle = function (state, piece, placed, partner) {
     state.placed[state.placed.length] = placed;
@@ -471,6 +534,10 @@ FXP.unnestSettle = function (state, piece, placed, partner) {
     if (partner && !FXP.unnestSetSpeed(partner, piece)) {
         return { error: 'this Premiere would not put the sound of "' + piece.name + '" back at ' +
             Math.round(piece.rate * 100) + '% speed' };
+    }
+    FXP.unnestCloseGap(placed, piece);
+    if (partner) {
+        FXP.unnestCloseGap(partner, piece);
     }
     FXP.unnestFinishPiece(state, piece, placed);
     if (partner && piece.partner) {
@@ -539,6 +606,23 @@ FXP.unnestNoteEmptyTracks = function (state, left) {
                 'could not be taken back off. Delete them from the timeline if they are in the way.';
         }
     }
+};
+
+/**
+ * Says which side of a nest could not be read, for a nest that came out on the other one.
+ *
+ * A nest with no sound in it has no audio tracks to read, and that is not a fault: the un-nest asked
+ * about both kinds because the editor did, found one, and rebuilt it. Saying so anyway is what stops
+ * an editor from wondering later whether the sound was there and got dropped.
+ */
+FXP.unnestNoteUnreadable = function (state, entry, plan) {
+    if (!plan.unreadable || plan.unreadable.length === 0) {
+        return;
+    }
+    state.outcome.messages[state.outcome.messages.length] =
+        'Premiere listed no ' + plan.unreadable.join(' or ') + ' tracks inside "' + entry.name +
+        '", so "' + entry.name + '" came out on ' + (plan.unreadable[0] === 'audio' ? 'picture' : 'sound') +
+        ' alone. If it should have had both, check the nest before you close the project.';
 };
 
 /**
@@ -621,6 +705,7 @@ FXP.unnestOne = function (state, job) {
         state.outcome.messages[state.outcome.messages.length] =
             'Transitions inside "' + entry.name + '" were not carried over: Premiere has no API that makes one.';
     }
+    FXP.unnestNoteUnreadable(state, entry, plan);
     FXP.unnestNoteAngles(state, entry, plan);
     FXP.retireNest(entry, state.options, state.outcome);
     FXP.unnestCleanSpills(state);

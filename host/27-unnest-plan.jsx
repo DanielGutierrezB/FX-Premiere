@@ -189,15 +189,27 @@ FXP.unnestPlanNest = function (nested, entry, mediaTypes) {
     if (FXP.clipHasSpeedChange(entry.clip)) {
         return { error: 'the nest itself is retimed, and rebuilding it would change how long its contents run' };
     }
+    // A kind this Premiere will not list is only a reason to refuse when it is the only kind asked
+    // for. Refusing the whole nest over one of them is how a nest holding no sound came to fail on
+    // "video and audio" and come out perfectly on "video only" — the same nest, the same clips, and
+    // the editor left choosing the option that hid the problem. What could not be read is carried
+    // out to the outcome instead, so a nest that really did lose a side still says which.
+    var readable = [];
+    var unreadable = [];
     for (var g = 0; g < mediaTypes.length; g++) {
-        if (!FXP.tracksIn(nested, mediaTypes[g])) {
-            return { error: 'Premiere would not read the ' + mediaTypes[g] + ' tracks inside it' };
+        if (FXP.tracksIn(nested, mediaTypes[g])) {
+            readable[readable.length] = mediaTypes[g];
+        } else {
+            unreadable[unreadable.length] = mediaTypes[g];
         }
+    }
+    if (readable.length === 0) {
+        return { error: 'Premiere would not read the ' + unreadable.join(' or ') + ' tracks inside it' };
     }
     var window = FXP.unnestWindow(entry.clip);
     var pieces = [];
     var spans = { video: 0, audio: 0 };
-    var refused = FXP.eachClip(nested, mediaTypes, function (clip, mediaType, trackIndex) {
+    var refused = FXP.eachClip(nested, readable, function (clip, mediaType, trackIndex) {
         var read = FXP.unnestPieceOf(clip, mediaType, trackIndex, window, entry);
         if (!read) {
             return undefined;
@@ -221,7 +233,9 @@ FXP.unnestPlanNest = function (nested, entry, mediaTypes) {
         return { error: refused };
     }
     if (pieces.length === 0) {
-        return { error: 'there is nothing of that kind inside it' };
+        return { error: readable.length > 1
+            ? 'there is nothing inside it to rebuild'
+            : 'there is nothing of that kind inside it' };
     }
     // Pairing first, so that switching off an angle switches off the camera sound that is coming
     // with it rather than only the picture.
@@ -232,7 +246,8 @@ FXP.unnestPlanNest = function (nested, entry, mediaTypes) {
         spans: spans,
         window: window,
         angles: multicam ? FXP.unnestKeepFirstAngle(pieces) : null,
-        hasTransitions: FXP.nestHasTransitions(nested, mediaTypes)
+        unreadable: unreadable,
+        hasTransitions: FXP.nestHasTransitions(nested, readable)
     };
 };
 
