@@ -65,6 +65,12 @@ export const panelYoutube = async ({ window, world, cep, cepCalls, stage, type, 
   check('and the sheet says which video it found in it', text('.youtube__note') === 'Video aqz-KE-bpKQ', text('.youtube__note'));
   check('a link copied at a moment starts the piece there', clocks()[0]?.value === '1:20', clocks()[0]?.value);
   check('the field holding the link is the one with the caret', window.document.activeElement === field('.youtube__url'));
+  const urlStyle = window.getComputedStyle(field('.youtube__url'));
+  check(
+    'and it is as wide as the sheet and reads from the left, not a 74px number field showing the end of the link',
+    urlStyle.width === '100%' && urlStyle.textAlign === 'left',
+    `${urlStyle.width} ${urlStyle.textAlign}`,
+  );
   check('it says where the file goes: a YouTube folder beside the project', text('.paste__target').includes(join(projectRoot, 'YouTube')), text('.paste__target'));
   check('and, on a computer that has never done this, that the tools come first', /yt-dlp, Deno and ffmpeg/.test(text('.youtube')), text('.youtube'));
 

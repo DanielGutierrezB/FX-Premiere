@@ -1,8 +1,11 @@
 /* Paste YouTube: the paste sheet's layout, with a link field, a piece of the video, and the
    downloads the service is running, each with its bar. */
 
-.youtube__url {
+/* The type is in the selector because the sheet-wide rule it overrides has one too: that rule makes
+   every text field a 74px right-aligned number, which showed the end of a link and none of the rest. */
+input[type="text"].youtube__url {
   width: 100%;
+  text-align: left;
   margin-top: 10px;
   font-family: var(--mono);
   font-size: calc(12px * var(--font-scale));
@@ -35,7 +38,7 @@
   width: 96px;
 }
 
-.youtube__clock-input {
+input[type="text"].youtube__clock-input {
   width: 100%;
   font-family: var(--mono);
   font-size: calc(13px * var(--font-scale));
