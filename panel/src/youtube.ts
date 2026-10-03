@@ -24,8 +24,7 @@ export const requestFor = (ask: YoutubeAsk, folder: string): YoutubeRequest => (
   id: `${ask.link.videoId}-${Date.now().toString(36)}`,
   url: ask.link.url,
   videoId: ask.link.videoId,
-  from: ask.from,
-  to: ask.to,
+  pieces: ask.pieces,
   folder,
   bin: YOUTUBE_BIN,
 });

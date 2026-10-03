@@ -23,12 +23,148 @@ input[type="text"].youtube__url {
   color: var(--danger);
 }
 
+/* The player, at 16:9 and never taller than the sheet can spare. Nothing at all until there is a
+   video, so a sheet waiting for a link is not a black box. */
+.youtube__preview {
+  display: none;
+}
+
+.youtube__preview--on {
+  display: block;
+  width: min(100%, 568px);
+  aspect-ratio: 16 / 9;
+  margin: 2px auto 8px;
+  background: #000;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.youtube__player {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  display: block;
+}
+
+.youtube__marks--off {
+  display: none;
+}
+
+.youtube__transport {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.youtube__key {
+  padding: 4px 10px;
+  white-space: pre;
+}
+
+.youtube__clock-now {
+  flex: 1;
+  text-align: center;
+  font-family: var(--mono);
+  font-size: calc(12px * var(--font-scale));
+  color: var(--text-dim);
+}
+
+/* The whole video as a bar: the pieces in the accent, one being marked fainter, and where the player is. */
+.youtube__timeline {
+  position: relative;
+  height: 12px;
+  margin-bottom: 10px;
+  border-radius: 3px;
+  background: var(--border-strong);
+  cursor: pointer;
+  overflow: hidden;
+}
+
+.youtube__span {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  min-width: 2px;
+  background: var(--accent);
+}
+
+.youtube__span--open {
+  background: var(--accent-dim);
+  border-left: 2px solid var(--accent);
+}
+
+.youtube__head {
+  position: absolute;
+  top: -2px;
+  bottom: -2px;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--text);
+}
+
 .youtube__piece {
   display: flex;
   align-items: flex-end;
   flex-wrap: wrap;
   gap: 10px;
+  margin-bottom: 8px;
+}
+
+.youtube__add {
+  padding: 5px 12px;
+}
+
+.youtube__pieces {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
   margin-bottom: 12px;
+}
+
+.youtube__pieces:empty {
+  display: none;
+}
+
+.youtube__piece-row {
+  display: grid;
+  grid-template-columns: 22px 1fr auto 22px;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-family: var(--mono);
+  font-size: calc(11.5px * var(--font-scale));
+  cursor: pointer;
+}
+
+.youtube__piece-row:hover {
+  background: var(--accent-dim);
+}
+
+.youtube__piece-number {
+  color: var(--accent);
+}
+
+.youtube__piece-length {
+  color: var(--text-dim);
+}
+
+.youtube__piece-remove {
+  border: 0;
+  background: transparent;
+  color: var(--text-faint);
+  font-size: calc(14px * var(--font-scale));
+  cursor: default;
+}
+
+.youtube__piece-remove:hover {
+  color: var(--danger);
+}
+
+.youtube__quality {
+  color: var(--text-dim);
+  font-size: calc(11px * var(--font-scale));
 }
 
 .youtube__clock {

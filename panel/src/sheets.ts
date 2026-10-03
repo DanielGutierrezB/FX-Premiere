@@ -279,6 +279,8 @@ export class Sheets {
           : [{ key: '\u21b5', label: 'paste', run: () => this.pasteDialog.confirm() }];
       case 'youtube':
         return [
+          { key: 'I', label: 'in', run: () => this.youtubeDialog.markIn() },
+          { key: 'O', label: 'out', run: () => this.youtubeDialog.markOut() },
           { key: '\u21b5', label: 'download', run: () => this.youtubeDialog.confirm() },
           { key: 'esc', label: 'back', run: () => this.host.back() },
         ];

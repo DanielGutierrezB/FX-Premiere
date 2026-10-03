@@ -421,13 +421,19 @@ export type YoutubeState =
   | 'failed'
   | 'cancelled';
 
-/** What the palette hands the service. Times are in seconds of the video, null for its own ends. */
+/** A stretch of a video in its own seconds; null is that end of the video. */
+export interface YoutubePiece {
+  from: number | null;
+  to: number | null;
+}
+
+/** What the palette hands the service. */
 export interface YoutubeRequest {
   id: string;
   url: string;
   videoId: string;
-  from: number | null;
-  to: number | null;
+  /** The stretches to fetch, each its own file and its own clip. Empty is the whole video. */
+  pieces: YoutubePiece[];
   /** The folder the file lands in, which is made on first use. */
   folder: string;
   bin: string;

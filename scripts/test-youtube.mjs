@@ -24,6 +24,7 @@ const yt = await loadShared('shared/youtube.ts', [
   'formatClock',
   'chooseFormats',
   'resolveRange',
+  'resolvePieces',
   'outputName',
   'downloadArgs',
   'rangeArgs',
@@ -128,6 +129,11 @@ console.log('\nThe piece, checked against the video');
   check('an end past the video is the end of the video', yt.resolveRange(600, 900, 634).range?.to === 634);
   check('a start past the video is refused with its length', yt.resolveRange(700, null, 634).error === 'The video is only 10:34 long.', yt.resolveRange(700, null, 634).error);
   check('an end before its start is refused', /after its start/.test(yt.resolveRange(70, 60, 634).error));
+  const several = yt.resolvePieces([{ from: 300, to: 306 }, { from: 60, to: null }, { from: null, to: 5 }], 634);
+  check('several pieces come back in the order they are in the video', JSON.stringify(several.ranges) === '[{"from":0,"to":5},{"from":60,"to":634},{"from":300,"to":306}]', JSON.stringify(several.ranges));
+  check('none asked for is the whole video', yt.resolvePieces([], 634).ranges.length === 0 && yt.resolvePieces([], 634).error === '');
+  const badSecond = yt.resolvePieces([{ from: 10, to: 20 }, { from: 700, to: null }], 634);
+  check('one that cannot be is refused by its number', badSecond.error === 'Piece 2: The video is only 10:34 long.', badSecond.error);
   const named = yt.outputName('Big Buck Bunny: 4K / 60fps?', 'aqz-KE-bpKQ', { from: 60, to: 70 });
   check('the file is named after the video, with the piece in it', named === 'Big Buck Bunny- 4K - 60fps- [aqz-KE-bpKQ] 1m00s-1m10s.mp4', named);
 }
@@ -225,7 +231,7 @@ const toolsFolder = join(stage, 'Library', 'Application Support', 'FX Premiere',
 const project = join(stage, 'Projects', 'Show', 'YouTube');
 
 /** A fresh copy of the runner, so what one test learnt about the encoders is not carried into the next. */
-const runner = () => loadShared('shared/youtube-run.ts', ['runYoutube', 'Cancelled']);
+const runner = () => loadShared('shared/youtube-run.ts', ['runYoutube', 'Cancelled', 'PartlyMade']);
 const tools = await loadShared('shared/youtube-tools.ts', ['toolsMissing', 'toolPaths']);
 
 const go = async (run, request = {}, { cancelAt = null } = {}) => {
@@ -247,7 +253,7 @@ const go = async (run, request = {}, { cancelAt = null } = {}) => {
   };
   try {
     const result = await run.runYoutube(
-      { id: 'job', url: 'https://www.youtube.com/watch?v=aqz-KE-bpKQ', videoId: 'aqz-KE-bpKQ', from: null, to: null, folder: project, bin: 'YouTube', ...request },
+      { id: 'job', url: 'https://www.youtube.com/watch?v=aqz-KE-bpKQ', videoId: 'aqz-KE-bpKQ', pieces: [], folder: project, bin: 'YouTube', ...request },
       hooks,
     );
     return { result, updates, error: null };
@@ -270,8 +276,10 @@ console.log('\nThe first Paste YouTube on a computer');
   check('and are where FX Premiere keeps them, ready to run', ['yt-dlp', 'deno', 'ffmpeg'].every((name) => (statSync(join(toolsFolder, name)).mode & 0o111) !== 0));
   check('ffmpeg was found inside the folder its archive keeps it in', readFileSync(join(toolsFolder, 'ffmpeg'), 'utf8').includes("tool: 'ffmpeg'"));
   check('a yt-dlp fetched a moment ago is not asked to update itself', !calls().some((call) => call.tool === 'yt-dlp' && call.argv.includes('-U')));
-  check('the file is named after the video', result?.file === join(project, 'Big Buck Bunny 60fps 4K - Official Blender Foundation Short Film [aqz-KE-bpKQ].mp4'), result?.file);
-  check('and it is the converted one', readFileSync(result.file, 'utf8') === 'FAKEMP4');
+  const whole = result?.files[0];
+  check('one file for a whole video', result?.files.length === 1, JSON.stringify(result?.files));
+  check('named after the video', whole?.file === join(project, 'Big Buck Bunny 60fps 4K - Official Blender Foundation Short Film [aqz-KE-bpKQ].mp4'), whole?.file);
+  check('and it is the converted one, as long as the video', readFileSync(whole.file, 'utf8') === 'FAKEMP4' && whole.seconds === bunny4k.duration, String(whole?.seconds));
   const convert = calls().find((call) => call.tool === 'ffmpeg' && call.argv.includes('-map') && !call.argv.includes('lavfi'));
   check('converted on the Mac\u2019s own encoder, the sound copied', convert?.argv.join(' ').includes('-c:v hevc_videotoolbox') && convert?.argv.join(' ').includes('-c:a copy'), convert?.argv.join(' '));
   const converting = updates.findIndex((patch) => patch.state === 'converting');
@@ -299,13 +307,40 @@ console.log('\nA piece of a video');
 {
   resetCalls();
   process.env.FAKE_SECONDS = '10';
-  const { result, error, updates } = await go(await runner(), { from: 60, to: 70 });
-  check('only the piece comes down', error === null && /1m00s-1m10s\.mp4$/.test(result?.file ?? ''), String(error ?? result?.file));
+  const { result, error, updates } = await go(await runner(), { pieces: [{ from: 60, to: 70 }] });
+  check('only the piece comes down', error === null && /1m00s-1m10s\.mp4$/.test(result?.files[0]?.file ?? ''), String(error ?? result?.files[0]?.file));
   check('straight to downloading after reading: there is nothing left to convert', states(updates).join(' ') === 'reading downloading', states(updates).join(' '));
   const cut = calls().find((call) => call.tool === 'ffmpeg' && call.argv.includes('-ss'));
   check('read from YouTube by ffmpeg, from the single-file stream', cut?.argv.includes('https://cdn.example/315'), cut?.argv.join(' '));
   check('with the certificates it needs, both as an option and in its environment', cut?.argv.includes('-ca_file') && cut?.cert.endsWith('cacert.pem') && existsSync(cut.cert), cut?.cert);
   check('yt-dlp is not asked to download anything', !calls().some((call) => call.tool === 'yt-dlp' && call.argv.includes('--load-info-json')));
+}
+
+console.log('\nSeveral pieces of one video');
+{
+  resetCalls();
+  process.env.FAKE_SECONDS = '6';
+  const { result, error, updates } = await go(await runner(), {
+    pieces: [{ from: 300, to: 306 }, { from: 60, to: 66 }, { from: 120, to: 126 }],
+  });
+  const names = (result?.files ?? []).map((made) => made.file.split('/').pop());
+  check('every piece comes down', error === null && names.length === 3, String(error ?? names.join(', ')));
+  check('each its own file, in the order they come in the video', names.map((name) => name.match(/\] (.*)\.mp4$/)?.[1]).join(' ') === '1m00s-1m06s 2m00s-2m06s 5m00s-5m06s', names.join(', '));
+  check('each knowing how long it is, which is where the next goes on the timeline', result?.files.every((made) => made.seconds === 6), JSON.stringify(result?.files));
+  check('one ffmpeg per piece', calls().filter((call) => call.tool === 'ffmpeg' && call.argv.includes('-ss')).length === 3);
+  const bar = updates.map((patch) => patch.percent).filter((value) => typeof value === 'number' && value >= 0);
+  check('the bar runs once across all of them rather than filling up three times', bar.every((value, index) => index === 0 || value >= bar[index - 1]) && bar.at(-1) === 100, bar.join(','));
+  check('and the sheet says which piece it is on', updates.some((patch) => /piece 2 of 3, 2:00\u20132:06/.test(patch.detail ?? '')), updates.map((patch) => patch.detail).filter(Boolean).join(' | '));
+  check('the title says how many', updates.some((patch) => patch.title && /3 pieces$/.test(patch.detail ?? '')));
+
+  resetCalls();
+  process.env.FAKE_FAIL_SS = '120.000';
+  const run = await runner();
+  const { error: partly } = await go(run, { pieces: [{ from: 60, to: 66 }, { from: 120, to: 126 }, { from: 300, to: 306 }] });
+  check('a piece YouTube refuses is a failure that keeps the pieces before it', partly instanceof run.PartlyMade && partly.made.files.length === 1, String(partly));
+  check('which are whole files, ready to be placed', existsSync(partly?.made?.files[0]?.file ?? '/nope'));
+  check('and it says which piece and why', /piece 2 of 3 failed: .*403 Forbidden/.test(partly?.message ?? ''), partly?.message);
+  delete process.env.FAKE_FAIL_SS;
   process.env.FAKE_SECONDS = String(bunny4k.duration);
 }
 
@@ -342,7 +377,7 @@ console.log('\nWhen YouTube says no');
   check('a live stream is refused until it has ended', /live stream/.test(live?.message ?? ''), live?.message);
   writeFileSync(infoFile, JSON.stringify(withUrls(bunny4k)), 'utf8');
 
-  const { error: late } = await go(await runner(), { from: 700 });
+  const { error: late } = await go(await runner(), { pieces: [{ from: 700, to: null }] });
   check('a piece that starts after the video ends is refused with how long it is', late?.message === `The video is only ${yt.formatClock(bunny4k.duration)} long.`, late?.message);
 }
 
@@ -354,6 +389,15 @@ console.log('\nCancelling');
   const { error } = await go(run, {}, { cancelAt: (patch) => typeof patch.percent === 'number' && patch.percent >= 10 && !patch.state });
   check('a cancelled download stops as one, not as a failure', error instanceof run.Cancelled, String(error));
   check('and leaves nothing behind', leftovers().length === 0 && readdirSync(project).filter((entry) => entry.endsWith('.mp4')).length === before, leftovers().join(', '));
+
+  const pieces = await runner();
+  const { error: midway } = await go(
+    pieces,
+    { pieces: [{ from: 10, to: 16 }, { from: 400, to: 406 }] },
+    { cancelAt: (patch) => /piece 2 of 2/.test(patch.detail ?? '') },
+  );
+  check('cancelled between pieces, it is still a cancel', midway instanceof pieces.Cancelled, String(midway));
+  check('and the piece it had already finished goes too: cancelling is asking for none of it', !readdirSync(project).some((entry) => entry.includes('0m10s-0m16s')), readdirSync(project).join(', '));
   delete process.env.FAKE_SLOW;
 }
 

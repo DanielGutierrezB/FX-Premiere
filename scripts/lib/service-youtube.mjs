@@ -33,8 +33,7 @@ export const serviceYoutube = async ({ cep, world, stage, settingsDir, writeFile
     id,
     url: 'https://www.youtube.com/watch?v=jNQXAC9IVRw',
     videoId: 'jNQXAC9IVRw',
-    from: null,
-    to: null,
+    pieces: [],
     folder,
     bin: 'YouTube',
     ...extra,
@@ -66,7 +65,7 @@ export const serviceYoutube = async ({ cep, world, stage, settingsDir, writeFile
   console.log('\nA download that finishes after the editor has gone to another sequence');
   const other = world.sequences.find((sequence) => sequence !== world.sequence);
   world.sequence.setPlayerPosition(String(60 * TICKS_PER_SECOND));
-  cep.emit(EVENT_YOUTUBE, { action: 'start', request: request('moved', { from: 2, to: 6 }) });
+  cep.emit(EVENT_YOUTUBE, { action: 'start', request: request('moved', { pieces: [{ from: 2, to: 6 }] }) });
   await waitFor(() => job('moved') !== undefined, { label: 'the second download to be taken' });
   world.current = other;
   const moved = await waitFor(() => job('moved')?.state === 'done', { timeout: 15000, label: 'the second download to finish' });
@@ -74,6 +73,22 @@ export const serviceYoutube = async ({ cep, world, stage, settingsDir, writeFile
   check('and is left in its bin rather than dropped into the sequence that is open now', /no longer the open sequence/.test(job('moved')?.message ?? ''), job('moved')?.message);
   check('nothing new is on the first sequence\u2019s timeline at 60', !clipsNamed(basename(job('moved')?.file ?? '')).some((clip) => clip.start === 60));
   world.current = world.sequence;
+
+  console.log('\nSeveral pieces of one video');
+  world.importedDuration = 4;
+  world.sequence.setPlayerPosition(String(100 * TICKS_PER_SECOND));
+  cep.emit(EVENT_YOUTUBE, {
+    action: 'start',
+    request: request('reel', { pieces: [{ from: 13, to: 17 }, { from: 3, to: 7 }, { from: 8, to: 12 }] }),
+  });
+  const reel = await waitFor(() => job('reel')?.state === 'done', { timeout: 20000, label: 'the pieces to come down' });
+  check('three pieces come down as one download', reel, JSON.stringify(job('reel')));
+  const starts = ['0m03s-0m07s', '0m08s-0m12s', '0m13s-0m17s'].map(
+    (piece) => clipsNamed(`Me at the zoo [jNQXAC9IVRw] ${piece}.mp4`)[0]?.start,
+  );
+  check('and land one after another from the playhead, in the order they are in the video', starts.join(',') === '100,104,108', starts.join(','));
+  check('the outcome says so', /3 pieces one after another from the playhead/.test(job('reel')?.message ?? ''), job('reel')?.message);
+  world.importedDuration = 19;
 
   console.log('\nCancelling from the palette');
   cep.window.process.env.FAKE_SLOW = '1';

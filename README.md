@@ -118,8 +118,14 @@ Ctrl + Space  →  gsblr  →  Enter  →  Gaussian Blur en los 8 clips seleccio
   por encima de 1080p YouTube solo ofrece VP9 o AV1, que Premiere no abre, así que eso **se
   convierte a HEVC** con el codificador del propio Mac (al doble del bitrate que gastó YouTube, para
   no perder más por el camino); lo que ya es H.264 o HEVC entra sin tocar. Un video HDR baja en su
-  versión SDR, que es la que se ve bien en una secuencia Rec. 709. Los campos *From* y *To* bajan
-  **solo ese tramo**, cortado en el frame exacto (`1:20`, `80` o `1m20s`). Mientras baja, la paleta
+  versión SDR, que es la que se ve bien en una secuencia Rec. 709. En cuanto reconoce el link,
+  **el video se reproduce en la hoja** y se marcan los tramos como en un monitor de origen: `I`
+  donde empieza, `O` donde acaba, tantas veces como tramos quieras; cada `O` lo añade a la lista y
+  a la barra de la duración. `Espacio` reproduce y pausa, las flechas saltan un segundo (cinco con
+  `Shift`), un clic en un tramo de la lista va a él y su `×` lo quita; los tiempos también se
+  escriben a mano (`1:20`, `80` o `1m20s`). **Cada tramo es su propio archivo y su propio clip**,
+  cortado en el frame exacto, y caen uno detrás de otro desde el cabezal en el orden del video. Sin
+  tramos, baja el video entero. Mientras baja, la paleta
   enseña el progreso en el pie cada vez que la abres, con un botón para cancelarla; al terminar te
   dice dónde cayó. Si cuando termina ya estás en otra secuencia, **no la mete en la que tengas
   abierta**: la deja en el bin y te lo dice. La primera vez en un ordenador baja antes yt-dlp, Deno
@@ -546,6 +552,32 @@ detalles que costaron una prueba en vivo cada uno: el ffmpeg estático no encuen
 raíz del Mac, así que se le pasan los de Node; y YouTube sirve los primeros megas de cada petición a
 toda velocidad y luego baja a unos 200 KB/s, así que se le pide en trozos de 10 MB, como hace yt-dlp
 (6 s de 4K60 pasaron de un 2 % por minuto a menos de 6 segundos).
+
+La **vista previa** es el reproductor de YouTube, que no necesita bajar nada y arranca en cuanto el
+link es válido. No puede ir directamente en la paleta: la paleta es una página `file://`, que no
+manda referer, y YouTube le contesta con el error 153 y nada más. Así que la paleta sirve la página
+del reproductor desde `127.0.0.1` (un origen que YouTube sí acepta) y lo maneja con mensajes entre
+marcos —reproducir, pausar, ir a un tiempo— mientras él le dice diez veces por segundo dónde va,
+que es lo que leen `I` y `O`. Las teclas del propio reproductor están apagadas y, si haces clic en el
+video, el foco vuelve a la hoja: el clic llega igual, pero `I` y `O` siguen siendo marcas. Un video
+cuyo dueño no deja reproducirlo fuera de YouTube no tiene vista previa, pero se baja igual con los
+tiempos escritos a mano.
+
+Con varios tramos, cada uno se baja y se corta por separado y la barra de progreso los recorre todos
+según lo que dura cada uno. Si uno falla —YouTube niega un trozo—, los anteriores ya están hechos y
+se colocan, y el resultado dice cuál falló y por qué. Cancelar, en cambio, es no querer nada: lo que
+esa descarga ya había hecho se borra.
+
+El **video de la hoja** es el reproductor de YouTube, que no necesita bajar nada antes y arranca en
+cuanto el link es válido. No puede ir directamente en la paleta: es una página `file://`, que no
+manda origen, y YouTube responde a eso con el error 153 y nada más. Así que la paleta sirve una
+página mínima en `127.0.0.1` con el reproductor dentro y lo maneja con mensajes —reproducir, pausar,
+ir a un tiempo— mientras él informa diez veces por segundo de dónde va, que es lo que lee `I` u `O`.
+Encima del reproductor hay una capa propia que recibe el clic (reproduce o pausa) para que **el foco
+del teclado no entre nunca en la página de YouTube**: la primera versión dejaba que entrase, y desde
+ahí `I` y `O` se iban a YouTube, que las ignora. Si aun así la página del reproductor recibe una
+tecla, se la pasa a la hoja y le devuelve el foco. Un video cuyo autor no permite verlo fuera de
+YouTube se puede bajar igual: la hoja lo dice y los tiempos se escriben a mano.
 
 La descarga corre en el **servicio invisible**, no en la paleta, que se cierra en cuanto el servicio
 la acepta. Las descargas van de una en una, en cola; el servicio escribe cómo van en

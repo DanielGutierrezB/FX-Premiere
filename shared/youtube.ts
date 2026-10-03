@@ -310,6 +310,28 @@ export const resolveRange = (
   return { range: { from: start, to: duration > 0 ? Math.min(end, duration) : end }, error: '' };
 };
 
+/**
+ * Every piece asked for, checked against the video, in the order they come in the video — which is
+ * the order they go on the timeline. None asked for is the whole video and answers an empty list.
+ * One that cannot be is refused by its number, so the editor knows which of six to fix.
+ */
+export const resolvePieces = (
+  pieces: Array<{ from: number | null; to: number | null }>,
+  duration: number,
+): { ranges: Range[]; error: string } => {
+  const ranges: Range[] = [];
+  for (let index = 0; index < pieces.length; index += 1) {
+    const { range, error } = resolveRange(pieces[index].from, pieces[index].to, duration);
+    if (error !== '') {
+      return { ranges: [], error: pieces.length > 1 ? `Piece ${index + 1}: ${error}` : error };
+    }
+    if (range) {
+      ranges.push(range);
+    }
+  }
+  return { ranges: ranges.sort((left, right) => left.from - right.from), error: '' };
+};
+
 /** "Title [id].mp4", with the piece in the name when it is a piece, so two pieces never collide. */
 export const outputName = (title: string, videoId: string, range: Range | null): string => {
   const stem = safeFileName(title).slice(0, 90) || 'YouTube';

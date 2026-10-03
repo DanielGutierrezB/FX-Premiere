@@ -6,7 +6,8 @@
 // What they do is steered by environment variables set before a run: FAKE_LOG (where to write),
 // FAKE_INFO (the description to answer with), FAKE_PROBE_FAIL (`unavailable`, or `stale` for a
 // failure an update cures), FAKE_SLOW (ticks slowly enough to cancel), FAKE_ENCODERS (which HEVC
-// encoders work), FAKE_SECONDS (how long the conversion says the video is).
+// encoders work), FAKE_SECONDS (how long the conversion says the video is), FAKE_FAIL_SS (the start,
+// as ffmpeg is given it, of a piece that YouTube refuses).
 
 import { chmodSync, mkdirSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
@@ -77,6 +78,11 @@ log({ tool: 'ffmpeg', argv, cert: process.env.SSL_CERT_FILE || '' });
   const inputs = argv.filter((word, index) => argv[index - 1] === '-i');
   if (inputs.some((input) => input.startsWith('https://')) && !argv.includes('-ca_file')) {
     process.stderr.write('[tls] error:0A000086:SSL routines::certificate verify failed\\nError opening input files: Input/output error\\n');
+    process.exit(1);
+  }
+  // One piece of several that YouTube refuses, picked by where it starts.
+  if (process.env.FAKE_FAIL_SS && argv.includes(process.env.FAKE_FAIL_SS)) {
+    process.stderr.write('https://cdn.example/315: Server returned 403 Forbidden (access denied)\\n');
     process.exit(1);
   }
   const seconds = Number(process.env.FAKE_SECONDS || 10);

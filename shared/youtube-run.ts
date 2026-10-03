@@ -21,10 +21,11 @@ import {
   parseFfmpegSeconds,
   probeArgs,
   rangeArgs,
-  resolveRange,
+  resolvePieces,
   ytdlpError,
   type DownloadTick,
   type FormatChoice,
+  type Range,
   type ToolPaths,
   type YoutubeInfo,
 } from './youtube';
@@ -37,10 +38,27 @@ export interface RunHooks {
   cancelled(): boolean;
 }
 
-export interface RunResult {
+export interface MadeFile {
   file: string;
+  /** How long it runs, which is where the next one goes on the timeline. */
+  seconds: number;
+}
+
+export interface RunResult {
+  /** One per piece, in the order they come in the video; one for a whole video. */
+  files: MadeFile[];
   title: string;
   label: string;
+}
+
+/** Thrown when a piece failed after others were made, carrying the ones that were. */
+export class PartlyMade extends Error {
+  constructor(
+    readonly made: RunResult,
+    reason: string,
+  ) {
+    super(reason);
+  }
 }
 
 /** Thrown when the editor cancelled, so that it is never reported as something going wrong. */
@@ -281,16 +299,21 @@ export const runYoutube = async (request: YoutubeRequest, hooks: RunHooks): Prom
     throw new Error('A live stream can only be pasted once it has ended.');
   }
   const duration = Number(info.duration) || 0;
-  const { range, error } = resolveRange(request.from, request.to, duration);
+  const { ranges, error } = resolvePieces(request.pieces, duration);
   if (error !== '') {
     throw new Error(error);
   }
-  const choice = chooseFormats(info, range !== null);
+  const choice = chooseFormats(info, ranges.length > 0);
   if (!choice) {
     throw new Error('YouTube offered no video stream for this one.');
   }
   const title = info.title?.trim() || request.videoId;
-  const label = range ? `${choice.label} \u00b7 ${formatClock(range.from)}\u2013${formatClock(range.to)}` : choice.label;
+  const label =
+    ranges.length === 0
+      ? choice.label
+      : ranges.length === 1
+        ? `${choice.label} \u00b7 ${formatClock(ranges[0].from)}\u2013${formatClock(ranges[0].to)}`
+        : `${choice.label} \u00b7 ${ranges.length} pieces`;
   hooks.update({ title, detail: label });
 
   const folder = ensureFolder(request.folder);
@@ -301,35 +324,87 @@ export const runYoutube = async (request: YoutubeRequest, hooks: RunHooks): Prom
   // Inside the destination rather than the system's temporary folder, so the finished file is moved
   // into place by a rename: a 4K download copied across volumes at the end is minutes spent twice.
   const staging = fs.mkdtempSync(path.join(request.folder, STAGING_PREFIX));
-  try {
-    const finished = path.join(staging, 'finished.mp4');
-    let made = finished;
-    if (range) {
-      const encoder = await pickEncoder(tools.ffmpeg, hooks);
-      const certificates = certificateBundle();
-      hooks.update({ state: 'downloading', percent: 0 });
-      await encode(
-        tools.ffmpeg,
-        rangeArgs(encoder, choice, range, finished, certificates),
-        range.to - range.from,
-        hooks,
-        certificates,
-      );
-    } else {
-      hooks.update({ state: 'downloading', percent: 0 });
-      const source = await fetchWhole(tools, raw, choice, staging, hooks);
-      if (choice.convertVideo || choice.convertAudio) {
-        const encoder = choice.convertVideo ? await pickEncoder(tools.ffmpeg, hooks) : '';
-        hooks.update({ state: 'converting', percent: 0 });
-        await encode(tools.ffmpeg, convertArgs(encoder, choice, source, finished), duration, hooks);
-      } else {
-        made = source;
-      }
-    }
+  const keep = (made: string, range: Range | null, seconds: number): MadeFile => {
     const target = path.join(request.folder, freeFileName(request.folder, outputName(title, request.videoId, range)));
     fs.renameSync(made, target);
-    return { file: target, title, label };
+    return { file: target, seconds };
+  };
+  try {
+    if (ranges.length > 0) {
+      const files: MadeFile[] = [];
+      try {
+        await fetchPieces(tools, choice, ranges, staging, hooks, keep, files);
+      } catch (error) {
+        // Cancelling is asking for none of it, so what this run already made goes too. A piece that
+        // fails is not: the ones before it are whole files the editor waited for.
+        if (error instanceof Cancelled) {
+          files.forEach((made) => fs.rmSync(made.file, { force: true }));
+          throw error;
+        }
+        if (files.length > 0) {
+          const reason = error instanceof Error ? error.message : String(error);
+          throw new PartlyMade({ files, title, label }, `piece ${files.length + 1} of ${ranges.length} failed: ${reason}`);
+        }
+        throw error;
+      }
+      return { files, title, label };
+    }
+    hooks.update({ state: 'downloading', percent: 0 });
+    const source = await fetchWhole(tools, raw, choice, staging, hooks);
+    if (!choice.convertVideo && !choice.convertAudio) {
+      return { files: [keep(source, null, duration)], title, label };
+    }
+    const finished = path.join(staging, 'finished.mp4');
+    const encoder = choice.convertVideo ? await pickEncoder(tools.ffmpeg, hooks) : '';
+    hooks.update({ state: 'converting', percent: 0 });
+    await encode(tools.ffmpeg, convertArgs(encoder, choice, source, finished), duration, hooks);
+    return { files: [keep(finished, null, duration)], title, label };
   } finally {
     fs.rmSync(staging, { recursive: true, force: true });
+  }
+};
+
+/**
+ * Each piece fetched and cut by ffmpeg in turn, the bar running across all of them by how long each
+ * is, and the sheet saying which one it is on: six pieces at 100% each would be a bar that fills up
+ * six times.
+ */
+const fetchPieces = async (
+  tools: ToolPaths,
+  choice: FormatChoice,
+  ranges: Range[],
+  staging: string,
+  hooks: RunHooks,
+  keep: (made: string, range: Range, seconds: number) => MadeFile,
+  files: MadeFile[],
+): Promise<void> => {
+  const path = nodeRequire()('path') as typeof import('path');
+  const encoder = await pickEncoder(tools.ffmpeg, hooks);
+  const certificates = certificateBundle();
+  const total = ranges.reduce((sum, range) => sum + (range.to - range.from), 0);
+  let before = 0;
+  hooks.update({ state: 'downloading', percent: 0 });
+  for (let index = 0; index < ranges.length; index += 1) {
+    const range = ranges[index];
+    const seconds = range.to - range.from;
+    if (ranges.length > 1) {
+      hooks.update({
+        detail: `${choice.label} \u00b7 piece ${index + 1} of ${ranges.length}, ${formatClock(range.from)}\u2013${formatClock(range.to)}`,
+      });
+    }
+    const done = before;
+    const across: RunHooks = {
+      ...hooks,
+      update: (patch) =>
+        hooks.update(
+          typeof patch.percent === 'number' && patch.percent >= 0 && total > 0
+            ? { ...patch, percent: Math.floor(((done + (patch.percent / 100) * seconds) / total) * 100) }
+            : patch,
+        ),
+    };
+    const made = path.join(staging, `piece-${index + 1}.mp4`);
+    await encode(tools.ffmpeg, rangeArgs(encoder, choice, range, made, certificates), seconds, across, certificates);
+    files.push(keep(made, range, seconds));
+    before += seconds;
   }
 };

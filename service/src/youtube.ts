@@ -7,7 +7,7 @@ import type { ChildProcess } from 'child_process';
 import { callHost } from '@shared/cep';
 import { appendLog } from '@shared/paths';
 import type { PasteResult, PlayheadAt, YoutubeJob, YoutubeRequest } from '@shared/types';
-import { Cancelled, runYoutube } from '@shared/youtube-run';
+import { Cancelled, PartlyMade, runYoutube, type RunResult } from '@shared/youtube-run';
 import { isActive, readYoutubeStatus, writeYoutubeStatus } from '@shared/youtube-status';
 
 /** How many finished downloads the status keeps, so the palette can say what became of them. */
@@ -45,20 +45,73 @@ const patch = (id: string, change: Partial<YoutubeJob>): void => {
   save();
 };
 
-const placedMessage = (result: PasteResult, at: PlayheadAt | null, bin: string): string => {
-  if (result.placed === false) {
-    return at && at.sequence !== ''
-      ? `In the ${bin} bin: "${at.sequence}" was no longer the open sequence, so it was not put on a timeline.`
-      : `In the ${bin} bin: no sequence was open when it was asked for.`;
+interface Placed {
+  ok: boolean;
+  message: string;
+}
+
+const dirname = (file: string): string => file.replace(/[\\/][^\\/]*$/, '');
+
+const trackList = (tracks: number[]): string => {
+  const unique = [...new Set(tracks)].map((track) => `V${track}`);
+  return unique.length === 1 ? unique[0] : `${unique.slice(0, -1).join(', ')} and ${unique[unique.length - 1]}`;
+};
+
+/**
+ * Puts what was made on the timeline, one after another from the playhead the editor pasted the link
+ * at, in the order the pieces come in the video. Each lands where the one before it ended, which is
+ * what a selects reel is; a placement refused halfway leaves the ones already down where they are.
+ */
+const placeAll = async (result: RunResult, at: PlayheadAt | null, bin: string): Promise<Placed> => {
+  const tracks: number[] = [];
+  let added = false;
+  let cursor = at?.seconds;
+  for (let index = 0; index < result.files.length; index += 1) {
+    const made = result.files[index];
+    const placed = await callHost<PasteResult>({
+      op: 'pasteItem',
+      path: made.file,
+      bin,
+      seconds: 0,
+      at: cursor,
+      sequenceId: at && at.sequenceId !== '' ? at.sequenceId : NO_SEQUENCE,
+    });
+    if (!placed.ok || !placed.data) {
+      // The download is the expensive half and it worked, so the files stay where they are.
+      const reason = placed.error ?? 'Premiere would not import it.';
+      return {
+        ok: false,
+        message: `Saved in ${dirname(made.file)}, but ${reason}${index > 0 ? ` (${index} of ${result.files.length} were placed first)` : ''}`,
+      };
+    }
+    if (placed.data.placed === false) {
+      continue;
+    }
+    tracks.push(placed.data.track);
+    added = added || placed.data.addedTrack;
+    cursor = (cursor ?? 0) + (placed.data.seconds || made.seconds);
   }
-  return `On V${result.track} at the playhead${result.addedTrack ? ', on a track added so nothing was covered' : ''}.`;
+  const count = result.files.length;
+  if (tracks.length === 0) {
+    const what = count === 1 ? 'In' : `All ${count} pieces are in`;
+    return {
+      ok: true,
+      message:
+        at && at.sequence !== ''
+          ? `${what} the ${bin} bin: "${at.sequence}" was no longer the open sequence, so nothing was put on a timeline.`
+          : `${what} the ${bin} bin: no sequence was open when it was asked for.`,
+    };
+  }
+  const where = count === 1 ? `On ${trackList(tracks)} at the playhead` : `${count} pieces one after another from the playhead, on ${trackList(tracks)}`;
+  return { ok: true, message: `${where}${added ? ', on a track added so nothing was covered' : ''}.` };
 };
 
 const runOne = async (next: Waiting): Promise<void> => {
   const { request, at } = next;
   const id = request.id;
   running = id;
-  log(`start ${request.url}${request.from !== null || request.to !== null ? ` from ${String(request.from)} to ${String(request.to)}` : ''}`);
+  const pieces = request.pieces.map((piece) => `${String(piece.from)}-${String(piece.to)}`).join(', ');
+  log(`start ${request.url}${pieces === '' ? '' : ` pieces ${pieces}`}`);
   try {
     const result = await runYoutube(request, {
       update: (change) => patch(id, change),
@@ -67,25 +120,17 @@ const runOne = async (next: Waiting): Promise<void> => {
       },
       cancelled: () => cancelling.has(id),
     });
-    patch(id, { state: 'placing', percent: -1, file: result.file });
-    const placed = await callHost<PasteResult>({
-      op: 'pasteItem',
-      path: result.file,
-      bin: request.bin,
-      seconds: 0,
-      at: at?.seconds,
-      sequenceId: at && at.sequenceId !== '' ? at.sequenceId : NO_SEQUENCE,
-    });
-    if (!placed.ok || !placed.data) {
-      // The download is the expensive half and it worked, so the file stays where it is.
-      const reason = placed.error ?? 'Premiere would not import it.';
-      patch(id, { state: 'failed', percent: -1, message: `Saved as ${result.file}, but ${reason}` });
-      log(`placing failed: ${reason}`);
+    patch(id, { state: 'placing', percent: -1, file: result.files[0]?.file ?? '' });
+    const placed = await placeAll(result, at, request.bin);
+    patch(id, { state: placed.ok ? 'done' : 'failed', percent: placed.ok ? 100 : -1, message: placed.message });
+    log(`${placed.ok ? 'done' : 'placing failed'}: ${result.files.map((made) => made.file).join(', ')} (${result.label}) ${placed.message}`);
+  } catch (error) {
+    if (error instanceof PartlyMade) {
+      const placed = await placeAll(error.made, at, request.bin);
+      patch(id, { state: 'failed', percent: -1, file: error.made.files[0]?.file ?? '', message: `${placed.message} But ${error.message}` });
+      log(`partly made: ${error.message}`);
       return;
     }
-    patch(id, { state: 'done', percent: 100, message: placedMessage(placed.data, at, request.bin) });
-    log(`done: ${result.file} (${result.label})`);
-  } catch (error) {
     if (error instanceof Cancelled || cancelling.has(id)) {
       patch(id, { state: 'cancelled', percent: -1, message: '' });
       log('cancelled');
