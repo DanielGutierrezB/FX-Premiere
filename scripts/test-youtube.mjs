@@ -281,7 +281,14 @@ console.log('\nThe first Paste YouTube on a computer');
   check('named after the video', whole?.file === join(project, 'Big Buck Bunny 60fps 4K - Official Blender Foundation Short Film [aqz-KE-bpKQ].mp4'), whole?.file);
   check('and it is the converted one, as long as the video', readFileSync(whole.file, 'utf8') === 'FAKEMP4' && whole.seconds === bunny4k.duration, String(whole?.seconds));
   const convert = calls().find((call) => call.tool === 'ffmpeg' && call.argv.includes('-map') && !call.argv.includes('lavfi'));
-  check('converted on the Mac\u2019s own encoder, the sound copied', convert?.argv.join(' ').includes('-c:v hevc_videotoolbox') && convert?.argv.join(' ').includes('-c:a copy'), convert?.argv.join(' '));
+  // The first encoder this platform tries, every one of them working on the stand-in: the Mac's own
+  // on a Mac, NVIDIA's on Windows, and on the Linux that runs the suite in CI, software.
+  const firstEncoder = { darwin: 'hevc_videotoolbox', win32: 'hevc_nvenc' }[process.platform] ?? 'libx265';
+  check(
+    `converted on ${firstEncoder}, the first encoder this platform has, with the sound copied`,
+    convert?.argv.join(' ').includes(`-c:v ${firstEncoder}`) && convert?.argv.join(' ').includes('-c:a copy'),
+    convert?.argv.join(' '),
+  );
   const converting = updates.findIndex((patch) => patch.state === 'converting');
   const downloading = updates.slice(updates.findIndex((patch) => patch.state === 'downloading'), converting);
   const bar = downloading.map((patch) => patch.percent).filter((value) => typeof value === 'number');
