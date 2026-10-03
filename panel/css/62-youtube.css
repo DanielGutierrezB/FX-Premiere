@@ -62,6 +62,19 @@ input[type="text"].youtube__url {
   white-space: pre;
 }
 
+.youtube__mute {
+  min-width: 78px;
+}
+
+.youtube__mute--off {
+  color: var(--text-faint);
+}
+
+.youtube__volume {
+  width: 76px;
+  accent-color: var(--accent);
+}
+
 .youtube__clock-now {
   flex: 1;
   text-align: center;

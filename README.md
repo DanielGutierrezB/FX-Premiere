@@ -121,7 +121,9 @@ Ctrl + Space  →  gsblr  →  Enter  →  Gaussian Blur en los 8 clips seleccio
   versión SDR, que es la que se ve bien en una secuencia Rec. 709. En cuanto reconoce el link,
   **el video se reproduce en la hoja** y se marcan los tramos como en un monitor de origen: `I`
   donde empieza, `O` donde acaba, tantas veces como tramos quieras; cada `O` lo añade a la lista y
-  a la barra de la duración, que se puede pinchar o arrastrar para moverse. `Espacio` reproduce y pausa, las flechas saltan un segundo (cinco con
+  a la barra de la duración, que se puede pinchar o arrastrar para moverse. El botón *Sound* y la
+  tecla `M` quitan y ponen el sonido, el deslizador de al lado es el volumen, y los dos se recuerdan
+  para el siguiente video. `Espacio` reproduce y pausa, las flechas saltan un segundo (cinco con
   `Shift`), un clic en un tramo de la lista va a él y su `×` lo quita; los tiempos también se
   escriben a mano (`1:20`, `80` o `1m20s`). **Cada tramo es su propio archivo y su propio clip**,
   cortado en el frame exacto, y caen uno detrás de otro desde el cabezal en el orden del video. Sin

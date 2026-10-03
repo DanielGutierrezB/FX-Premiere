@@ -72,6 +72,7 @@ const SECTIONS: Section[] = [
           { key: 'I', does: 'in' },
           { key: 'O', does: 'out, and the piece goes on the list' },
           { key: 'Space', does: 'play or pause' },
+          { key: 'M', does: 'sound on or off; the slider beside it is the volume' },
           { key: '\u2190\u2192', does: 'a second, \u21e7 five' },
           { key: '\u232b', does: 'take the last piece off' },
           { key: '\u21b5', does: 'download' },

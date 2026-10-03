@@ -47,7 +47,15 @@ export const panelYoutube = async ({ window, world, cep, cepCalls, stage, type, 
 
   // YouTube's player cannot run here, so a stand-in plays the video: the test says where it is, and
   // reads back what the sheet asked of it.
-  const preview = { state: { ready: true, time: 0, duration: 634, playing: false, error: '' }, mounted: [], seeks: [], toggles: 0, listeners: [], keyListeners: [] };
+  const preview = {
+    state: { ready: true, time: 0, duration: 634, playing: false, muted: false, volume: 100, error: '' },
+    mounted: [],
+    seeks: [],
+    toggles: 0,
+    sound: [],
+    listeners: [],
+    keyListeners: [],
+  };
   window.__fxpPreview = () => ({
     mount: (container, videoId, start) => {
       preview.mounted.push({ videoId, start });
@@ -62,6 +70,14 @@ export const panelYoutube = async ({ window, world, cep, cepCalls, stage, type, 
     seek: (time) => {
       preview.seeks.push(time);
       preview.state = { ...preview.state, time };
+    },
+    setMuted: (muted) => {
+      preview.sound.push(muted ? 'mute' : 'unmute');
+      preview.state = { ...preview.state, muted };
+    },
+    setVolume: (volume) => {
+      preview.sound.push(`volume ${volume}`);
+      preview.state = { ...preview.state, volume, muted: volume === 0 ? preview.state.muted : false };
     },
     state: () => preview.state,
     onChange: (listener) => preview.listeners.push(listener),
@@ -181,6 +197,24 @@ export const panelYoutube = async ({ window, world, cep, cepCalls, stage, type, 
   check('and its \u00d7 takes it off', pieceRows().join(' | ') === '0:10 \u2013 0:16.5 | 5:00 \u2013 5:06', pieceRows().join(' | '));
   await press(' ', { code: 'Space' });
   check('Space plays and pauses', preview.toggles === 1, String(preview.toggles));
+  const muteButton = () => window.document.querySelector('.youtube__mute');
+  const volume = () => window.document.querySelector('.youtube__volume');
+  check('the sound starts on, and the button says so', muteButton()?.textContent === 'Sound on', muteButton()?.textContent);
+  await press('m', { code: 'KeyM' });
+  check('M turns it off', preview.sound.at(-1) === 'mute' && muteButton()?.textContent === 'Sound off', `${preview.sound.join(',')} ${muteButton()?.textContent}`);
+  check('and the slider shows nothing coming out', volume()?.value === '0', volume()?.value);
+  muteButton().dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  await settle(2);
+  check('the button turns it back on', preview.sound.at(-1) === 'unmute' && muteButton()?.textContent === 'Sound on', `${preview.sound.join(',')} ${muteButton()?.textContent}`);
+  volume().value = '35';
+  volume().dispatchEvent(new window.Event('input', { bubbles: true }));
+  await settle(2);
+  check('the slider sets the volume', preview.sound.at(-1) === 'volume 35', preview.sound.join(','));
+  await press('m', { code: 'KeyM' });
+  volume().value = '60';
+  volume().dispatchEvent(new window.Event('input', { bubbles: true }));
+  await settle(2);
+  check('and turning it up while it is off is asking to hear it', preview.state.muted === false && muteButton()?.textContent === 'Sound on', muteButton()?.textContent);
   await playTo(100);
   await press('ArrowRight', { shiftKey: true });
   check('and Shift with an arrow moves five seconds', preview.seeks.at(-1) === 105, String(preview.seeks.at(-1)));

@@ -20,6 +20,9 @@ export interface PreviewState {
   /** How long the video is, zero until the player has said. */
   duration: number;
   playing: boolean;
+  muted: boolean;
+  /** 0 to 100, the way YouTube's player counts it. */
+  volume: number;
   /** Why it will not play here, which never stops the download itself. */
   error: string;
 }
@@ -30,6 +33,8 @@ export interface PreviewPlayer {
   pause(): void;
   toggle(): void;
   seek(seconds: number): void;
+  setMuted(muted: boolean): void;
+  setVolume(volume: number): void;
   state(): PreviewState;
   onChange(listener: (state: PreviewState) => void): void;
   /** Keys pressed while the player's page had the focus, which belong to the sheet. */
@@ -80,7 +85,7 @@ export interface ForwardedKey {
  * not be reached through the layer anyway. Whatever key this page does get, it hands to the sheet, and
  * it gives the focus back: the editor marks with the keyboard wherever they last clicked.
  */
-const playerPage = (videoId: string, start: number): string => `<!doctype html>
+const playerPage = (videoId: string, start: number, volume: number, muted: boolean): string => `<!doctype html>
 <html><head><meta charset="utf-8"><style>
 html,body,#player{margin:0;width:100%;height:100%;background:#000;overflow:hidden}
 #cover{position:fixed;inset:0;cursor:pointer}
@@ -92,7 +97,7 @@ var player;
 function post(message) { message.fxp = true; parent.postMessage(message, '*'); }
 function report() {
   if (!player || !player.getCurrentTime) return;
-  post({ type: 'time', time: player.getCurrentTime(), duration: player.getDuration(), playing: player.getPlayerState() === 1 });
+  post({ type: 'time', time: player.getCurrentTime(), duration: player.getDuration(), playing: player.getPlayerState() === 1, muted: player.isMuted(), volume: player.getVolume() });
 }
 function toggle() { if (!player) return; if (player.getPlayerState() === 1) player.pauseVideo(); else player.playVideo(); report(); }
 window.addEventListener('message', function (event) {
@@ -102,6 +107,8 @@ window.addEventListener('message', function (event) {
   if (message.type === 'pause') player.pauseVideo();
   if (message.type === 'toggle') { toggle(); return; }
   if (message.type === 'seek') player.seekTo(message.time, true);
+  if (message.type === 'mute') { if (message.muted) player.mute(); else player.unMute(); }
+  if (message.type === 'volume') { player.setVolume(message.volume); if (message.volume > 0) player.unMute(); }
   report();
 });
 document.getElementById('cover').addEventListener('click', function () { toggle(); post({ type: 'clicked' }); });
@@ -114,7 +121,12 @@ function onYouTubeIframeAPIReady() {
     width: '100%', height: '100%', videoId: ${JSON.stringify(videoId)},
     playerVars: { start: ${Math.max(0, Math.floor(start))}, playsinline: 1, rel: 0, disablekb: 1, controls: 0, fs: 0, iv_load_policy: 3 },
     events: {
-      onReady: function () { post({ type: 'ready', duration: player.getDuration() }); setInterval(report, 100); },
+      onReady: function () {
+        player.setVolume(${Math.round(volume)});
+        if (${muted ? 'true' : 'false'}) player.mute(); else player.unMute();
+        post({ type: 'ready', duration: player.getDuration() });
+        setInterval(report, 100);
+      },
       onStateChange: report,
       onError: function (event) { post({ type: 'error', code: event.data }); }
     }
@@ -140,7 +152,15 @@ const ensureServer = async (): Promise<number> => {
       return;
     }
     response.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
-    response.end(playerPage(videoId, Number(address.searchParams.get('t')) || 0));
+    const volume = Number(address.searchParams.get('vol'));
+    response.end(
+      playerPage(
+        videoId,
+        Number(address.searchParams.get('t')) || 0,
+        Number.isFinite(volume) ? Math.max(0, Math.min(100, volume)) : 100,
+        address.searchParams.get('muted') === '1',
+      ),
+    );
   });
   await new Promise<void>((ready) => server!.listen(0, '127.0.0.1', () => ready()));
   const bound = server.address();
@@ -148,7 +168,30 @@ const ensureServer = async (): Promise<number> => {
   return port;
 };
 
-const EMPTY: PreviewState = { ready: false, time: 0, duration: 0, playing: false, error: '' };
+const SOUND_KEY = 'fxp.youtube.sound';
+
+/** How loud the last preview was left, so the next video does not come back at full blast. */
+const savedSound = (): { volume: number; muted: boolean } => {
+  try {
+    const saved = JSON.parse(window.localStorage.getItem(SOUND_KEY) ?? '{}') as { volume?: number; muted?: boolean };
+    return {
+      volume: typeof saved.volume === 'number' ? Math.max(0, Math.min(100, saved.volume)) : 100,
+      muted: saved.muted === true,
+    };
+  } catch {
+    return { volume: 100, muted: false };
+  }
+};
+
+const saveSound = (volume: number, muted: boolean): void => {
+  try {
+    window.localStorage.setItem(SOUND_KEY, JSON.stringify({ volume, muted }));
+  } catch {
+    /* the next preview starts at full volume, which is the player's own default */
+  }
+};
+
+const EMPTY: PreviewState = { ready: false, time: 0, duration: 0, playing: false, muted: false, volume: 100, error: '' };
 
 class YoutubePlayer implements PreviewPlayer {
   private frame: HTMLIFrameElement | null = null;
@@ -166,6 +209,8 @@ class YoutubePlayer implements PreviewPlayer {
       time?: number;
       duration?: number;
       playing?: boolean;
+      muted?: boolean;
+      volume?: number;
       code?: number;
     } & Partial<ForwardedKey>;
     if (!this.frame || event.source !== this.frame.contentWindow || !message?.fxp) {
@@ -195,6 +240,8 @@ class YoutubePlayer implements PreviewPlayer {
       time: typeof message.time === 'number' ? message.time : this.current.time,
       duration: typeof message.duration === 'number' && message.duration > 0 ? message.duration : this.current.duration,
       playing: message.type === 'time' ? Boolean(message.playing) : this.current.playing,
+      muted: typeof message.muted === 'boolean' ? message.muted : this.current.muted,
+      volume: typeof message.volume === 'number' ? message.volume : this.current.volume,
     });
   };
 
@@ -221,10 +268,14 @@ class YoutubePlayer implements PreviewPlayer {
     frame.setAttribute('allowfullscreen', '');
     container.appendChild(frame);
     this.frame = frame;
+    const sound = savedSound();
+    this.current = { ...this.current, ...sound };
     void ensureServer().then(
       (bound) => {
         if (this.frame === frame) {
-          frame.src = `http://127.0.0.1:${bound}/?v=${encodeURIComponent(videoId)}&t=${Math.floor(start)}`;
+          frame.src =
+            `http://127.0.0.1:${bound}/?v=${encodeURIComponent(videoId)}&t=${Math.floor(start)}` +
+            `&vol=${sound.volume}&muted=${sound.muted ? 1 : 0}`;
         }
       },
       () => this.change({ error: 'The preview could not start on this computer; type the times instead.' }),
@@ -249,6 +300,21 @@ class YoutubePlayer implements PreviewPlayer {
     // jump is made where the jump went.
     this.change({ time });
     this.send({ type: 'seek', time });
+  }
+
+  setMuted(muted: boolean): void {
+    this.change({ muted });
+    saveSound(this.current.volume, muted);
+    this.send({ type: 'mute', muted });
+  }
+
+  /** Turning it up from nothing is asking to hear it, so it also takes the mute off. */
+  setVolume(volume: number): void {
+    const level = Math.max(0, Math.min(100, Math.round(volume)));
+    const muted = level === 0 ? this.current.muted : false;
+    this.change({ volume: level, muted });
+    saveSound(level, muted);
+    this.send({ type: 'volume', volume: level });
   }
 
   state(): PreviewState {

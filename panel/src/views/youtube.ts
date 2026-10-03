@@ -80,6 +80,8 @@ export class YoutubeDialog {
 
   private downloadButton: HTMLButtonElement | null = null;
 
+  private volumeInput: HTMLInputElement | null = null;
+
   constructor(private readonly host: YoutubeHost) {}
 
   open(item: CatalogItem, opening: YoutubeOpening): void {
@@ -110,6 +112,7 @@ export class YoutubeDialog {
     this.inInput = null;
     this.outInput = null;
     this.downloadButton = null;
+    this.volumeInput = null;
   }
 
   render(container: HTMLElement): void {
@@ -197,7 +200,12 @@ export class YoutubeDialog {
   }
 
   handleKey(event: KeyboardEvent): void {
-    const typing = event.target instanceof HTMLInputElement;
+    const typing = event.target instanceof HTMLInputElement && event.target.type === 'text';
+    // The volume slider keeps its arrows, which is how a slider is moved from the keyboard; every
+    // other key on it is still the sheet's, so I and O mark straight after setting the volume.
+    if (event.target === this.volumeInput && event.key.startsWith('Arrow')) {
+      return;
+    }
     // In the In and Out fields Enter is the end of typing a piece; anywhere else it downloads.
     if (event.key === 'Enter' && typing && (event.target === this.inInput || event.target === this.outInput) && this.addTyped()) {
       event.preventDefault();
@@ -239,6 +247,10 @@ export class YoutubeDialog {
       case ' ':
       case 'k':
         this.player.toggle();
+        return true;
+      case 'm':
+        this.player.setMuted(!this.player.state().muted);
+        this.refreshClock(this.player.state());
         return true;
       case 'arrowleft':
         this.player.seek(this.player.state().time - step);
@@ -516,11 +528,33 @@ export class YoutubeDialog {
     const player = this.player;
     const button = (text: string, title: string, run: () => void): HTMLElement =>
       el('button', { class: 'button youtube__key', text, title, onclick: run });
+    this.volumeInput = el('input', {
+      class: 'youtube__volume',
+      type: 'range',
+      min: '0',
+      max: '100',
+      step: '1',
+      value: String(player.state().volume),
+      title: 'Volume',
+      oninput: (event: Event) => {
+        player.setVolume(Number((event.target as HTMLInputElement).value));
+        this.refreshClock(player.state());
+      },
+    }) as HTMLInputElement;
     node.appendChild(
       el('div', { class: 'youtube__transport' }, [
         button('\u2212 5s', 'Back 5 seconds (Shift \u2190)', () => player.seek(player.state().time - BIG_STEP)),
         button('Play', 'Play or pause (Space)', () => player.toggle()),
         button('+ 5s', 'Forward 5 seconds (Shift \u2192)', () => player.seek(player.state().time + BIG_STEP)),
+        el('button', {
+          class: 'button youtube__key youtube__mute',
+          title: 'Sound on or off (M)',
+          onclick: () => {
+            player.setMuted(!player.state().muted);
+            this.refreshClock(player.state());
+          },
+        }),
+        this.volumeInput,
         el('span', { class: 'youtube__clock-now' }),
         button('I  In', 'Mark where a piece starts (I)', () => this.markIn()),
         button('O  Out', 'Mark where it ends and add it (O)', () => this.markOut()),
@@ -613,6 +647,17 @@ export class YoutubeDialog {
     const play = node.querySelectorAll('.youtube__transport .youtube__key')[1];
     if (play) {
       play.textContent = state.playing ? 'Pause' : 'Play';
+    }
+    const mute = node.querySelector('.youtube__mute');
+    if (mute) {
+      const silent = state.muted || state.volume === 0;
+      mute.textContent = silent ? 'Sound off' : 'Sound on';
+      mute.classList.toggle('youtube__mute--off', silent);
+    }
+    // Not while it is being dragged: the player reports ten times a second, and a report from just
+    // before the drag would pull the knob back under the editor's hand.
+    if (this.volumeInput && document.activeElement !== this.volumeInput) {
+      this.volumeInput.value = String(state.muted ? 0 : state.volume);
     }
     const bar = node.querySelector('.youtube__timeline');
     if (!bar || state.duration <= 0) {
