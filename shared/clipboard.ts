@@ -88,10 +88,12 @@ export const grabClipboard = async (file: string): Promise<ClipboardGrab> => {
 export const readClipboardText = (): Promise<string> =>
   new Promise((resolve) => {
     const childProcess = nodeRequire()('child_process') as typeof import('child_process');
+    // By its full path: what PATH a host application hands its children is the host's business, and
+    // pbpaste has lived in /usr/bin on every macOS there has been.
     const [command, args] =
       process.platform === 'win32'
         ? ['powershell', ['-NoProfile', '-Command', 'Get-Clipboard -Raw']]
-        : ['pbpaste', []];
+        : ['/usr/bin/pbpaste', []];
     try {
       childProcess.execFile(command, args, { timeout: 2000, windowsHide: true, encoding: 'utf8' }, (error, stdout) =>
         resolve(error ? '' : String(stdout).slice(0, 4000)),

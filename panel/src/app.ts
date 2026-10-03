@@ -360,7 +360,10 @@ export class PaletteApp {
     // never sees the release at all.
     window.addEventListener('keyup', (event) => this.bar.noteModifiers(event), true);
     window.addEventListener('blur', () => this.bar.noteModifiers(null));
-    window.addEventListener('focus', () => this.focusInput());
+    window.addEventListener('focus', () => {
+      this.focusInput();
+      void this.sheets.windowFocused();
+    });
     window.addEventListener('resize', () => this.size.noteHostResize());
     // Closed by the window's own button rather than by us: the marker has to go down anyway, or the
     // next shortcut would think the palette is still up and try to dismiss it. Neither event is

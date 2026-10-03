@@ -160,6 +160,7 @@ export class Sheets {
       back: () => host.back(),
     });
     this.youtubeDialog = new YoutubeDialog({
+      clipboard: () => clipboardBridge().text?.() ?? Promise.resolve(''),
       start: (item, ask) => host.startYoutube(item, ask, this.youtubeFolder),
       cancel: (id) => host.cancelYoutube(id),
       jobs: () => readYoutubeStatus().jobs,
@@ -380,6 +381,20 @@ export class Sheets {
     });
     this.enter('youtube');
     this.youtubeDialog.render(this.host.body());
+  }
+
+  /**
+   * The palette window has the focus back. On the Paste YouTube sheet that is the moment somebody
+   * returns from copying a link, so the clipboard is looked at again.
+   */
+  async windowFocused(): Promise<void> {
+    if (this.view !== 'youtube') {
+      return;
+    }
+    const text = (await clipboardBridge().text?.()) ?? '';
+    if (this.view === 'youtube') {
+      this.youtubeDialog.clipboardChanged(text);
+    }
   }
 
   /** The service has said more about its downloads; only the list moves, never the fields. */

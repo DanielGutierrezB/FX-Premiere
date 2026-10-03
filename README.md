@@ -111,7 +111,10 @@ Ctrl + Space  →  gsblr  →  Enter  →  Gaussian Blur en los 8 clips seleccio
   Premiere use para imágenes fijas si se puede leer de sus preferencias; si no, la de los ajustes.
 - **Pegar de YouTube (*Paste YouTube*)**: busca «youtube» y pega el link; si ya lo tienes copiado
   aparece puesto, aunque venga en medio de un mensaje, y un link copiado en un momento del video
-  (`?t=80`) rellena el inicio del tramo. `Enter` y la paleta se cierra: **la descarga sigue en
+  (`?t=80`) rellena el inicio del tramo. Si lo copias con la hoja ya abierta, lo toma al volver a la
+  paleta; si ya habías marcado tramos en otro video, te lo ofrece en vez de cambiarlo. `⌘V` en
+  cualquier parte de la hoja pone el link copiado en lugar del que haya, y un clic en el campo lo
+  selecciona entero para escribir otro encima. `Enter` y la paleta se cierra: **la descarga sigue en
   segundo plano** y el clip cae donde estaba el cabezal cuando lo pediste, en la pista de más arriba
   con ese hueco libre, importado en un bin *YouTube*. El archivo se guarda en una carpeta *YouTube*
   junto al proyecto, con el título del video y su id. Baja **la mejor calidad que tenga YouTube**:

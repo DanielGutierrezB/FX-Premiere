@@ -24,6 +24,8 @@ export interface YoutubeAsk {
 }
 
 interface YoutubeHost {
+  /** Whatever text is on the clipboard now, or nothing. */
+  clipboard(): Promise<string>;
   start(item: CatalogItem, ask: YoutubeAsk): void;
   cancel(id: string): void;
   jobs(): YoutubeJob[];
@@ -52,6 +54,12 @@ export class YoutubeDialog {
   private url = '';
 
   private error = '';
+
+  /** Something worth saying that is not wrong, such as another link waiting on the clipboard. */
+  private notice = '';
+
+  /** The video on the clipboard last time it was looked at, so the same copy is offered once. */
+  private offered = '';
 
   private pieces: Range[] = [];
 
@@ -90,8 +98,54 @@ export class YoutubeDialog {
     this.opening = opening;
     const link = parseYoutubeLink(opening.clipboard);
     this.url = link ? opening.clipboard.trim() : '';
-    // A link copied at a moment in the video says where a piece starts.
-    this.pendingIn = link?.start ?? null;
+    this.offered = link?.videoId ?? '';
+  }
+
+  /**
+   * The palette has the focus back, which is where an editor who opened this, went to copy a link
+   * and came back is. A new link on the clipboard is taken straight away when nothing here would be
+   * lost by it; over pieces already marked on another video it is offered instead, a ⌘V away.
+   */
+  clipboardChanged(text: string): void {
+    const link = parseYoutubeLink(text);
+    if (!link || !this.urlInput || link.videoId === this.offered) {
+      return;
+    }
+    this.offered = link.videoId;
+    if (link.videoId === parseYoutubeLink(this.url)?.videoId) {
+      return;
+    }
+    if (this.pieces.length > 0 || this.pendingIn !== null) {
+      this.error = '';
+      this.notice = `Another video is on the clipboard (${link.videoId}). \u2318V switches to it; the pieces marked here go.`;
+      this.refreshNote();
+      return;
+    }
+    this.useLink(text);
+  }
+
+  /** Puts a link in the field as if it had been typed there, and starts its video. */
+  private useLink(text: string): void {
+    this.url = text.trim();
+    if (this.urlInput) {
+      this.urlInput.value = this.url;
+    }
+    this.error = '';
+    this.notice = '';
+    this.linkChanged();
+  }
+
+  /** ⌘V anywhere but a field: whatever link is on the clipboard replaces the one here. */
+  private async pasteLink(): Promise<void> {
+    const text = await this.host.clipboard();
+    const link = parseYoutubeLink(text);
+    if (!link) {
+      this.error = 'There is no YouTube link on the clipboard.';
+      this.refreshNote();
+      return;
+    }
+    this.offered = link.videoId;
+    this.useLink(text);
   }
 
   clear(): void {
@@ -103,6 +157,8 @@ export class YoutubeDialog {
     this.pieces = [];
     this.pendingIn = null;
     this.error = '';
+    this.notice = '';
+    this.offered = '';
     this.sheetNode = null;
     this.urlInput = null;
     this.noteNode = null;
@@ -148,9 +204,19 @@ export class YoutubeDialog {
       oninput: (event: Event) => {
         this.url = (event.target as HTMLInputElement).value;
         this.error = '';
+        this.notice = '';
         this.linkChanged();
       },
     }) as HTMLInputElement;
+    // A click on a link that is already there is a click to replace it, so all of it is selected
+    // and whatever is pasted or typed next takes its place.
+    const urlInput = this.urlInput;
+    urlInput.addEventListener('mouseup', (event) => {
+      if (urlInput.selectionStart === urlInput.selectionEnd) {
+        event.preventDefault();
+        urlInput.select();
+      }
+    });
     container.appendChild(this.urlInput);
     this.noteNode = el('div', { class: 'youtube__note' });
     container.appendChild(this.noteNode);
@@ -231,6 +297,10 @@ export class YoutubeDialog {
     }
     if (key.key === 'Enter') {
       this.confirm();
+      return true;
+    }
+    if ((key.metaKey || key.ctrlKey) && key.key.toLowerCase() === 'v') {
+      void this.pasteLink();
       return true;
     }
     if (key.metaKey || key.ctrlKey || !this.player) {
@@ -447,6 +517,10 @@ export class YoutubeDialog {
       this.playing = id;
       if (id !== '' && this.previewNode) {
         this.pieces = [];
+        // A link copied at a moment in the video says where a piece starts; the last video's marks
+        // say nothing about this one.
+        this.pendingIn = link?.start ?? null;
+        this.notice = '';
         const player = createPreview();
         player.onChange((state) => this.playerChanged(state));
         player.onKey((key) => void this.shortcut(key));
@@ -491,16 +565,20 @@ export class YoutubeDialog {
     const link = parseYoutubeLink(this.url);
     const trouble = this.error !== '' ? this.error : this.player?.state().error ?? '';
     node.className = `youtube__note${trouble !== '' || (!link && this.url.trim() !== '') ? ' youtube__note--error' : ''}`;
-    node.textContent =
-      trouble !== ''
-        ? trouble
-        : link
-          ? this.pendingIn !== null
-            ? `In at ${formatClock(this.pendingIn)}. O where the piece ends.`
-            : this.addedNote() || `Video ${link.videoId}. I and O mark the pieces to fetch; none is the whole video.`
-          : this.url.trim() === ''
-            ? 'Paste a link to a video.'
-            : 'That is not a YouTube video link.';
+    node.textContent = trouble !== '' ? trouble : this.noteText(link);
+  }
+
+  private noteText(link: YoutubeLink | null): string {
+    if (this.notice !== '') {
+      return this.notice;
+    }
+    if (!link) {
+      return this.url.trim() === '' ? 'Paste a link to a video.' : 'That is not a YouTube video link.';
+    }
+    if (this.pendingIn !== null) {
+      return `In at ${formatClock(this.pendingIn)}. O where the piece ends.`;
+    }
+    return this.addedNote() || `Video ${link.videoId}. I and O mark the pieces to fetch; none is the whole video.`;
   }
 
   /**
