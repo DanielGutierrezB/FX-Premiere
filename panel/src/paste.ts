@@ -12,7 +12,7 @@
  */
 import { callHost } from '@shared/cep';
 import { clipboardError } from '@shared/clipboard';
-import { ensureFolder, wildcardContext } from '@shared/compass';
+import { ensureFolder, freeFileName, wildcardContext } from '@shared/compass';
 import { readContext } from '@shared/compass-run';
 import { nodeRequire } from '@shared/node';
 import { saveSettings } from '@shared/settings';
@@ -99,24 +99,6 @@ const baseName = (file: string): string => {
 /** The probe with a duration somebody chose on the dialog. Footage has none to choose. */
 export const withDuration = (probe: PasteProbe, seconds: number): PasteProbe =>
   probe.kind === 'still' ? { ...probe, seconds } : probe;
-
-/**
- * A name nothing is using. A paste never lands on top of an earlier one, and the wildcards can only
- * tell two of them apart down to the minute, so several in a row are ordinary rather than a clash.
- */
-export const freeFileName = (folder: string, fileName: string): string => {
-  const fs = nodeRequire()('fs') as typeof import('fs');
-  const path = nodeRequire()('path') as typeof import('path');
-  const ext = path.extname(fileName);
-  const stem = fileName.slice(0, fileName.length - ext.length);
-  for (let attempt = 1; attempt < 1000; attempt += 1) {
-    const candidate = attempt === 1 ? fileName : `${stem}-${attempt}${ext}`;
-    if (!fs.existsSync(path.join(folder, candidate))) {
-      return candidate;
-    }
-  }
-  return `${stem}-${Date.now()}${ext}`;
-};
 
 /** `rename` is one call and no copy, but it only works inside one volume, and the scratch file is
  * in the system's temporary folder, which on Windows may well be another. */

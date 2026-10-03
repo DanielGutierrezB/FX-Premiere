@@ -7,7 +7,8 @@ interface CepEvent {
   scope: string;
   appId?: string;
   extensionId?: string;
-  data?: string;
+  /** Sent as text; CEP hands it to listeners already parsed whenever the text was JSON. */
+  data?: unknown;
 }
 
 interface AdobeCep {
@@ -65,6 +66,8 @@ const PANEL_EXTENSION_ID = 'com.fxpremiere.panel';
 
 export const EVENT_TRIGGER_PALETTE = 'com.fxpremiere.event.trigger';
 export const EVENT_SETTINGS_CHANGED = 'com.fxpremiere.event.settings';
+/** The palette asking the service to start or cancel a Paste YouTube. */
+export const EVENT_YOUTUBE = 'com.fxpremiere.event.youtube';
 
 const cepApi = (): AdobeCep => {
   const api = window.__adobe_cep__;
@@ -150,8 +153,16 @@ export const dispatchCepEvent = (type: string, data: unknown): void => {
   });
 };
 
+/**
+ * Every handler gets text. CEP delivers an event's data parsed into an object whenever the text it
+ * was sent as is JSON — which everything this sends is — so a handler written for the text it was
+ * sent read "[object Object]" in a real Premiere and nowhere else. Turned back into text here, once.
+ */
 export const onCepEvent = (type: string, handler: (data: string | undefined) => void): void => {
-  cepApi().addEventListener(type, (event) => handler(event.data));
+  cepApi().addEventListener(type, (event) => {
+    const data = event.data;
+    handler(data === undefined || data === null ? undefined : typeof data === 'string' ? data : JSON.stringify(data));
+  });
 };
 
 export const openPanel = (): void => cepApi().requestOpenExtension(PANEL_EXTENSION_ID, '');

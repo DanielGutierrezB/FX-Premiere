@@ -101,9 +101,19 @@ export const createCepWindow = ({ html, home, extensionRoot = home, evalScript, 
     removeEventListener(type) {
       listeners.delete(type);
     },
+    // What a real Premiere does with an event's data: text that is JSON reaches listeners already
+    // parsed. A mock that passed the text through is how a handler expecting text shipped broken.
     dispatchEvent(event) {
+      let data = event.data;
+      if (typeof data === 'string') {
+        try {
+          data = JSON.parse(data);
+        } catch {
+          /* not JSON, so it arrives as the text it was */
+        }
+      }
       for (const listener of listeners.get(event.type) ?? []) {
-        listener(event);
+        listener({ ...event, data });
       }
     },
     requestOpenExtension() {

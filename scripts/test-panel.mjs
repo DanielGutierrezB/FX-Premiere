@@ -18,6 +18,7 @@ import { createHost } from './lib/mock-premiere.mjs';
 import { easeAndAnchorDialogs } from './lib/panel-dialogs.mjs';
 import { createClipboardFake, pasteAndCompassViews } from './lib/panel-new-views.mjs';
 import { panelUnnest } from './lib/panel-unnest.mjs';
+import { panelYoutube } from './lib/panel-youtube.mjs';
 import { laterOpens } from './lib/panel-later-opens.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -1316,6 +1317,7 @@ check('an empty result set shows guidance', Boolean(window.document.querySelecto
 
 await easeAndAnchorDialogs({ window, world, cep, cepCalls, stage, type, press, savedSettings, toastText });
 await pasteAndCompassViews({ window, world, cep, cepCalls, stage, type, press, savedSettings, toastText, clipboard });
+await panelYoutube({ window, world, cep, cepCalls, stage, type, press, toastText, clipboard });
 
 console.log('\nOpening it again');
 cep.close();

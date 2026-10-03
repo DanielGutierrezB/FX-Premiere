@@ -15,7 +15,11 @@ import {
   type View,
 } from '@shared/types';
 import { EMPTY_CONTEXT, readContext } from '@shared/compass-run';
+import { toolsMissing } from '@shared/youtube-tools';
+import { readYoutubeStatus } from '@shared/youtube-status';
+import { clipboardBridge } from './clipboard-bridge';
 import { probePaste, type PasteProbe } from './paste';
+import { youtubeFolder } from './youtube';
 import { AnchorDialog } from './views/anchor';
 import { CompassSheet } from './views/compass';
 import { EaseDialog } from './views/ease';
@@ -25,6 +29,7 @@ import { SettingsSheet } from './views/settings';
 import { ToolsSheet } from './views/tools';
 import { TransitionDialog } from './views/transition';
 import { UnnestDialog } from './views/unnest';
+import { YoutubeDialog, type YoutubeAsk } from './views/youtube';
 
 /** The sheets are owned by this file; the list of them is in shared, where a size is kept per view. */
 export type { View } from '@shared/types';
@@ -60,6 +65,9 @@ interface SheetsHost {
   applyAnchor(item: CatalogItem, options: AnchorOptions): void;
   /** The clipboard has been read and where it goes is worked out; this is Enter on the dialog. */
   applyPaste(item: CatalogItem, seconds: number): void;
+  /** Hands a checked link to the service, which downloads it with the palette closed. */
+  startYoutube(item: CatalogItem, ask: YoutubeAsk, folder: string): void;
+  cancelYoutube(id: string): void;
   /** Resolves the paths, makes the folders and tries the properties, reporting what came back. */
   applyCompass(): Promise<void>;
   storeCaptured(preset: CapturedPreset): void;
@@ -88,6 +96,11 @@ export class Sheets {
   private readonly anchorDialog: AnchorDialog;
 
   private readonly pasteDialog: PasteDialog;
+
+  private readonly youtubeDialog: YoutubeDialog;
+
+  /** Where the open Paste YouTube sheet sends the file, worked out once as it opened. */
+  private youtubeFolder = '';
 
   private readonly compassSheet: CompassSheet;
 
@@ -146,6 +159,12 @@ export class Sheets {
       apply: (item, seconds) => host.applyPaste(item, seconds),
       back: () => host.back(),
     });
+    this.youtubeDialog = new YoutubeDialog({
+      start: (item, ask) => host.startYoutube(item, ask, this.youtubeFolder),
+      cancel: (id) => host.cancelYoutube(id),
+      jobs: () => readYoutubeStatus().jobs,
+      back: () => host.back(),
+    });
     this.compassSheet = new CompassSheet({
       settings: () => host.settings(),
       context: () => this.projectContext,
@@ -201,6 +220,9 @@ export class Sheets {
       case 'paste':
         this.pasteDialog.handleKey(event);
         return;
+      case 'youtube':
+        this.youtubeDialog.handleKey(event);
+        return;
       case 'compass':
         this.compassSheet.handleKey(event);
         return;
@@ -255,6 +277,11 @@ export class Sheets {
               { key: '\u21b5', label: 'paste', run: () => this.pasteDialog.confirm() },
             ]
           : [{ key: '\u21b5', label: 'paste', run: () => this.pasteDialog.confirm() }];
+      case 'youtube':
+        return [
+          { key: '\u21b5', label: 'download', run: () => this.youtubeDialog.confirm() },
+          { key: 'esc', label: 'back', run: () => this.host.back() },
+        ];
       case 'compass':
         return [
           { key: '\u21e5', label: 'media / frame', run: () => this.compassSheet.moveField(1) },
@@ -332,6 +359,34 @@ export class Sheets {
     this.pasteDialog.render(this.host.body());
   }
 
+  /**
+   * The clipboard is read for a link and the project for somewhere to put the file before the sheet
+   * appears, so the sheet opens already holding the link, or already saying why nothing can go.
+   */
+  async openYoutube(item: CatalogItem): Promise<void> {
+    const [clipboard, context] = await Promise.all([clipboardBridge().text?.() ?? Promise.resolve(''), readContext()]);
+    this.projectContext = context;
+    this.youtubeFolder = youtubeFolder(context.projectFile);
+    this.youtubeDialog.open(item, {
+      clipboard,
+      folder: this.youtubeFolder,
+      problem:
+        this.youtubeFolder === ''
+          ? 'Save the project first: the video goes into a YouTube folder next to the project file.'
+          : '',
+      firstUse: toolsMissing(),
+    });
+    this.enter('youtube');
+    this.youtubeDialog.render(this.host.body());
+  }
+
+  /** The service has said more about its downloads; only the list moves, never the fields. */
+  youtubeChanged(): void {
+    if (this.view === 'youtube') {
+      this.youtubeDialog.refreshJobs();
+    }
+  }
+
   /** What Enter on the paste dialog has to commit, or null when nothing has been probed. */
   probe(): PasteProbe | null {
     return this.pasteProbe;
@@ -389,6 +444,7 @@ export class Sheets {
     this.easeDialog.clear();
     this.anchorDialog.clear();
     this.pasteDialog.clear();
+    this.youtubeDialog.clear();
     this.settingsSheet.closed();
     this.pasteProbe = null;
     this.unnestNests = [];

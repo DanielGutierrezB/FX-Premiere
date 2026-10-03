@@ -392,6 +392,68 @@ export interface PasteResult {
   /** True when nothing over the playhead was free and a track had to be added. */
   addedTrack: boolean;
   seconds: number;
+  /**
+   * False when the media was imported and deliberately left in its bin, because the sequence it was
+   * meant for is no longer the one open. Absent on answers from before it could be.
+   */
+  placed?: boolean;
+}
+
+/** Where the playhead is and in which sequence, kept for a placement that happens later. */
+export interface PlayheadAt {
+  sequenceId: string;
+  sequence: string;
+  seconds: number;
+}
+
+/**
+ * Where one Paste YouTube has got to. `downloading` and `converting` are the long ones and the only
+ * ones with a percentage worth showing; `tools` is the one-off fetch of yt-dlp, Deno and ffmpeg.
+ */
+export type YoutubeState =
+  | 'queued'
+  | 'tools'
+  | 'reading'
+  | 'downloading'
+  | 'converting'
+  | 'placing'
+  | 'done'
+  | 'failed'
+  | 'cancelled';
+
+/** What the palette hands the service. Times are in seconds of the video, null for its own ends. */
+export interface YoutubeRequest {
+  id: string;
+  url: string;
+  videoId: string;
+  from: number | null;
+  to: number | null;
+  /** The folder the file lands in, which is made on first use. */
+  folder: string;
+  bin: string;
+}
+
+export interface YoutubeJob {
+  id: string;
+  videoId: string;
+  url: string;
+  /** The video's own title once it has been read, the id until then. */
+  title: string;
+  state: YoutubeState;
+  /** Within the current state, 0–100, or -1 while there is nothing to measure. */
+  percent: number;
+  /** What is being made, in a few words: "2160p60 VP9 → HEVC". */
+  detail: string;
+  /** Where the file landed, once it has. */
+  file: string;
+  /** Why it failed, or what became of it once it was done. */
+  message: string;
+  updatedAt: number;
+}
+
+export interface YoutubeStatus {
+  jobs: YoutubeJob[];
+  updatedAt: number;
 }
 
 export interface MotionCommand {
@@ -446,8 +508,13 @@ export type HostRequest =
   | { op: 'anchorSources' }
   | { op: 'anchor'; options: AnchorOptions; bounds: AnchorBounds[] }
   | { op: 'projectContext' }
-  /** `seconds` at zero means the media has a length of its own and is to be placed at it. */
-  | { op: 'pasteItem'; path: string; bin: string; seconds: number }
+  /**
+   * `seconds` at zero means the media has a length of its own and is to be placed at it. `at` and
+   * `sequenceId` pin a placement decided earlier than it happens: a download finishing minutes after
+   * it was asked for lands where the playhead was then, and only in the sequence it was asked from.
+   */
+  | { op: 'pasteItem'; path: string; bin: string; seconds: number; at?: number; sequenceId?: string }
+  | { op: 'playheadAt' }
   | { op: 'compassApply'; media: string; frame: string }
   /** `fileName` is only used when Premiere has not named the file yet. */
   | { op: 'compassSteer'; media: string; fileName: string }
@@ -598,6 +665,7 @@ export const VIEWS = [
   'ease',
   'anchor',
   'paste',
+  'youtube',
   'compass',
   'settings',
   'inspect',

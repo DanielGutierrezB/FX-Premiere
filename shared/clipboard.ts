@@ -80,6 +80,27 @@ export const grabClipboard = async (file: string): Promise<ClipboardGrab> => {
   return parseGrab(outcome.text);
 };
 
+/**
+ * Whatever text is on the clipboard, or nothing. The system's own tools rather than the helper,
+ * because text needs none of what the helper is there for, and an empty answer is the right one for
+ * every way this can fail: the palette only uses it to fill a field the editor can type into anyway.
+ */
+export const readClipboardText = (): Promise<string> =>
+  new Promise((resolve) => {
+    const childProcess = nodeRequire()('child_process') as typeof import('child_process');
+    const [command, args] =
+      process.platform === 'win32'
+        ? ['powershell', ['-NoProfile', '-Command', 'Get-Clipboard -Raw']]
+        : ['pbpaste', []];
+    try {
+      childProcess.execFile(command, args, { timeout: 2000, windowsHide: true, encoding: 'utf8' }, (error, stdout) =>
+        resolve(error ? '' : String(stdout).slice(0, 4000)),
+      );
+    } catch {
+      resolve('');
+    }
+  });
+
 /** What went wrong, for the one line the dialog has to say it in. */
 export const clipboardError = (grab: ClipboardGrab): string => {
   switch (grab.error) {

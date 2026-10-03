@@ -1,6 +1,7 @@
 import {
   EVENT_SETTINGS_CHANGED,
   EVENT_TRIGGER_PALETTE,
+  EVENT_YOUTUBE,
   dispatchCepEvent,
   isInsideCep,
   onCepEvent,
@@ -18,6 +19,7 @@ import { appendLog, settingsFile } from '@shared/paths';
 import { isPanelOpen, loadSettings, markPanelOpen, setPendingIntent, writeHelperStatus } from '@shared/settings';
 import type { ProjectContext, Settings, SystemShortcut } from '@shared/types';
 import type { ChildProcessWithoutNullStreams } from 'child_process';
+import { handleYoutubeEvent, recoverYoutube, stopYoutube } from './youtube';
 
 const RESTART_LIMIT = 5;
 const RESTART_DELAY_MS = 1500;
@@ -467,6 +469,8 @@ const boot = (): void => {
   void setPanelPersistent(settings.keepLoaded);
   startHelper();
   watchCompass();
+  recoverYoutube();
+  onCepEvent(EVENT_YOUTUBE, handleYoutubeEvent);
 
   const fs = nodeRequire()('fs') as typeof import('fs');
   try {
@@ -497,6 +501,7 @@ const boot = (): void => {
       windowTimer = null;
     }
     stopHelper();
+    stopYoutube();
   };
   window.addEventListener('beforeunload', shutdown);
   onCepEvent('com.adobe.csxs.events.ApplicationBeforeQuit', shutdown);

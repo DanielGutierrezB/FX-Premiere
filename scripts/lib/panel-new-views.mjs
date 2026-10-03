@@ -16,10 +16,11 @@ import { settle } from './mock-cep.mjs';
  * supposed to warn about.
  */
 export const createClipboardFake = (stage) => {
-  const state = { source: 'png', alpha: true, width: 1920, height: 1080, ok: true, error: '', file: '' };
+  const state = { source: 'png', alpha: true, width: 1920, height: 1080, ok: true, error: '', file: '', text: '' };
   let grabs = 0;
   const bridge = {
     scratch: () => join(stage, `scratch-${grabs}.png`),
+    text: async () => state.text,
     grab: async (file) => {
       grabs += 1;
       if (!state.ok) {

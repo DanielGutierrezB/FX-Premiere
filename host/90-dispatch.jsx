@@ -45,6 +45,8 @@ FXP.route = function (request) {
             return FXP.projectContext();
         case 'pasteItem':
             return FXP.pasteItem(request);
+        case 'playheadAt':
+            return FXP.playheadAt();
         case 'compassApply':
             return FXP.compassApply(request);
         case 'compassSteer':

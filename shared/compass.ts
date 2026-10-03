@@ -231,3 +231,21 @@ export const ensureFolder = (folder: string): FolderResult => {
     return { created: false, error: `The folder could not be created: ${(error as Error).message}` };
   }
 };
+
+/**
+ * A name nothing is using. A paste never lands on top of an earlier one, and the wildcards can only
+ * tell two of them apart down to the minute, so several in a row are ordinary rather than a clash.
+ */
+export const freeFileName = (folder: string, fileName: string): string => {
+  const fs = nodeRequire()('fs') as typeof import('fs');
+  const path = nodeRequire()('path') as typeof import('path');
+  const ext = path.extname(fileName);
+  const stem = fileName.slice(0, fileName.length - ext.length);
+  for (let attempt = 1; attempt < 1000; attempt += 1) {
+    const candidate = attempt === 1 ? fileName : `${stem}-${attempt}${ext}`;
+    if (!fs.existsSync(path.join(folder, candidate))) {
+      return candidate;
+    }
+  }
+  return `${stem}-${Date.now()}${ext}`;
+};

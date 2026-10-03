@@ -109,6 +109,21 @@ Ctrl + Space  →  gsblr  →  Enter  →  Gaussian Blur en los 8 clips seleccio
   sobrescribe, y si Premiere acaba rechazando el pegado el PNG **se borra** en vez de quedarse suelto
   en tu carpeta de medios. El archivo queda además importado en su propio bin. La duración por defecto es la que
   Premiere use para imágenes fijas si se puede leer de sus preferencias; si no, la de los ajustes.
+- **Pegar de YouTube (*Paste YouTube*)**: busca «youtube» y pega el link; si ya lo tienes copiado
+  aparece puesto, aunque venga en medio de un mensaje, y un link copiado en un momento del video
+  (`?t=80`) rellena el inicio del tramo. `Enter` y la paleta se cierra: **la descarga sigue en
+  segundo plano** y el clip cae donde estaba el cabezal cuando lo pediste, en la pista de más arriba
+  con ese hueco libre, importado en un bin *YouTube*. El archivo se guarda en una carpeta *YouTube*
+  junto al proyecto, con el título del video y su id. Baja **la mejor calidad que tenga YouTube**:
+  por encima de 1080p YouTube solo ofrece VP9 o AV1, que Premiere no abre, así que eso **se
+  convierte a HEVC** con el codificador del propio Mac (al doble del bitrate que gastó YouTube, para
+  no perder más por el camino); lo que ya es H.264 o HEVC entra sin tocar. Un video HDR baja en su
+  versión SDR, que es la que se ve bien en una secuencia Rec. 709. Los campos *From* y *To* bajan
+  **solo ese tramo**, cortado en el frame exacto (`1:20`, `80` o `1m20s`). Mientras baja, la paleta
+  enseña el progreso en el pie cada vez que la abres, con un botón para cancelarla; al terminar te
+  dice dónde cayó. Si cuando termina ya estás en otra secuencia, **no la mete en la que tengas
+  abierta**: la deja en el bin y te lo dice. La primera vez en un ordenador baja antes yt-dlp, Deno
+  y ffmpeg (unos 150 MB, una sola vez); ver [Cómo baja un video de YouTube](#cómo-baja-un-video-de-youtube).
 - **Compass: rutas de exportación automáticas**: busca «compass» o «rutas de exportación» y sale el
   panel con los dos caminos que Premiere recuerda: **Export Path** (el de *Exportar medios*) y
   **Export Frame Path** (el del botón de fotograma del monitor). Arriba del todo, un interruptor,
@@ -498,6 +513,48 @@ Cuando la fuente que había no llevaba transparencia —un `CF_BITMAP`, una capt
 se hace igual y **el diálogo lo dice antes de que pulses Enter**, en lugar de dejarte descubrir el
 fondo negro en la línea de tiempo.
 
+### Cómo baja un video de YouTube
+
+Lo hacen tres programas que **no van dentro del instalador**: FX Premiere los baja la primera vez que
+se usa la función y los guarda en su propia carpeta (`~/Library/Application Support/FX Premiere/tools`,
+`%APPDATA%\FX Premiere\tools` en Windows). Juntos pesan unos 150 MB, que triplicarían el instalador
+para una función que no todo el mundo usa; y yt-dlp deja de funcionar cada pocas semanas cuando
+YouTube cambia algo, así que una copia congelada en una versión caducaría mucho antes que la versión
+siguiente. Se bajan desde el propio proceso, no desde un navegador, así que macOS no les pone la
+marca de cuarentena y no hace falta tocar Gatekeeper ni ser administrador.
+
+- **yt-dlp** habla con YouTube. Se actualiza solo como mucho una vez al día y, si falla con algo que
+  no sea un video borrado, privado o con restricción de edad, se actualiza al momento y lo vuelve a
+  intentar.
+- **Deno** resuelve el reto en JavaScript que YouTube pone antes de dar nada por encima de las
+  calidades más bajas. yt-dlp lo exige desde noviembre de 2025.
+- **ffmpeg** une imagen y sonido, convierte lo que Premiere no abre y baja los tramos. En Mac es la
+  compilación de martin-riedl.de, que trae VideoToolbox; en Windows, la de BtbN, y el codificador se
+  elige probando cuál funciona de verdad (NVENC, Quick Sync, AMF y, si no hay ninguno, x265).
+
+Qué se baja se decide con la lista de formatos que YouTube entrega para ese video: **la máxima
+resolución, a su frame rate**; entre los que la tienen, el que Premiere abre tal cual antes que uno
+que haya que convertir; SDR antes que HDR; y de ahí, el de más bitrate. El sonido es la mezcla
+completa en el idioma original —no la versión comprimida para móviles ni un doblaje—, en AAC si lo
+hay, porque entra sin tocar. Todo se une en MP4: MKV guarda el tiempo en milisegundos, 60 fps no
+caben en eso, y un 4K60 convertido desde MKV salía diciendo que iba a 15991/533 fps.
+
+Un **tramo** no pasa por yt-dlp: ffmpeg lo lee directamente de los servidores de YouTube, así que
+solo viaja ese trozo, y siempre se recodifica para cortar en el frame exacto (copiar el stream
+empezaría en el keyframe anterior, y Premiere enseña esos frames en negro o congelados). Dos
+detalles que costaron una prueba en vivo cada uno: el ffmpeg estático no encuentra los certificados
+raíz del Mac, así que se le pasan los de Node; y YouTube sirve los primeros megas de cada petición a
+toda velocidad y luego baja a unos 200 KB/s, así que se le pide en trozos de 10 MB, como hace yt-dlp
+(6 s de 4K60 pasaron de un 2 % por minuto a menos de 6 segundos).
+
+La descarga corre en el **servicio invisible**, no en la paleta, que se cierra en cuanto el servicio
+la acepta. Las descargas van de una en una, en cola; el servicio escribe cómo van en
+`youtube-status.json` y la paleta lo lee cada vez que está abierta. El sitio donde va el clip se
+apunta **en el momento de pedirlo** —la secuencia y el cabezal— y se respeta al terminar, aunque
+hayas movido el cabezal mientras tanto. El archivo se va haciendo en una carpeta oculta dentro de la
+carpeta *YouTube*, para que el final sea un renombrado y no una copia de gigas, y si Premiere se
+cierra a mitad, la siguiente descarga en esa carpeta se lleva lo que quedó.
+
 ### Cómo Compass mueve de verdad la ruta de exportación
 
 Aquí conviene ser exacto, porque es la parte que nadie ha documentado y porque la primera versión de
@@ -688,6 +745,16 @@ cuesta abrir la paleta en un Premiere de verdad, y no en el navegador de las pru
   bin—, y la colocación en la línea de tiempo: la pista libre cuando la hay, la pista nueva cuando
   no, una **pista bloqueada** que está vacía y aun así no es sitio, y una negativa limpia cuando la
   pista que se había apartado deja de estar libre.
+- `scripts/test-youtube.mjs` es Paste YouTube sin YouTube. La elección de formato se prueba contra
+  **la lista real** que dieron dos videos (un 4K60 y un 4K HDR, guardadas en
+  `scripts/fixtures/youtube-formats.json`), y la descarga entera contra un yt-dlp, un Deno y un ffmpeg
+  falsos que se sirven desde un servidor local como GitHub sirve los de verdad: la primera vez que
+  baja las herramientas (ffmpeg dentro de una carpeta del zip, como en Windows), la conversión, el
+  tramo con sus certificados y sus trozos de 10 MB, un Mac sin codificador por hardware, un video
+  borrado, un yt-dlp viejo que se cura actualizándolo, cancelar, y lo que deja un Premiere cerrado a
+  mitad. `test-service.mjs` y `test-panel.mjs` lo prueban además desde el servicio real —el clip cae
+  donde estaba el cabezal al pedirlo, o en su bin si cambiaste de secuencia— y desde la hoja de la
+  paleta.
 - `scripts/test-updater.mjs` levanta un servidor de releases local con un `.zxp` real y verifica
   la comparación de versiones, la descarga con redirecciones, el reemplazo en sitio y que se
   niegue a pisar una instalación de desarrollo o un paquete incompleto.
@@ -853,6 +920,13 @@ Dos herramientas que no son pruebas y por eso no están en `npm test`:
   nada. Del portapapeles se sacan **imágenes y archivos** (un video copiado en el Finder o el
   Explorador se copia a la carpeta `Paste`, se importa y sale con su duración real); el texto y los
   clips copiados de la propia línea de tiempo no son cosa suya.
+- **Paste YouTube baja lo que YouTube te enseñaría sin iniciar sesión**: un video privado, solo para
+  miembros o con restricción de edad se rechaza con el motivo que da YouTube. Un directo solo se
+  puede pegar cuando ha terminado. Las condiciones de YouTube no permiten descargar fuera de sus
+  propios botones, y los derechos del material son de quien lo usa.
+- **Un 4K convertido pesa**: el HEVC sale a unos 50 Mbps en 4K60, unos 370 MB por minuto. La
+  conversión en un Mac con Apple Silicon va más rápida que el tiempo real (45 s de 4K60 en 27 s); en
+  un Windows sin codificador por hardware la hace x265 y tarda bastante más.
 - **Una imagen que llega sin alpha no lo recupera.** Si lo único que hay en el portapapeles es un
   `CF_BITMAP` de Windows o una captura plana, el PNG que se escribe es correcto y sin pérdida, pero
   su fondo es opaco porque nunca hubo transparencia que guardar. El diálogo lo avisa antes.

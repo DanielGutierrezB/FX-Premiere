@@ -6,18 +6,21 @@
  * `window.__fxpClipboard` replaces it, which is what lets the panel test suite drive the dialog
  * against a PNG it wrote itself and check what the panel says about transparency it does not have.
  */
-import { clipboardScratch, grabClipboard } from '@shared/clipboard';
+import { clipboardScratch, grabClipboard, readClipboardText } from '@shared/clipboard';
 import type { ClipboardGrab } from '@shared/types';
 
 export interface ClipboardBridge {
   /** Somewhere to hold the image between reading it and the user agreeing to where it goes. */
   scratch(): string;
   grab(file: string): Promise<ClipboardGrab>;
+  /** Optional so a stand-in written for the image paste still fits: it then reads as no text. */
+  text?(): Promise<string>;
 }
 
 const native: ClipboardBridge = {
   scratch: clipboardScratch,
   grab: grabClipboard,
+  text: readClipboardText,
 };
 
 declare global {

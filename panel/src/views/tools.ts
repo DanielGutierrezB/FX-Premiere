@@ -65,6 +65,16 @@ const SECTIONS: Section[] = [
         ],
       },
       {
+        name: 'Paste YouTube',
+        does: 'Downloads a YouTube video at the best quality it has into a YouTube folder beside the project, imports it into a YouTube bin and drops it at the playhead as it was when you asked. Above 1080p YouTube only has VP9 or AV1, which Premiere cannot open, so those are converted to HEVC on the way. A From and To fetch only that piece, cut on the frame. It runs in the background: close the palette and keep working. The first one on a computer also fetches yt-dlp, Deno and ffmpeg, about 150 MB, once.',
+        how: 'Type "youtube". A link on the clipboard is filled in for you.',
+        keys: [
+          { key: '\u21b5', does: 'download it' },
+          { key: '\u21e5', does: 'from and to' },
+          BACK,
+        ],
+      },
+      {
         name: 'Scale to Frame Size',
         does: 'Sets Scale to Frame Size on the selected video clips, the same as the clip\u2019s own menu item.',
         how: 'Type "scale to frame size".',

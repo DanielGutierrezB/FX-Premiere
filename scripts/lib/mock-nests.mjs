@@ -326,6 +326,9 @@ export const createSequenceKit = ({ collection, time, makeClip, makeProjectItem,
 
     const sequence = {
       name,
+      // Premiere's own id for a sequence, which outlives a rename: a placement decided earlier is
+      // checked against it to know it is still looking at the sequence it was decided in.
+      sequenceID: `seq-${name}`,
       projectItem,
       videoTrackList,
       audioTrackList,

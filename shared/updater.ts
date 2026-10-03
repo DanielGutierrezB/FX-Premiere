@@ -1,4 +1,5 @@
 import { systemPath } from './cep';
+import { download, httpModule, redirectTarget, unzip } from './fetch-files';
 import { nodeRequire } from './node';
 
 const REPO = 'DanielGutierrezB/FX-Premiere';
@@ -95,16 +96,10 @@ export const isDevInstall = (): boolean => {
   }
 };
 
-const httpModule = (url: string): typeof import('https') =>
-  nodeRequire()(url.startsWith('http://') ? 'http' : 'https') as typeof import('https');
-
 const REQUEST_HEADERS = {
   'User-Agent': 'FX-Premiere',
   Accept: 'application/vnd.github+json',
 };
-
-/** Location headers are allowed to be relative, so they are resolved against the request. */
-const redirectTarget = (location: string, from: string): string => new URL(location, from).href;
 
 const getText = (url: string, redirects = 0): Promise<string> =>
   new Promise((resolve, reject) => {
@@ -135,31 +130,6 @@ const getText = (url: string, redirects = 0): Promise<string> =>
     });
     request.on('error', (error: Error) => reject(error));
     request.setTimeout(15000, () => request.destroy(new Error('GitHub timed out')));
-  });
-
-const download = (url: string, target: string, redirects = 0): Promise<void> =>
-  new Promise((resolve, reject) => {
-    const fs = nodeRequire()('fs') as typeof import('fs');
-    const request = httpModule(url).get(url, { headers: REQUEST_HEADERS }, (response) => {
-      const status = response.statusCode ?? 0;
-      const location = response.headers.location;
-      if (status >= 300 && status < 400 && location && redirects < 5) {
-        response.resume();
-        download(redirectTarget(location, url), target, redirects + 1).then(resolve, reject);
-        return;
-      }
-      if (status !== 200) {
-        response.resume();
-        reject(new Error(`Download failed with ${status}`));
-        return;
-      }
-      const file = fs.createWriteStream(target);
-      response.pipe(file);
-      file.on('finish', () => file.close(() => resolve()));
-      file.on('error', (error: Error) => reject(error));
-    });
-    request.on('error', (error: Error) => reject(error));
-    request.setTimeout(60000, () => request.destroy(new Error('Download timed out')));
   });
 
 export const checkForUpdate = async (): Promise<UpdateCheck> => {
@@ -295,23 +265,9 @@ export const applyUpdate = async (downloadUrl: string): Promise<void> => {
   const archive = path.join(staging, 'FX-Premiere.zip');
   const unpacked = path.join(staging, 'unpacked');
   try {
-    await download(downloadUrl, archive);
+    await download(downloadUrl, archive, { headers: REQUEST_HEADERS });
     fs.mkdirSync(unpacked, { recursive: true });
-    if (os.platform() === 'win32') {
-      // The paths arrive as PowerShell variables rather than inside the command text: a user named
-      // O'Brien has an apostrophe in their temp path, which would otherwise end the string early.
-      childProcess.execFileSync(
-        'powershell',
-        [
-          '-NoProfile',
-          '-Command',
-          'Expand-Archive -LiteralPath $env:FXP_ARCHIVE -DestinationPath $env:FXP_TARGET -Force',
-        ],
-        { stdio: 'pipe', env: { ...process.env, FXP_ARCHIVE: archive, FXP_TARGET: unpacked } },
-      );
-    } else {
-      childProcess.execFileSync('unzip', ['-o', '-q', archive, '-d', unpacked], { stdio: 'pipe' });
-    }
+    unzip(archive, unpacked);
     // A truncated download would unpack without the entry point and brick the panel.
     if (!fs.existsSync(path.join(unpacked, 'panel', 'panel.js'))) {
       throw new Error('The downloaded package looks incomplete; nothing was replaced.');

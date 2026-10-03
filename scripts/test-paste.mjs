@@ -146,7 +146,7 @@ console.log('\nA name that does not land on an earlier paste');
 {
   const folder = join(stage, 'collide');
   mkdirSync(folder, { recursive: true });
-  const { freeFileName } = await loadShared('panel/src/paste.ts', ['freeFileName']);
+  const { freeFileName } = await loadShared('shared/compass.ts', ['freeFileName']);
   check('the first paste of the minute keeps the plain name', freeFileName(folder, 'Shot_1530.png') === 'Shot_1530.png');
   writeFileSync(join(folder, 'Shot_1530.png'), 'x', 'utf8');
   check('the second one is numbered rather than overwriting it', freeFileName(folder, 'Shot_1530.png') === 'Shot_1530-2.png');

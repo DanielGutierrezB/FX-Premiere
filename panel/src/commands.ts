@@ -116,6 +116,7 @@ export const LOCAL_COMMAND_EASE = 'local:ease';
 export const LOCAL_COMMAND_ANCHOR = 'local:anchor';
 export const LOCAL_COMMAND_PROBE_MULTICAM = 'local:probeMulticam';
 export const LOCAL_COMMAND_PASTE = 'local:paste';
+export const LOCAL_COMMAND_YOUTUBE = 'local:youtube';
 export const LOCAL_COMMAND_COMPASS = 'local:compass';
 export const LOCAL_COMMAND_COMPASS_EXPORT = 'local:compassExport';
 export const LOCAL_COMMAND_TOOLS = 'local:tools';
@@ -181,6 +182,14 @@ export const STATIC_COMMANDS: CatalogItem[] = [
     group: 'FX Premiere',
     keywords: 'paste clipboard pegar portapapeles captura pantallazo png transparencia alfa imagen',
     commandId: LOCAL_COMMAND_PASTE,
+  },
+  {
+    id: 'command:youtube',
+    kind: 'command',
+    name: 'Paste YouTube',
+    group: 'FX Premiere',
+    keywords: 'youtube yt video link enlace url descargar download bajar pegar paste importar tramo clip',
+    commandId: LOCAL_COMMAND_YOUTUBE,
   },
   {
     id: 'command:compass',

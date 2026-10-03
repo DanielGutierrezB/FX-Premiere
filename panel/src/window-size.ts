@@ -34,6 +34,7 @@ const SHEET_PLAN: Record<Exclude<View, 'search'>, WindowBox> = {
   ease: { width: 500, height: 360 },
   anchor: { width: 460, height: 240 },
   paste: { width: 540, height: 360 },
+  youtube: { width: 580, height: 440 },
   compass: { width: 780, height: 640 },
   settings: { width: 640, height: 620 },
   inspect: { width: 660, height: 580 },

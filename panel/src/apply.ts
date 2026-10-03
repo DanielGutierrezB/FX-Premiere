@@ -22,6 +22,7 @@ import {
   LOCAL_COMMAND_SETTINGS,
   LOCAL_COMMAND_UNDO,
   LOCAL_COMMAND_UNNEST,
+  LOCAL_COMMAND_YOUTUBE,
 } from './commands';
 import { probeMulticam } from './probe';
 
@@ -74,6 +75,8 @@ interface ApplyHost {
   /** Rebuilds the selected nests on the timeline they sit in, once the dialog has been answered. */
   unnest(): Promise<HostResponse<ApplyOutcome>>;
   openPaste(item: CatalogItem): Promise<void>;
+  /** Always a question: a link is the one thing the palette cannot know without being told. */
+  openYoutube(item: CatalogItem): Promise<void>;
   openCompass(): Promise<void>;
   /** Puts what was on the clipboard where it belongs and asks Premiere to place it. */
   paste(): Promise<HostResponse<ApplyOutcome>>;
@@ -125,6 +128,10 @@ export class ApplyPipeline {
           return;
         }
         await this.run(item, intent === 'keepOpen', { hold: true });
+        return;
+      case LOCAL_COMMAND_YOUTUBE:
+        this.recordUsage(item);
+        await this.host.openYoutube(item);
         return;
       case LOCAL_COMMAND_COMPASS:
         await this.host.openCompass();

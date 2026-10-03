@@ -11,6 +11,7 @@ import { fileURLToPath } from 'node:url';
 import { check, finish } from './lib/check.mjs';
 import { createCepWindow, settle, waitFor } from './lib/mock-cep.mjs';
 import { createHost } from './lib/mock-premiere.mjs';
+import { serviceYoutube } from './lib/service-youtube.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const serviceBundle = join(root, 'dist', 'service', 'service.js');
@@ -147,7 +148,9 @@ const { world, evalInHost } = createHost({ hostScript, documentsRoot: join(stage
 world.projectPath = join(stage, 'projects', 'Mock Project.prproj');
 const cep = createCepWindow({ html: serviceHtml, home: stage, extensionRoot, evalScript: evalInHost });
 const triggers = [];
-cep.window.__adobe_cep__.addEventListener(EVENT_TRIGGER, (event) => triggers.push(event.data));
+// Kept as the text it was sent as, which is what the checks below compare against: CEP hands the
+// listener the parsed object.
+cep.window.__adobe_cep__.addEventListener(EVENT_TRIGGER, (event) => triggers.push(JSON.stringify(event.data)));
 
 console.log('Startup');
 // Make the first helper slow to confirm so the pre-READY window is observable.
@@ -484,6 +487,8 @@ const pathWhenOff = exportPath();
 world.current = world.sequence;
 await settle(9000);
 check('turning Compass off stops it writing', exportPath() === pathWhenOff, exportPath());
+
+await serviceYoutube({ cep, world, stage, settingsDir, writeFile: (file, text) => writeFileSync(file, text, 'utf8') });
 
 console.log('\nShutdown');
 const pidAtShutdown = helperPid();

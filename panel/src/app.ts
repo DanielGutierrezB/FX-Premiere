@@ -59,6 +59,15 @@ import { flushMarks, mark } from './timing';
 import { WindowSize } from './window-size';
 import { openRowMenu } from './views/row-menu';
 import { FavoriteBar } from './views/slots';
+import type { YoutubeAsk } from './views/youtube';
+import { readYoutubeStatus } from '@shared/youtube-status';
+import { currentJob, footerLine, markSeen, requestFor, sendYoutube, unseenFinished } from './youtube';
+
+/** How often an open palette re-reads the service's progress while a download is running. */
+const YOUTUBE_POLL_MS = 700;
+
+/** How long the palette waits for the service to take a download before saying it never did. */
+const YOUTUBE_ACK_MS = 2500;
 
 /**
  * The frame the page's own markup already carries, or a fresh one.
@@ -123,6 +132,11 @@ export class PaletteApp {
 
   private toastTimer = 0;
 
+  private youtubeTimer = 0;
+
+  /** The progress line this put in the footer, so it only ever overwrites its own words. */
+  private youtubeLine = '';
+
   /** Set once a check finds a newer release, so the resting line can mention it. */
   private updateNote = '';
 
@@ -158,6 +172,7 @@ export class PaletteApp {
     undo: () => this.undoLast(),
     unnest: () => this.runUnnest(),
     openPaste: (item) => this.sheets.openPaste(item),
+    openYoutube: (item) => this.sheets.openYoutube(item),
     openCompass: () => this.sheets.openCompass(),
     paste: () => this.runPaste(),
     compassExport: () => this.runCompassExport(),
@@ -195,6 +210,8 @@ export class PaletteApp {
     applyEase: (item, options) => void this.confirmEase(item, options),
     applyAnchor: (item, options) => void this.confirmAnchor(item, options),
     applyPaste: (item, seconds) => void this.confirmPaste(item, seconds),
+    startYoutube: (_item, ask, folder) => void this.startYoutube(ask, folder),
+    cancelYoutube: (id) => this.cancelYoutube(id),
     applyCompass: () => this.runCompass(),
     storeCaptured: (preset) => this.storeCaptured(preset),
     viewChanged: (view) => this.viewChanged(view),
@@ -229,6 +246,7 @@ export class PaletteApp {
     window.setTimeout(() => {
       markPanelOpen(true);
       this.claimIntent();
+      this.followYoutube();
       // Armed by the invisible service once per Premiere session as well. Doing it here too is what
       // keeps the palette quick to summon for somebody who turned the service off.
       void setPanelPersistent(this.settings.keepLoaded);
@@ -401,6 +419,8 @@ export class PaletteApp {
     this.active = 0;
     // Every summon starts clean: how the last thing went is stale news by now.
     this.setStatus('');
+    this.youtubeLine = '';
+    this.followYoutube();
     this.settings = loadSettings();
     this.applyTheme();
     // What was applied since the last summon changes the resting list, and so its size. Entering the
@@ -425,6 +445,8 @@ export class PaletteApp {
   /** Takes the marker down before the window goes, so the next shortcut opens instead of closing. */
   private dismiss(): void {
     this.closeRowMenu();
+    window.clearInterval(this.youtubeTimer);
+    this.youtubeTimer = 0;
     markPanelOpen(false);
     closeSelf();
   }
@@ -1021,6 +1043,75 @@ export class PaletteApp {
       saveSettings(this.settings);
     }
     await this.pipeline.run(item, false, { hold: true });
+  }
+
+  /**
+   * Hands the download to the service and waits only for it to take it, which takes milliseconds.
+   * Closing on the strength of the event alone would leave a palette that said "downloading" over a
+   * service that never heard: the service is a separate extension and can be switched off.
+   */
+  private async startYoutube(ask: YoutubeAsk, folder: string): Promise<void> {
+    const request = requestFor(ask, folder);
+    this.setStatus('Handing it to the downloader\u2026');
+    try {
+      sendYoutube({ action: 'start', request });
+    } catch (error) {
+      this.setStatus(`Could not reach the downloader: ${String(error)}`, 'error');
+      return;
+    }
+    const deadline = Date.now() + YOUTUBE_ACK_MS;
+    while (!readYoutubeStatus().jobs.some((job) => job.id === request.id)) {
+      if (Date.now() > deadline) {
+        const reason = 'The FX Premiere service did not take the download. Restart Premiere and try again.';
+        this.setStatus(reason, 'error');
+        this.toast(reason, 'error');
+        return;
+      }
+      await new Promise((resolve) => window.setTimeout(resolve, 100));
+    }
+    this.backToSearch(true);
+    if (this.settings.closeAfterApply) {
+      this.dismiss();
+      return;
+    }
+    this.followYoutube();
+  }
+
+  private cancelYoutube(id: string): void {
+    sendYoutube({ action: 'cancel', id });
+    window.setTimeout(() => this.sheets.youtubeChanged(), 300);
+  }
+
+  /**
+   * Keeps the footer on the download the service is running for as long as the palette is open, and
+   * says what became of the ones that finished while it was closed. Polled, because the service has
+   * no way to call into a page that is not looking.
+   */
+  private followYoutube(): void {
+    const tick = (): void => {
+      const jobs = readYoutubeStatus().jobs;
+      const finished = unseenFinished(jobs);
+      if (finished.length > 0) {
+        markSeen();
+        const failed = finished.some((job) => job.state === 'failed');
+        this.toast(finished.map((job) => `${job.title}: ${job.message || job.state}`).join(' \u00b7 '), failed ? 'error' : 'info');
+      }
+      this.sheets.youtubeChanged();
+      const job = currentJob(jobs);
+      const ours = this.statusNode.textContent === '' || this.statusNode.textContent === this.youtubeLine;
+      if (ours) {
+        this.youtubeLine = job ? footerLine(job) : '';
+        this.setStatus(this.youtubeLine);
+      }
+      if (!job) {
+        window.clearInterval(this.youtubeTimer);
+        this.youtubeTimer = 0;
+      }
+    };
+    tick();
+    if (this.youtubeTimer === 0 && currentJob()) {
+      this.youtubeTimer = window.setInterval(tick, YOUTUBE_POLL_MS);
+    }
   }
 
   /**

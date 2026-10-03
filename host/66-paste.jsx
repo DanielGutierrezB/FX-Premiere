@@ -137,9 +137,37 @@ FXP.setStillLength = function (item, seconds) {
     return false;
 };
 
-FXP.pasteItem = function (request) {
+FXP.sequenceIdOf = function (sequence) {
+    try {
+        return String(sequence.sequenceID || '');
+    } catch (error) {
+        return '';
+    }
+};
+
+/** Where the playhead is now, kept by a caller that will place something there later. */
+FXP.playheadAt = function () {
     var sequence = FXP.activeSequence();
     if (!sequence) {
+        return { sequenceId: '', sequence: '', seconds: 0 };
+    }
+    var seconds = 0;
+    try {
+        seconds = FXP.clipSeconds(sequence.getPlayerPosition());
+    } catch (error) {
+        seconds = 0;
+    }
+    return { sequenceId: FXP.sequenceIdOf(sequence), sequence: FXP.safeName(sequence), seconds: seconds };
+};
+
+FXP.pasteItem = function (request) {
+    var sequence = FXP.activeSequence();
+    // A placement decided minutes before it happens — a download finishing — belongs to the sequence
+    // it was asked from. Any other one open now is somewhere the editor has gone since, and dropping
+    // a clip into the middle of it is worse than leaving the clip in its bin and saying so.
+    var wanted = FXP.trim(String(request.sequenceId || ''));
+    var elsewhere = wanted !== '' && (!sequence || FXP.sequenceIdOf(sequence) !== wanted);
+    if (!sequence && !elsewhere) {
         throw new Error('Open a sequence before pasting.');
     }
     var path = FXP.trim(request.path || '');
@@ -162,10 +190,13 @@ FXP.pasteItem = function (request) {
     if (!item) {
         throw new Error('Premiere imported the file but it is not in the project.');
     }
+    if (elsewhere) {
+        return { clip: FXP.safeName(item), track: 0, addedTrack: false, seconds: 0, placed: false };
+    }
     // Anything that goes wrong from here leaves the project holding a picture that was never placed,
     // and the panel deletes the file it points at, so the import is undone before the reason is told.
     try {
-        return FXP.placeItem(sequence, item, seconds);
+        return FXP.placeItem(sequence, item, seconds, request.at);
     } catch (error) {
         FXP.deleteProjectItem(item);
         throw error;
@@ -192,7 +223,8 @@ FXP.pasteReserveAudio = function (item, from, to) {
     }
 };
 
-FXP.placeItem = function (sequence, item, seconds) {
+/** `at` is a moment chosen earlier, in seconds; without one the clip goes where the playhead is now. */
+FXP.placeItem = function (sequence, item, seconds, at) {
     if (seconds > 0) {
         FXP.setStillLength(item, seconds);
     }
@@ -205,11 +237,13 @@ FXP.placeItem = function (sequence, item, seconds) {
     if (!placed || isNaN(placed) || placed <= 0) {
         throw new Error('Premiere would not say how long "' + FXP.safeName(item) + '" is.');
     }
-    var playhead = 0;
-    try {
-        playhead = FXP.clipSeconds(sequence.getPlayerPosition());
-    } catch (error) {
-        playhead = 0;
+    var playhead = Number(at);
+    if (at === undefined || at === null || isNaN(playhead) || playhead < 0) {
+        try {
+            playhead = FXP.clipSeconds(sequence.getPlayerPosition());
+        } catch (error) {
+            playhead = 0;
+        }
     }
     // Everything from here on can refuse, and a refusal that leaves a new empty track behind has
     // charged the editor for a paste that never happened.
@@ -258,7 +292,8 @@ FXP.placeItemOn = function (sequence, item, placed, playhead) {
         clip: FXP.safeName(item),
         track: slot.base + 1,
         addedTrack: slot.added > 0,
-        seconds: FXP.round(placed, 3)
+        seconds: FXP.round(placed, 3),
+        placed: true
     };
 };
 
