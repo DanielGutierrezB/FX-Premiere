@@ -121,11 +121,12 @@ Ctrl + Space  →  gsblr  →  Enter  →  Gaussian Blur en los 8 clips seleccio
   versión SDR, que es la que se ve bien en una secuencia Rec. 709. En cuanto reconoce el link,
   **el video se reproduce en la hoja** y se marcan los tramos como en un monitor de origen: `I`
   donde empieza, `O` donde acaba, tantas veces como tramos quieras; cada `O` lo añade a la lista y
-  a la barra de la duración. `Espacio` reproduce y pausa, las flechas saltan un segundo (cinco con
+  a la barra de la duración, que se puede pinchar o arrastrar para moverse. `Espacio` reproduce y pausa, las flechas saltan un segundo (cinco con
   `Shift`), un clic en un tramo de la lista va a él y su `×` lo quita; los tiempos también se
   escriben a mano (`1:20`, `80` o `1m20s`). **Cada tramo es su propio archivo y su propio clip**,
   cortado en el frame exacto, y caen uno detrás de otro desde el cabezal en el orden del video. Sin
-  tramos, baja el video entero. Mientras baja, la paleta
+  tramos, baja el video entero. Si un tramo falla, los anteriores se colocan igual y el aviso dice
+  cuál falló; cancelar no deja ninguno. Mientras baja, la paleta
   enseña el progreso en el pie cada vez que la abres, con un botón para cancelarla; al terminar te
   dice dónde cayó. Si cuando termina ya estás en otra secuencia, **no la mete en la que tengas
   abierta**: la deja en el bin y te lo dice. La primera vez en un ordenador baja antes yt-dlp, Deno
